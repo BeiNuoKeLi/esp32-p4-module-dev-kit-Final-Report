@@ -1,3 +1,17 @@
 {
-    "idf.currentSetup": "F:\\BeiNuoKeLi\\esp\\v5.5.1\\esp-idf"
+  "idf.currentSetup": "F:\\BeiNuoKeLi\\esp\\v5.5.1\\esp-idf",
+  "idf.openOcdConfigs": [
+    "board/esp32p4-builtin.cfg"
+  ],
+  "idf.customExtraVars": {
+    "IDF_TARGET": "esp32p4"
+  },
+  "clangd.path": "F:\\BeiNuoKeLi\\.espressif\\tools\\esp-clang\\esp-19.1.2_20250312\\esp-clang\\bin\\clangd.exe",
+  "clangd.arguments": [
+    "--background-index",
+    "--query-driver=**",
+    "--compile-commands-dir=f:\\CodeProject\\iiot_Experiment_2\\code\\02_HelloWorld\\build"
+  ],
+  "idf.flashType": "UART",
+  "idf.portWin": "COM9"
 }

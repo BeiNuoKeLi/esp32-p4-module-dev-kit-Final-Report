@@ -1,0 +1,16 @@
+menu "Example Configuration"
+
+    config EXAMPLE_WIFI_SSID
+        string "WiFi SSID"
+        default "myssid"
+        help
+            SSID (network name) for the example to connect to.
+            Only 2.4 GHz band is supported (ESP32-C6 limitation).
+
+    config EXAMPLE_WIFI_PASSWORD
+        string "WiFi Password"
+        default "mypassword"
+        help
+            Password for the target WiFi network.
+
+endmenu

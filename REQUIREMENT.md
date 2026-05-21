@@ -44,13 +44,24 @@
 
 ### 3.1 引脚分配（严格遵守）
 
+> **ESP32-P4 ADC 通道映射**（来自 `soc/esp32p4/include/soc/adc_channel.h`）：
+> ADC1 仅支持 GPIO16~GPIO23（CH0~CH7），ADC2 仅支持 GPIO49~GPIO54。
+> GPIO4、GPIO5 **不是** ADC 引脚，已全部修正。
+>
+> **排针可用 GPIO**（根据微雪 ESP32-P4-Module-DEV-KIT 排针图）：
+> GPIO0~6, 20~27, 32~33, 36, 45~48, 53, 54（GPIO54=SDIO Reset 不可用）
+> GPIO7=SDA, GPIO8=SCL（I2C 保留），GPIO37/38=UART（保留）
+>
+> **ADC1 排针上可用的引脚**：GPIO20(CH4)、GPIO21(CH5)、GPIO22(CH6)、GPIO23(CH7)
+> GPIO16~19 未引出到排针。
+
 | 传感器 | 信号 | ESP32-P4 GPIO | 类型 |
 |--------|------|---------------|------|
-| DHT11 | DATA | **GPIO 20** | 数字 I/O（开漏，需上拉） |
-| DS18B20 | DATA | **GPIO 21** | 数字 I/O（开漏，需上拉） |
-| MQ-135 | AO | **GPIO 4** | ADC1_CH3（模拟输入） |
+| DHT11 | DATA | **GPIO 2** | 数字 I/O（开漏，需上拉） |
+| DS18B20 | DATA | **GPIO 1** | 数字 I/O（开漏，需上拉） |
+| MQ-135 | AO | **GPIO 21** | ADC1_CH5（模拟输入，`ADC1_CHANNEL_5_GPIO_NUM=21`） |
 | MQ-135 | DO | **GPIO 22** | 数字输入（需电平转换） |
-| 光敏电阻 | AO | **GPIO 5** | ADC1_CH4（模拟输入） |
+| 光敏电阻 | AO | **GPIO 20** | ADC1_CH4（模拟输入，`ADC1_CHANNEL_4_GPIO_NUM=20`） |
 | 光敏电阻 | DO | **GPIO 23** | 数字输入（需电平转换） |
 | 蜂鸣器+LED | 控制 | **GPIO 25** | 数字输出（需驱动电路） |
 
@@ -187,15 +198,32 @@ Task_SensorFetch ──────────► sensor_data_t ◄────
 Task_SensorFetch 写入完成后 → xTaskNotifyGive(Task_UDP_Send)
 ```
 
-### 5.4 ADC 配置（来自 ESP-IDF 官方 API）
+### 5.4 ADC 配置（来自 ESP-IDF v5.x oneshot API）
+
+> ⚠️ `adc1_config_width()` / `adc1_get_raw()` 等旧版 API 在 IDF v5.x 中已废弃，
+> 应使用 `esp_adc/adc_oneshot.h` 中的新 API。
 
 ```c
-adc1_config_width(ADC_WIDTH_BIT_12);                    // 12 位精度（0~4095）
-adc1_config_channel_atten(ADC1_CHANNEL_3, ADC_ATTEN_DB_11); // GPIO4, 满量程 ~3.3V
-adc1_config_channel_atten(ADC1_CHANNEL_4, ADC_ATTEN_DB_11); // GPIO5, 满量程 ~3.3V
+/* 初始化 ADC1 单元 */
+adc_oneshot_unit_handle_t adc1_handle;
+adc_oneshot_unit_init_cfg_t init_cfg = { .unit_id = ADC_UNIT_1 };
+adc_oneshot_new_unit(&init_cfg, &adc1_handle);
+
+/* 配置通道：ADC_ATTEN_DB_12 满量程 ~3.3V（等价旧版 ADC_ATTEN_DB_11） */
+adc_oneshot_chan_cfg_t chan_cfg = {
+    .atten    = ADC_ATTEN_DB_12,   // hal/include/hal/adc_types.h:50
+    .bitwidth = ADC_BITWIDTH_12,   // 12位，0~4095
+};
+adc_oneshot_config_channel(adc1_handle, ADC_CHANNEL_5, &chan_cfg); // GPIO21, MQ-135 AO
+adc_oneshot_config_channel(adc1_handle, ADC_CHANNEL_4, &chan_cfg); // GPIO20, 光敏 AO
+
+/* 读取原始值 */
+int raw = 0;
+adc_oneshot_read(adc1_handle, ADC_CHANNEL_5, &raw); // MQ-135 AO
+adc_oneshot_read(adc1_handle, ADC_CHANNEL_4, &raw); // 光敏 AO
 ```
 
-电压换算：`voltage = adc_reading * 3.3 / 4095.0`
+电压换算：`voltage = adc_reading * 3.3f / 4095.0f`
 
 ### 5.5 算术平均滤波算法
 
@@ -339,16 +367,20 @@ Agent 在编写驱动时，应将开发文档中的 **51 单片机参考代码**
 
 | 51 代码 | ESP-IDF 等价替换 |
 |---------|------------------|
-| `sbit DQ = P2^0` | `gpio_set_direction(GPIO_NUM_20, GPIO_MODE_INPUT_OUTPUT_OD)` |
-| `DQ = 0; DQ = 1` | `gpio_set_level(GPIO_NUM_20, 0)` / `gpio_set_level(GPIO_NUM_20, 1)` |
-| `if(DQ) ...` | `gpio_get_level(GPIO_NUM_20)` |
+| `sbit DQ = P2^0` | `gpio_set_direction(GPIO_NUM_2, GPIO_MODE_INPUT_OUTPUT_OD)` （DHT11, GPIO2） |
+| `sbit DQ = P3^7` | `gpio_set_direction(GPIO_NUM_1, GPIO_MODE_INPUT_OUTPUT_OD)` （DS18B20, GPIO1） |
+| `DQ = 0; DQ = 1` | `gpio_set_level(GPIO_NUM_x, 0)` / `gpio_set_level(GPIO_NUM_x, 1)` |
+| `if(DQ) ...` | `gpio_get_level(GPIO_NUM_x)` |
 | `Delay1ms(x)` | `vTaskDelay(pdMS_TO_TICKS(x))`（毫秒级） |
-| `Delay40us()` | `ets_delay_us(40)` 或 `portDISABLE_INTERRUPTS()` + `esp_rom_delay_us(40)` |
+| `Delay40us()` | `portDISABLE_INTERRUPTS()` + `esp_rom_delay_us(40)` + `portENABLE_INTERRUPTS()` |
 | `Uart_TxData(c)` | `printf()` 或 `ESP_LOGI()` |
-| 51 ADC 读取 | `adc1_get_raw(ADC1_CHANNEL_3)` |
+| 51 PCF8591 ADC 读取 | `adc_oneshot_read(handle, ADC_CHANNEL_5, &raw)` （MQ-135, GPIO21） |
+| 51 PCF8591 ADC 读取 | `adc_oneshot_read(handle, ADC_CHANNEL_4, &raw)` （光敏, GPIO20） |
 
 ---
 
-> **最后更新**：2026-05-21
+> **最后更新**：2026-05-21（引脚全面修正：GPIO4/5 改为 GPIO20/21；DHT11 → GPIO2，DS18B20 → GPIO1，MQ-135 AO → GPIO21/ADC1_CH5；废弃旧版 ADC API，改为 adc_oneshot API；根据微雪排针图核验所有引脚均在排针上）
 >
 > **基于文档**：`开发文档/` 下 DHT11、DS18B20、MQ-135、光敏电阻传感器 四个模块的全套资料
+>
+> **ADC 映射依据**：`F:\BeiNuoKeLi\esp\v5.5.1\esp-idf\components\soc\esp32p4\include\soc\adc_channel.h`

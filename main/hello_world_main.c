@@ -97,9 +97,9 @@ static void photo_sensor_task(void *arg)
     while (1) {
         photo_sensor_read(&data);
 
-        /* AO 电压 + DO 电平 + 错误状态 */
-        ESP_LOGI(TAG, "光敏: AO=%.2fV | DO=%d (%s)",
-                 data.light_v, data.do_level,
+        /* AO 原始 ADC 值 + DO 电平 + 错误状态 */
+        ESP_LOGI(TAG, "光敏: AO_raw=%d | DO=%d (%s)",
+                 data.light_raw, data.do_level,
                  data.do_level ? "正常" : "超阈值");
 
         if (data.err) {

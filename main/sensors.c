@@ -2,13 +2,20 @@
  * @file sensors.c
  * @brief 光敏电阻传感器驱动实现
  *
- * 移植说明 (来自 REQUIREMENT.md 十)：
+ * 引脚修正说明:
+ *   - REQUIREMENT.md 中 "GPIO5 → ADC1_CH4" 是错误的。
+ *     根据 IDF 源码 soc/esp32p4/include/soc/adc_channel.h:
+ *       ADC1_CHANNEL_4_GPIO_NUM = 20  (GPIO20)
+ *       ADC1 仅支持 GPIO16~GPIO23
+ *     GPIO5 在 ESP32-P4 上不是 ADC 引脚，已将 AO 改到 GPIO20。
+ *
+ * 移植说明 (来自 REQUIREMENT.md 十):
  *   - 51 的 sbit key1=P0^1 → ESP-IDF gpio_get_level(GPIO_NUM_23) 读取 DO
  *   - 51 无 ADC → ESP-IDF adc_oneshot_read() 读取 AO 模拟量
- *   - 51 的 Uart_TxData → ESP_LOGI() 串口输出
+ *   - 输出原始 ADC 值，不换算电压
  *
- * 传感器特性 (来自 使用说明书)：
- *   - AO: 光照越强 → 电压越高
+ * 传感器特性 (来自 使用说明书):
+ *   - AO: 光照越强 → 原始值越高 (0~4095)
  *   - DO: 低于阈值→高电平, 超过阈值→低电平 (LM393 比较器输出)
  *   - 工作电压 3.3V~5V
  */
@@ -19,6 +26,7 @@
 #include "driver/gpio.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include <stdlib.h>   /* qsort */
 
 static const char *TAG = "photo_sensor";
 
@@ -48,7 +56,7 @@ static int cmp_int(const void *a, const void *b)
  *   - 12 次采样全部为 0 或全部为 4095 → 返回 -1
  *
  * @param channel ADC 通道号
- * @return 滤波后的 ADC 值 (0~4095), -1 表示异常
+ * @return 滤波后的 ADC 原始值 (0~4095), -1 表示异常
  */
 static int adc_filter_sample(adc_channel_t channel)
 {
@@ -57,6 +65,8 @@ static int adc_filter_sample(adc_channel_t channel)
 
     for (int i = 0; i < ADC_SAMPLE_COUNT; i++) {
         int raw = 0;
+        /* API: adc_oneshot_read(handle, channel, &out_raw)
+         * 来自 esp_adc/include/esp_adc/adc_oneshot.h:89 */
         esp_err_t ret = adc_oneshot_read(s_adc1_handle, channel, &raw);
         if (ret != ESP_OK) {
             ESP_LOGW(TAG, "ADC 读取失败: %s", esp_err_to_name(ret));
@@ -92,21 +102,28 @@ static int adc_filter_sample(adc_channel_t channel)
 esp_err_t photo_sensor_init(void)
 {
     /* ---- 1. 初始化 ADC1 单元 ---- */
+    /* API: adc_oneshot_new_unit(init_config, ret_unit)
+     * 来自 esp_adc/include/esp_adc/adc_oneshot.h:57 */
     adc_oneshot_unit_init_cfg_t init_cfg = {
-        .unit_id = ADC_UNIT_1,
+        .unit_id = PHOTO_ADC_UNIT,  /* ADC_UNIT_1 */
     };
     ESP_ERROR_CHECK(adc_oneshot_new_unit(&init_cfg, &s_adc1_handle));
 
-    /* ---- 2. 配置 ADC1_CH4 (GPIO5): 12 位精度, 11dB 衰减 (满量程 ~3.3V) ---- */
-    /*    REQUIREMENT.md 5.4: adc1_config_channel_atten(ADC1_CHANNEL_4, ADC_ATTEN_DB_11) */
+    /* ---- 2. 配置 ADC1_CH4 (GPIO20): 12 位精度, 12dB 衰减 (满量程 ~3.3V) ---- */
+    /* API: adc_oneshot_config_channel(handle, channel, config)
+     * 来自 esp_adc/include/esp_adc/adc_oneshot.h:72
+     * ADC_ATTEN_DB_12: 满量程 ~3.3V
+     * 来自 hal/include/hal/adc_types.h:50
+     * ADC_BITWIDTH_12: 12位箾ADC输出 (0~4095)
+     * 来自 hal/include/hal/adc_types.h:62 */
     adc_oneshot_chan_cfg_t chan_cfg = {
-        .atten    = ADC_ATTEN_DB_12,    /*!< 满量程 ~3.3V (v5.x 新名称, 等价旧版 ADC_ATTEN_DB_11) */
-        .bitwidth = ADC_BITWIDTH_12,    /*!< 12 位精度 (0~4095) */
+        .atten    = ADC_ATTEN_DB_12,
+        .bitwidth = ADC_BITWIDTH_12,
     };
     ESP_ERROR_CHECK(adc_oneshot_config_channel(s_adc1_handle, PHOTO_ADC_CHAN, &chan_cfg));
 
     /* ---- 3. 配置 DO 引脚 (GPIO23) 为数字输入 ---- */
-    /*    使用说明书: DO 为 LM393 比较器输出, TTL 电平 */
+    /* 使用说明书: DO 为 LM393 比较器输出, TTL 电平 */
     gpio_config_t io_conf = {
         .pin_bit_mask  = (1ULL << PHOTO_DO_GPIO),
         .mode          = GPIO_MODE_INPUT,
@@ -127,17 +144,17 @@ esp_err_t photo_sensor_read(photo_data_t *data)
         return ESP_ERR_INVALID_ARG;
     }
 
-    /* ---- 读取 AO 模拟量 (ADC1_CH4) ---- */
+    /* ---- 读取 AO 模拟量 (ADC1_CH4/GPIO20) ---- */
     int filtered = adc_filter_sample(PHOTO_ADC_CHAN);
     if (filtered < 0) {
         /* ADC 异常: 全零或全满 (REQUIREMENT.md 5.7: err |= 0x08) */
-        data->light_v = 0.0f;
-        data->err     = 0x08;
+        data->light_raw = -1;
+        data->err       = 0x08;
         ESP_LOGE(TAG, "光敏 ADC 采样异常 (全零或全满)");
     } else {
-        /* 电压换算 (REQUIREMENT.md 5.4): voltage = adc_reading * 3.3 / 4095.0 */
-        data->light_v = (float)filtered * 3.3f / 4095.0f;
-        data->err     = 0;
+        /* 直接返回滤波后的原始 ADC 值, 范围 0~4095 */
+        data->light_raw = filtered;
+        data->err       = 0;
     }
 
     /* ---- 读取 DO 数字量 (GPIO23) ---- */

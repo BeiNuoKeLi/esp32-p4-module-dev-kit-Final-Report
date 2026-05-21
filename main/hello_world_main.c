@@ -13,12 +13,13 @@
 #include "esp_event.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "sensors.h"
 
 /* ================== Wi-Fi 配置（通过 menuconfig 设置）================== */
 #define WIFI_SSID   CONFIG_EXAMPLE_WIFI_SSID
 #define WIFI_PASS   CONFIG_EXAMPLE_WIFI_PASSWORD
 
-static const char *TAG = "wifi_sta";
+static const char *TAG = "main";
 
 /* ================== Wi-Fi 事件回调 ================== */
 static void wifi_event_handler(void *arg, esp_event_base_t event_base,
@@ -79,9 +80,45 @@ static void wifi_init_sta(void)
     ESP_LOGI(TAG, "Wi-Fi STA init done, SSID: %s", WIFI_SSID);
 }
 
+/* ================== 光敏电阻传感器读取任务 ================== */
+static void photo_sensor_task(void *arg)
+{
+    photo_data_t data;
+
+    /* 初始化光敏电阻传感器 */
+    esp_err_t ret = photo_sensor_init();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "光敏电阻传感器初始化失败");
+        vTaskDelete(NULL);
+        return;
+    }
+
+    /* 循环读取传感器数据, 每 2 秒一次 (REQUIREMENT.md 5.2) */
+    while (1) {
+        photo_sensor_read(&data);
+
+        /* AO 电压 + DO 电平 + 错误状态 */
+        ESP_LOGI(TAG, "光敏: AO=%.2fV | DO=%d (%s)",
+                 data.light_v, data.do_level,
+                 data.do_level ? "正常" : "超阈值");
+
+        if (data.err) {
+            ESP_LOGW(TAG, "光敏传感器错误: 0x%02X", data.err);
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(2000));
+    }
+}
+
 /* ================== 主入口 ================== */
 void app_main(void)
 {
-    ESP_LOGI(TAG, "ESP32-P4 Wi-Fi Station Example (via SDIO + ESP32-C6)");
-    wifi_init_sta();
+    ESP_LOGI(TAG, "ESP32-P4 光敏电阻传感器测试 (最简移植版)");
+
+    /* WiFi STA 初始化 — 暂时注释, 避免 SDIO 重连 crash 干扰传感器测试
+     * 后续需要 WiFi 传输时再启用: wifi_init_sta(); */
+    // wifi_init_sta();
+
+    /* 创建光敏电阻传感器读取任务 (REQUIREMENT.md 5.2: 优先级3, 栈4096) */
+    xTaskCreate(photo_sensor_task, "photo_sensor", 4096, NULL, 3, NULL);
 }

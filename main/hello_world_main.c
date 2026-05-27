@@ -80,6 +80,33 @@ static void wifi_init_sta(void)
     ESP_LOGI(TAG, "Wi-Fi STA init done, SSID: %s", WIFI_SSID);
 }
 
+/* ================== DHT11 温湿度传感器读取任务 ================== */
+static void dht11_task(void *arg)
+{
+    dht11_data_t data;
+
+    /* 初始化 DHT11 传感器 */
+    esp_err_t ret = dht11_init();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "DHT11 初始化失败");
+        vTaskDelete(NULL);
+        return;
+    }
+
+    /* 循环读取传感器数据, 每 2 秒一次 (REQUIREMENT.md 5.2, 采样周期≥2秒) */
+    while (1) {
+        dht11_read(&data);
+
+        if (data.err) {
+            ESP_LOGW(TAG, "DHT11: 读取失败, err=0x%02X", data.err);
+        } else {
+            ESP_LOGI(TAG, "DHT11: 温度=%d°C | 湿度=%d%%RH", data.temp, data.humi);
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(2000));
+    }
+}
+
 /* ================== 光敏电阻传感器读取任务 ================== */
 static void photo_sensor_task(void *arg)
 {
@@ -113,11 +140,14 @@ static void photo_sensor_task(void *arg)
 /* ================== 主入口 ================== */
 void app_main(void)
 {
-    ESP_LOGI(TAG, "ESP32-P4 光敏电阻传感器测试 (最简移植版)");
+    ESP_LOGI(TAG, "ESP32-P4 DHT11 + 光敏电阻传感器测试 (最简验证版)");
 
     /* WiFi STA 初始化 — 暂时注释, 避免 SDIO 重连 crash 干扰传感器测试
      * 后续需要 WiFi 传输时再启用: wifi_init_sta(); */
     // wifi_init_sta();
+
+    /* 创建 DHT11 传感器读取任务 (REQUIREMENT.md 5.2: 优先级3, 栈4096) */
+    xTaskCreate(dht11_task, "dht11_sensor", 4096, NULL, 3, NULL);
 
     /* 创建光敏电阻传感器读取任务 (REQUIREMENT.md 5.2: 优先级3, 栈4096) */
     xTaskCreate(photo_sensor_task, "photo_sensor", 4096, NULL, 3, NULL);

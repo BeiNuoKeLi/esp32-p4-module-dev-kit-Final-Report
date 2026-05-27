@@ -34,6 +34,9 @@
 #include "esp_adc/adc_oneshot.h"
 #include "stdint.h"
 
+/* ==================== DS18B20 引脚定义 ==================== */
+#define DS18B20_DATA_GPIO   1               /*!< DATA → GPIO1 (REQUIREMENT.md 3.1) */
+
 /* ==================== DHT11 引脚定义 ==================== */
 #define DHT11_DATA_GPIO     2               /*!< DATA → GPIO2 (REQUIREMENT.md 3.1) */
 
@@ -54,6 +57,12 @@ typedef struct {
     int     humi;       /*!< 湿度 (%RH), 整数 (DHT11 小数恒为0) */
     int     err;        /*!< 错误标志: bit0=DHT11校验失败/无响应 (REQUIREMENT.md 5.7) */
 } dht11_data_t;
+
+/* ==================== DS18B20 传感器数据结构 ==================== */
+typedef struct {
+    float   temp;       /*!< 温度 (°C), 高精度 0.0625°C (DS18B20 数据手册) */
+    int     err;        /*!< 错误标志: bit1=DS18B20无响应 (REQUIREMENT.md 5.7) */
+} ds18b20_data_t;
 
 /* ==================== 光敏电阻传感器数据结构 ==================== */
 typedef struct {
@@ -85,6 +94,33 @@ esp_err_t dht11_init(void);
  * @return ESP_OK 成功, ESP_ERR_INVALID_ARG 参数无效, ESP_FAIL 读取/校验失败
  */
 esp_err_t dht11_read(dht11_data_t *data);
+
+/* ==================== DS18B20 函数声明 ==================== */
+/**
+ * @brief 初始化 DS18B20 温度传感器 (GPIO1)
+ *
+ * - 配置 GPIO1 为开漏输入输出模式
+ * - 外接 4.7KΩ 上拉电阻 (REQUIREMENT.md 3.2)
+ *
+ * @return ESP_OK 成功
+ */
+esp_err_t ds18b20_init(void);
+
+/**
+ * @brief 读取 DS18B20 温度传感器数据
+ *
+ * 1-Wire 操作流程 (来自参考代码 DS18B20.c):
+ *   1. One_Wire_Init(): 主机拉低 500µs → 释放 → 检测从机响应
+ *   2. WriteData(0xCC): Skip ROM 命令 (单设备时)
+ *   3. WriteData(0x44): 启动温度转换
+ *   4. 等待 ≥750ms (12位转换时间)
+ *   5. 再次 Init() + 0xCC + 0xBE (读暂存器)
+ *   6. 读 2 字节: Temp = (H << 8 | L) / 16.0
+ *
+ * @param[out] data DS18B20 数据结构体指针
+ * @return ESP_OK 成功, ESP_ERR_INVALID_ARG 参数无效, ESP_FAIL 无响应
+ */
+esp_err_t ds18b20_read(ds18b20_data_t *data);
 
 /* ==================== 光敏电阻函数声明 ==================== */
 /**

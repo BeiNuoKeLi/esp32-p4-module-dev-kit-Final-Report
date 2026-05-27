@@ -48,6 +48,7 @@
 #include <stdlib.h>   /* qsort */
 
 static const char *TAG_DHT11 = "dht11";
+static const char *TAG_DS18B20 = "ds18b20";
 static const char *TAG_PHOTO = "photo_sensor";
 
 /* ADC1 单元句柄 */
@@ -182,6 +183,180 @@ esp_err_t dht11_read(dht11_data_t *data)
     data->humi = dht11_data[0];  /* 湿度整数 */
     data->temp = dht11_data[2];  /* 温度整数 */
     data->err  = 0;
+
+    return ESP_OK;
+}
+
+/* ==================== DS18B20 内部函数 ==================== */
+
+/**
+ * @brief 1-Wire 总线初始化 (来自参考代码 One_Wire_Init)
+ *
+ * @return 0 成功, 1 无响应
+ */
+static int one_wire_init(void)
+{
+    /* 1. 拉低总线 500µs */
+    gpio_set_level(DS18B20_DATA_GPIO, 0);
+    portDISABLE_INTERRUPTS();
+    esp_rom_delay_us(500);
+    portENABLE_INTERRUPTS();
+
+    /* 2. 释放总线 */
+    gpio_set_level(DS18B20_DATA_GPIO, 1);
+
+    /* 3. 等待 100µs 后检测响应 */
+    portDISABLE_INTERRUPTS();
+    esp_rom_delay_us(100);
+    int ack = gpio_get_level(DS18B20_DATA_GPIO);
+
+    /* 4. 延时 400µs 让时序完整 (总时长 ≥480µs) */
+    esp_rom_delay_us(400);
+    portENABLE_INTERRUPTS();
+
+    return ack;
+}
+
+/**
+ * @brief 1-Wire 写一个字节 (来自参考代码 One_Wire_WriteData)
+ *
+ * @param byte 要写入的字节
+ */
+static void one_wire_write_byte(uint8_t byte)
+{
+    for (int i = 0; i < 8; i++) {
+        if (byte & (0x01 << i)) {
+            /* 写1: 拉低 10µs → 释放 */
+            gpio_set_level(DS18B20_DATA_GPIO, 0);
+            portDISABLE_INTERRUPTS();
+            esp_rom_delay_us(10);
+            portENABLE_INTERRUPTS();
+            gpio_set_level(DS18B20_DATA_GPIO, 1);
+
+            portDISABLE_INTERRUPTS();
+            esp_rom_delay_us(60);
+            portENABLE_INTERRUPTS();
+        } else {
+            /* 写0: 拉低 60µs → 释放 */
+            gpio_set_level(DS18B20_DATA_GPIO, 0);
+            portDISABLE_INTERRUPTS();
+            esp_rom_delay_us(60);
+            portENABLE_INTERRUPTS();
+            gpio_set_level(DS18B20_DATA_GPIO, 1);
+
+            portDISABLE_INTERRUPTS();
+            esp_rom_delay_us(10);
+            portENABLE_INTERRUPTS();
+        }
+    }
+}
+
+/**
+ * @brief 1-Wire 读一个字节 (来自参考代码 One_Wire_ReadData)
+ *
+ * @return 读取到的字节
+ */
+static uint8_t one_wire_read_byte(void)
+{
+    uint8_t byte = 0;
+
+    for (int i = 0; i < 8; i++) {
+        /* 1. 拉低总线 5µs */
+        gpio_set_level(DS18B20_DATA_GPIO, 0);
+        portDISABLE_INTERRUPTS();
+        esp_rom_delay_us(5);
+        portENABLE_INTERRUPTS();
+
+        /* 2. 释放总线 */
+        gpio_set_level(DS18B20_DATA_GPIO, 1);
+
+        /* 3. 等待 5µs 后读取 */
+        portDISABLE_INTERRUPTS();
+        esp_rom_delay_us(5);
+        if (gpio_get_level(DS18B20_DATA_GPIO)) {
+            byte |= (0x01 << i);
+        }
+        portENABLE_INTERRUPTS();
+
+        /* 4. 等待 60µs 让 slot 结束 */
+        portDISABLE_INTERRUPTS();
+        esp_rom_delay_us(60);
+        portENABLE_INTERRUPTS();
+    }
+
+    return byte;
+}
+
+/* ==================== DS18B20 公共函数 ==================== */
+
+esp_err_t ds18b20_init(void)
+{
+    /* 配置 DATA 引脚为开漏输入输出模式 (1-Wire总线要求) */
+    gpio_config_t io_conf = {
+        .pin_bit_mask  = (1ULL << DS18B20_DATA_GPIO),
+        .mode          = GPIO_MODE_INPUT_OUTPUT_OD,  /* 开漏模式 */
+        .pull_up_en    = GPIO_PULLUP_DISABLE,       /* 外部接4.7K上拉电阻 */
+        .pull_down_en  = GPIO_PULLDOWN_DISABLE,
+        .intr_type     = GPIO_INTR_DISABLE,
+    };
+    ESP_ERROR_CHECK(gpio_config(&io_conf));
+
+    /* 初始拉高总线 */
+    gpio_set_level(DS18B20_DATA_GPIO, 1);
+
+    ESP_LOGI(TAG_DS18B20, "DS18B20 初始化完成 (DATA=GPIO%d)", DS18B20_DATA_GPIO);
+    return ESP_OK;
+}
+
+esp_err_t ds18b20_read(ds18b20_data_t *data)
+{
+    if (data == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    uint8_t low_byte, high_byte;
+
+    /* 1. 初始化并检测响应 */
+    if (one_wire_init() != 0) {
+        ESP_LOGW(TAG_DS18B20, "DS18B20 无响应");
+        data->temp = -999.0;
+        data->err  = 0x02;
+        return ESP_FAIL;
+    }
+
+    /* 2. 发送 Skip ROM 命令 (0xCC) - 单设备时跳过ROM匹配 */
+    one_wire_write_byte(0xCC);
+
+    /* 3. 发送温度转换命令 (0x44) */
+    one_wire_write_byte(0x44);
+
+    /* 4. 等待转换完成 (12位分辨率最大 750ms) */
+    vTaskDelay(pdMS_TO_TICKS(800));
+
+    /* 5. 再次初始化 */
+    if (one_wire_init() != 0) {
+        ESP_LOGW(TAG_DS18B20, "DS18B20 第二次初始化无响应");
+        data->temp = -999.0;
+        data->err  = 0x02;
+        return ESP_FAIL;
+    }
+
+    /* 6. 发送 Skip ROM 命令 */
+    one_wire_write_byte(0xCC);
+
+    /* 7. 发送读暂存器命令 (0xBE) */
+    one_wire_write_byte(0xBE);
+
+    /* 8. 读取温度数据 (低字节在前, 高字节在后) */
+    low_byte  = one_wire_read_byte();
+    high_byte = one_wire_read_byte();
+
+    /* 9. 计算温度值: (高字节 << 8 | 低字节) / 16.0 */
+    int temp_raw = (high_byte << 8) | low_byte;
+    data->temp = temp_raw / 16.0;
+    data->err  = 0;
+
+    ESP_LOGI(TAG_DS18B20, "DS18B20: 温度=%.4f°C (raw=0x%04X)", data->temp, temp_raw);
 
     return ESP_OK;
 }

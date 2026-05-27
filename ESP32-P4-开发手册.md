@@ -1,12 +1,10 @@
-# ESP32-P4 开发手册 - Agent 使用指南
+# ESP32-P4 开发手册
 
 ## 项目基本信息
 - **目标芯片**: ESP32-P4
 - **IDF 版本**: v5.5.1
 - **ESP-IDF 根目录**: f:/BeiNuoKeLi/esp/esp-idf
-- **工作目录**: f:/BeiNuoKeLi/esp/esp-idf
 - **开发板**: 微雪 ESP32-P4-Module-DEV-KIT
-- **文档位置**: f:/BeiNuoKeLi/esp/esp-idf/.trae/rules/ESP32-P4-开发手册.md
 
 ---
 
@@ -19,12 +17,11 @@
 
 ### 存储
 - HP ROM: 128 KB
-- LP ROM: 16 KB
 - HP L2MEM: 768 KB
 - LP SRAM: 32 KB
 - TCM: 8 KB
-- PSRAM: 32 MB (封装内)
-- Nor Flash: 16 MB (模组集成)
+- PSRAM: 32 MB ✅ 已配置并启用
+- Nor Flash: 16 MB
 
 ---
 
@@ -133,6 +130,23 @@ f:/BeiNuoKeLi/esp/esp-idf/examples/
 
 ---
 
+## PSRAM 配置
+
+**当前配置：最佳性能模式**
+
+| 配置项 | 值 |
+|--------|-----|
+| PSRAM 启用 | ✅ |
+| 线宽模式 | 16线 (HEX) |
+| 时钟速度 | 200MHz |
+| XIP 模式 | ❌ 禁用 |
+| BSS 段 | ✅ PSRAM |
+| 内存测试 | ✅ 启用 |
+
+完整配置见 [PSRAM_DEBUG_GUIDE.md](file:///F:/CodeProject/iiot_Experiment_2/code/02_HelloWorld/PSRAM_DEBUG_GUIDE.md)
+
+---
+
 ## ESP32-P4 特有外设
 
 | 外设 | 说明 | 相关组件 |
@@ -205,13 +219,7 @@ f:/BeiNuoKeLi/esp/esp-idf/components/soc/esp32p4/Kconfig
 
 ## 重要提示
 
-1. **不要使用 Arduino 框架**：当前 ESP32-P4 在 Arduino 平台支持有限，推荐使用 ESP-IDF v5.5.1
-2. **搜索时带上 esp32p4**：确保搜索结果针对正确的芯片
-3. **优先使用独立驱动**：v5.5.1 已将大部分外设从 driver/ 拆分到独立的 esp_driver_* 组件
-
----
-
-## 本手册位置
-```
-f:/BeiNuoKeLi/esp/esp-idf/.trae/rules/ESP32-P4-开发手册.md
-```
+1. **PSRAM 当前配置已最佳化**，无需启用XIP
+2. **不要使用 Arduino 框架**：当前 ESP32-P4 在 Arduino 平台支持有限，推荐使用 ESP-IDF v5.5.1
+3. **搜索时带上 esp32p4**：确保搜索结果针对正确的芯片
+4. **优先使用独立驱动**：v5.5.1 已将大部分外设从 driver/ 拆分到独立的 esp_driver_* 组件

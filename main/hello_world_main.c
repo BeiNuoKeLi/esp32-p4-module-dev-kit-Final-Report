@@ -13,12 +13,13 @@
 #include "esp_event.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "sensors.h"
 
 /* ================== Wi-Fi 配置（通过 menuconfig 设置）================== */
 #define WIFI_SSID   CONFIG_EXAMPLE_WIFI_SSID
 #define WIFI_PASS   CONFIG_EXAMPLE_WIFI_PASSWORD
 
-static const char *TAG = "wifi_sta";
+static const char *TAG = "main";
 
 /* ================== Wi-Fi 事件回调 ================== */
 static void wifi_event_handler(void *arg, esp_event_base_t event_base,
@@ -79,9 +80,137 @@ static void wifi_init_sta(void)
     ESP_LOGI(TAG, "Wi-Fi STA init done, SSID: %s", WIFI_SSID);
 }
 
+/* ================== MQ-135 空气质量传感器读取任务 ================== */
+static void mq135_task(void *arg)
+{
+    mq135_data_t data;
+
+    /* 初始化 MQ-135 空气质量传感器 */
+    esp_err_t ret = mq135_init();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "MQ-135 初始化失败");
+        vTaskDelete(NULL);
+        return;
+    }
+
+    /* 循环读取传感器数据, 每 2 秒一次 (REQUIREMENT.md 5.2) */
+    while (1) {
+        mq135_read(&data);
+
+        if (data.err) {
+            ESP_LOGW(TAG, "MQ-135: 读取失败, err=0x%02X", data.err);
+        } else {
+            ESP_LOGI(TAG, "MQ-135: AO_raw=%d | V=%.2fV | DO=%d (%s)",
+                     data.ao_raw, data.voltage, data.do_level,
+                     data.do_level ? "正常" : "超阈值");
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(2000));
+    }
+}
+
+/* ================== DS18B20 温度传感器读取任务 ================== */
+static void ds18b20_task(void *arg)
+{
+    ds18b20_data_t data;
+
+    /* 初始化 DS18B20 传感器 */
+    esp_err_t ret = ds18b20_init();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "DS18B20 初始化失败");
+        vTaskDelete(NULL);
+        return;
+    }
+
+    /* 循环读取传感器数据, 每 3 秒一次 (包含 800ms 转换时间) */
+    while (1) {
+        ds18b20_read(&data);
+
+        if (data.err) {
+            ESP_LOGW(TAG, "DS18B20: 读取失败, err=0x%02X", data.err);
+        } else {
+            ESP_LOGI(TAG, "DS18B20: 温度=%.4f°C", data.temp);
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(3000));
+    }
+}
+
+/* ================== DHT11 温湿度传感器读取任务 ================== */
+static void dht11_task(void *arg)
+{
+    dht11_data_t data;
+
+    /* 初始化 DHT11 传感器 */
+    esp_err_t ret = dht11_init();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "DHT11 初始化失败");
+        vTaskDelete(NULL);
+        return;
+    }
+
+    /* 循环读取传感器数据, 每 2 秒一次 (REQUIREMENT.md 5.2, 采样周期≥2秒) */
+    while (1) {
+        dht11_read(&data);
+
+        if (data.err) {
+            ESP_LOGW(TAG, "DHT11: 读取失败, err=0x%02X", data.err);
+        } else {
+            ESP_LOGI(TAG, "DHT11: 温度=%d°C | 湿度=%d%%RH", data.temp, data.humi);
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(2000));
+    }
+}
+
+/* ================== 光敏电阻传感器读取任务 ================== */
+static void photo_sensor_task(void *arg)
+{
+    photo_data_t data;
+
+    /* 初始化光敏电阻传感器 */
+    esp_err_t ret = photo_sensor_init();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "光敏电阻传感器初始化失败");
+        vTaskDelete(NULL);
+        return;
+    }
+
+    /* 循环读取传感器数据, 每 2 秒一次 (REQUIREMENT.md 5.2) */
+    while (1) {
+        photo_sensor_read(&data);
+
+        /* AO 原始 ADC 值 + DO 电平 + 错误状态 */
+        ESP_LOGI(TAG, "光敏: AO_raw=%d | DO=%d (%s)",
+                 data.light_raw, data.do_level,
+                 data.do_level ? "正常" : "超阈值");
+
+        if (data.err) {
+            ESP_LOGW(TAG, "光敏传感器错误: 0x%02X", data.err);
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(2000));
+    }
+}
+
 /* ================== 主入口 ================== */
 void app_main(void)
 {
-    ESP_LOGI(TAG, "ESP32-P4 Wi-Fi Station Example (via SDIO + ESP32-C6)");
-    wifi_init_sta();
+    ESP_LOGI(TAG, "ESP32-P4 MQ-135 + DS18B20 + DHT11 + 光敏电阻传感器测试");
+
+    /* WiFi STA 初始化 — 暂时注释, 避免 SDIO 重连 crash 干扰传感器测试
+     * 后续需要 WiFi 传输时再启用: wifi_init_sta(); */
+    // wifi_init_sta();
+
+    /* 创建 MQ-135 空气质量传感器读取任务 (优先级3, 栈4096) */
+    xTaskCreate(mq135_task, "mq135_sensor", 4096, NULL, 3, NULL);
+
+    /* 创建 DS18B20 传感器读取任务 (优先级3, 栈4096) */
+    xTaskCreate(ds18b20_task, "ds18b20_sensor", 4096, NULL, 3, NULL);
+
+    /* 创建 DHT11 传感器读取任务 (优先级3, 栈4096) */
+    xTaskCreate(dht11_task, "dht11_sensor", 4096, NULL, 3, NULL);
+
+    /* 创建光敏电阻传感器读取任务 (优先级3, 栈4096) */
+    xTaskCreate(photo_sensor_task, "photo_sensor", 4096, NULL, 3, NULL);
 }

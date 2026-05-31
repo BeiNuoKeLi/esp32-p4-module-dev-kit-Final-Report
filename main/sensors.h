@@ -40,11 +40,16 @@
 /* ==================== DHT11 引脚定义 ==================== */
 #define DHT11_DATA_GPIO     2               /*!< DATA → GPIO2 (REQUIREMENT.md 3.1) */
 
+/* ==================== MQ-135 引脚定义 ==================== */
+/* ADC1_CHANNEL_5_GPIO_NUM = 21 (来自 soc/esp32p4/include/soc/adc_channel.h) */
+#define MQ135_AO_GPIO       21              /*!< AO → GPIO21, ADC1_CH5 (REQUIREMENT.md 3.1) */
+#define MQ135_DO_GPIO       22              /*!< DO → GPIO22, 数字输入, 需电平转换 5V→3.3V (REQUIREMENT.md 3.2) */
+#define MQ135_ADC_CHAN      ADC_CHANNEL_5   /*!< GPIO21 对应 ADC1_CH5 */
+
 /* ==================== 光敏电阻引脚定义 ==================== */
 /* ADC1_CHANNEL_4_GPIO_NUM = 20 (来自 soc/esp32p4/include/soc/adc_channel.h) */
 #define PHOTO_AO_GPIO       20              /*!< AO → GPIO20, ADC1_CH4 */
 #define PHOTO_DO_GPIO       23              /*!< DO → GPIO23, 数字输入 */
-#define PHOTO_ADC_UNIT      ADC_UNIT_1      /*!< 使用 ADC1 单元 */
 #define PHOTO_ADC_CHAN      ADC_CHANNEL_4   /*!< GPIO20 对应 ADC1_CH4 */
 
 /* ==================== ADC 滤波参数 (REQUIREMENT.md 5.5) ==================== */
@@ -63,6 +68,14 @@ typedef struct {
     float   temp;       /*!< 温度 (°C), 高精度 0.0625°C (DS18B20 数据手册) */
     int     err;        /*!< 错误标志: bit1=DS18B20无响应 (REQUIREMENT.md 5.7) */
 } ds18b20_data_t;
+
+/* ==================== MQ-135 传感器数据结构 ==================== */
+typedef struct {
+    int     ao_raw;     /*!< AO 滤波后 ADC 原始值 (0~4095, 12位) */
+    float   voltage;    /*!< AO 电压 (V), ao_raw * 3.3 / 4095 (REQUIREMENT.md 5.4) */
+    int     do_level;   /*!< DO 电平: 0=超阈值(报警), 1=正常 (模块基础参数: TTL低电平有效) */
+    int     err;        /*!< 错误标志: bit2=MQ135 ADC异常 (REQUIREMENT.md 5.7) */
+} mq135_data_t;
 
 /* ==================== 光敏电阻传感器数据结构 ==================== */
 typedef struct {
@@ -121,6 +134,30 @@ esp_err_t ds18b20_init(void);
  * @return ESP_OK 成功, ESP_ERR_INVALID_ARG 参数无效, ESP_FAIL 无响应
  */
 esp_err_t ds18b20_read(ds18b20_data_t *data);
+
+/* ==================== MQ-135 函数声明 ==================== */
+/**
+ * @brief 初始化 MQ-135 空气质量传感器 (ADC1_CH5/GPIO21 + GPIO22)
+ *
+ * - ADC 单元与光敏共享 ADC1，内部调用 adc1_shared_init() 确保只初始化一次
+ * - 配置 ADC1_CH5 (GPIO21): 12 位精度, 12dB 衰减
+ * - 配置 GPIO22 为数字输入 (DO, TTL 低电平有效)
+ * - 注意: MQ-135 模块需预热 ≥3 分钟读数才稳定 (技术手册)
+ *
+ * @return ESP_OK 成功
+ */
+esp_err_t mq135_init(void);
+
+/**
+ * @brief 读取 MQ-135 空气质量传感器数据
+ *
+ * - AO: 12 次采样 → 算术平均滤波 → 原始 ADC 值 + 换算电压
+ * - DO: 直接读取 GPIO 电平 (0=超阈值/报警, 1=正常)
+ *
+ * @param[out] data MQ-135 数据结构体指针
+ * @return ESP_OK 成功, ESP_ERR_INVALID_ARG 参数无效
+ */
+esp_err_t mq135_read(mq135_data_t *data);
 
 /* ==================== 光敏电阻函数声明 ==================== */
 /**

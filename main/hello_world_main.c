@@ -80,6 +80,35 @@ static void wifi_init_sta(void)
     ESP_LOGI(TAG, "Wi-Fi STA init done, SSID: %s", WIFI_SSID);
 }
 
+/* ================== MQ-135 空气质量传感器读取任务 ================== */
+static void mq135_task(void *arg)
+{
+    mq135_data_t data;
+
+    /* 初始化 MQ-135 空气质量传感器 */
+    esp_err_t ret = mq135_init();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "MQ-135 初始化失败");
+        vTaskDelete(NULL);
+        return;
+    }
+
+    /* 循环读取传感器数据, 每 2 秒一次 (REQUIREMENT.md 5.2) */
+    while (1) {
+        mq135_read(&data);
+
+        if (data.err) {
+            ESP_LOGW(TAG, "MQ-135: 读取失败, err=0x%02X", data.err);
+        } else {
+            ESP_LOGI(TAG, "MQ-135: AO_raw=%d | V=%.2fV | DO=%d (%s)",
+                     data.ao_raw, data.voltage, data.do_level,
+                     data.do_level ? "正常" : "超阈值");
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(2000));
+    }
+}
+
 /* ================== DS18B20 温度传感器读取任务 ================== */
 static void ds18b20_task(void *arg)
 {
@@ -167,11 +196,14 @@ static void photo_sensor_task(void *arg)
 /* ================== 主入口 ================== */
 void app_main(void)
 {
-    ESP_LOGI(TAG, "ESP32-P4 DS18B20 + DHT11 + 光敏电阻传感器测试");
+    ESP_LOGI(TAG, "ESP32-P4 MQ-135 + DS18B20 + DHT11 + 光敏电阻传感器测试");
 
     /* WiFi STA 初始化 — 暂时注释, 避免 SDIO 重连 crash 干扰传感器测试
      * 后续需要 WiFi 传输时再启用: wifi_init_sta(); */
     // wifi_init_sta();
+
+    /* 创建 MQ-135 空气质量传感器读取任务 (优先级3, 栈4096) */
+    xTaskCreate(mq135_task, "mq135_sensor", 4096, NULL, 3, NULL);
 
     /* 创建 DS18B20 传感器读取任务 (优先级3, 栈4096) */
     xTaskCreate(ds18b20_task, "ds18b20_sensor", 4096, NULL, 3, NULL);

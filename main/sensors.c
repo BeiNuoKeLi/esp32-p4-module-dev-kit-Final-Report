@@ -49,10 +49,12 @@
 
 static const char *TAG_DHT11 = "dht11";
 static const char *TAG_DS18B20 = "ds18b20";
+static const char *TAG_MQ135 = "mq135";
 static const char *TAG_PHOTO = "photo_sensor";
 
-/* ADC1 单元句柄 */
+/* ADC1 单元句柄 (MQ-135 与光敏共用) */
 static adc_oneshot_unit_handle_t s_adc1_handle;
+static bool s_adc1_inited = false;
 
 /* ==================== DHT11 内部函数 ==================== */
 
@@ -361,6 +363,89 @@ esp_err_t ds18b20_read(ds18b20_data_t *data)
     return ESP_OK;
 }
 
+/* ==================== ADC1 共享初始化 ==================== */
+
+/**
+ * @brief 确保 ADC1 单元已初始化 (光敏与 MQ-135 共享 ADC1)
+ *
+ * 多次调用安全: 第二次及以后调用直接返回
+ * API: adc_oneshot_new_unit() 来自 esp_adc/include/esp_adc/adc_oneshot.h:57
+ */
+static void adc1_shared_init(void)
+{
+    if (s_adc1_inited) {
+        return;
+    }
+
+    adc_oneshot_unit_init_cfg_t init_cfg = {
+        .unit_id = ADC_UNIT_1,
+    };
+    ESP_ERROR_CHECK(adc_oneshot_new_unit(&init_cfg, &s_adc1_handle));
+    s_adc1_inited = true;
+}
+
+/* adc_filter_sample 前置声明 (定义在后, mq135_read 先调用) */
+static int adc_filter_sample(adc_channel_t channel);
+
+/* ==================== MQ-135 公共函数 ==================== */
+
+esp_err_t mq135_init(void)
+{
+    /* 1. 确保 ADC1 单元已初始化 (与光敏共享, 只初始化一次) */
+    adc1_shared_init();
+
+    /* 2. 配置 ADC1_CH5 (GPIO21): 12 位精度, 12dB 衰减
+     * API: adc_oneshot_config_channel() 来自 esp_adc/include/esp_adc/adc_oneshot.h:72 */
+    adc_oneshot_chan_cfg_t chan_cfg = {
+        .atten    = ADC_ATTEN_DB_12,
+        .bitwidth = ADC_BITWIDTH_12,
+    };
+    ESP_ERROR_CHECK(adc_oneshot_config_channel(s_adc1_handle, MQ135_ADC_CHAN, &chan_cfg));
+
+    /* 3. 配置 DO 引脚 (GPIO22) 为数字输入
+     * 模块基础参数: DO 为 TTL 低电平有效 (超阈值→0, 信号灯亮→1)
+     * 需电平转换 5V→3.3V (REQUIREMENT.md 3.2) */
+    gpio_config_t io_conf = {
+        .pin_bit_mask  = (1ULL << MQ135_DO_GPIO),
+        .mode          = GPIO_MODE_INPUT,
+        .pull_up_en    = GPIO_PULLUP_DISABLE,
+        .pull_down_en  = GPIO_PULLDOWN_DISABLE,
+        .intr_type     = GPIO_INTR_DISABLE,
+    };
+    ESP_ERROR_CHECK(gpio_config(&io_conf));
+
+    ESP_LOGI(TAG_MQ135, "MQ-135 初始化完成 (AO=GPIO%d/ADC1_CH5, DO=GPIO%d) 预热需≥3分钟",
+             MQ135_AO_GPIO, MQ135_DO_GPIO);
+    return ESP_OK;
+}
+
+esp_err_t mq135_read(mq135_data_t *data)
+{
+    if (data == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    /* 读取 AO 模拟量 (ADC1_CH5/GPIO21), 复用 adc_filter_sample() */
+    int filtered = adc_filter_sample(MQ135_ADC_CHAN);
+    if (filtered < 0) {
+        /* ADC 异常: 全零或全满 (REQUIREMENT.md 5.7: err |= 0x04) */
+        data->ao_raw  = -1;
+        data->voltage = -1.0;
+        data->err     = 0x04;
+        ESP_LOGE(TAG_MQ135, "MQ-135 ADC 采样异常 (全零或全满)");
+    } else {
+        data->ao_raw  = filtered;
+        data->voltage = filtered * 3.3f / 4095.0f;  /* REQUIREMENT.md 5.4 */
+        data->err     = 0;
+    }
+
+    /* 读取 DO 数字量 (GPIO22)
+     * 模块基础参数: TTL 低电平有效, 超阈值→0(报警), 正常→1 */
+    data->do_level = gpio_get_level(MQ135_DO_GPIO);
+
+    return ESP_OK;
+}
+
 /* ==================== 内部函数 ==================== */
 
 /**
@@ -429,13 +514,8 @@ static int adc_filter_sample(adc_channel_t channel)
 
 esp_err_t photo_sensor_init(void)
 {
-    /* ---- 1. 初始化 ADC1 单元 ---- */
-    /* API: adc_oneshot_new_unit(init_config, ret_unit)
-     * 来自 esp_adc/include/esp_adc/adc_oneshot.h:57 */
-    adc_oneshot_unit_init_cfg_t init_cfg = {
-        .unit_id = PHOTO_ADC_UNIT,  /* ADC_UNIT_1 */
-    };
-    ESP_ERROR_CHECK(adc_oneshot_new_unit(&init_cfg, &s_adc1_handle));
+    /* ---- 1. 确保 ADC1 单元已初始化 (与 MQ-135 共享, 只初始化一次) ---- */
+    adc1_shared_init();
 
     /* ---- 2. 配置 ADC1_CH4 (GPIO20): 12 位精度, 12dB 衰减 (满量程 ~3.3V) ---- */
     /* API: adc_oneshot_config_channel(handle, channel, config)

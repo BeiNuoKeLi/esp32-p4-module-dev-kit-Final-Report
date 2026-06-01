@@ -48,7 +48,7 @@ idf.py build flash monitor
 
 ## 关键约束
 
-- PSRAM 已禁用，代码不得依赖 `malloc` 外部分配
+- PSRAM 已启用 32MB（200MHz 16线模式），支持 ESP-IDF 堆分配器自动使用外部内存
 - MQ-135 上电预热 ≥ 3 分钟数据稳定
 - DS18B20 12 位精度 0.0625°C，转换时间 ≥ 750ms
 - OLED I2C 需 4.7KΩ 上拉电阻，已启用内部上拉

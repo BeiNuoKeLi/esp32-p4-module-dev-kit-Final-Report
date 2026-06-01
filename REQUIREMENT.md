@@ -14,7 +14,7 @@
 | 芯片 | ESP32-P4 (eco2, silicon v1.0, RISC-V 双核) |
 | 框架 | ESP-IDF v5.5.1 |
 | 编译器 | RISC-V 32-bit |
-| PSRAM | 当前已禁用（`CONFIG_SPIRAM=n`），代码中不得依赖 PSRAM |
+| PSRAM | 已启用 32MB（`CONFIG_SPIRAM=y`，200MHz 16线模式），详见 `PSRAM_DEBUG_GUIDE.md` |
 | WiFi | 已通过 `esp_wifi_remote`（SDIO → ESP32-C6 协处理器）联网，`app_main()` 中已调用 `wifi_init_sta()` |
 | 上位机 IP | `192.168.5.5`（Windows 局域网） |
 | 通信端口 | `8080`（UDP） |

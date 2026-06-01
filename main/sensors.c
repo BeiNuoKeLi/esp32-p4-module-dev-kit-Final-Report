@@ -58,10 +58,31 @@ static bool s_adc1_inited = false;
 
 /* ==================== DHT11 内部函数 ==================== */
 
+/* DHT11 忙等待超时次数 (每次 ~10us, 共 ~200us) */
+#define DHT11_TIMEOUT_LOOPS  20
+
+/**
+ * @brief 带超时的 GPIO 电平变化等待 (中断已关闭时使用)
+ *
+ * @param target  等待该电平结束 (0=等变高, 1=等变低)
+ * @param loops   最大轮询次数 (超时则返回 -1)
+ * @return 0 成功, -1 超时
+ */
+static int dht11_wait_level(int target, int loops)
+{
+    for (int n = 0; n < loops; n++) {
+        if (gpio_get_level(DHT11_DATA_GPIO) != target) {
+            return 0;  /* 电平已翻转, 正常 */
+        }
+        esp_rom_delay_us(10);
+    }
+    return -1;  /* 超时: GPIO 卡死 */
+}
+
 /**
  * @brief DHT11 复位并检测响应 (来自51参考代码 DHT11_ReadData)
  *
- * @return 0 成功, -1 无响应
+ * @return 0 成功, -1 无响应/超时
  */
 static int dht11_reset(void)
 {
@@ -83,11 +104,18 @@ static int dht11_reset(void)
         return -1;
     }
 
-    /* 5. 等待响应低电平结束 (80us) */
+    /* 5. 等待响应低电平结束 (~80us) + 高电平结束 (~80us) */
     portDISABLE_INTERRUPTS();
-    while (gpio_get_level(DHT11_DATA_GPIO) == 0);
-    /* 6. 等待响应高电平结束 (80us) */
-    while (gpio_get_level(DHT11_DATA_GPIO) == 1);
+    if (dht11_wait_level(0, DHT11_TIMEOUT_LOOPS) != 0) {
+        portENABLE_INTERRUPTS();
+        ESP_LOGW(TAG_DHT11, "响应低电平超时");
+        return -1;
+    }
+    if (dht11_wait_level(1, DHT11_TIMEOUT_LOOPS) != 0) {
+        portENABLE_INTERRUPTS();
+        ESP_LOGW(TAG_DHT11, "响应高电平超时");
+        return -1;
+    }
     portENABLE_INTERRUPTS();
 
     return 0;
@@ -96,16 +124,23 @@ static int dht11_reset(void)
 /**
  * @brief DHT11 读取一个字节 (来自51参考代码 DHT11_ReadData)
  *
- * @return 读取到的字节
+ * @param ok 输出参数: 1=成功, 0=超时
+ * @return 读取到的字节 (ok=0 时返回值无效)
  */
-static uint8_t dht11_read_byte(void)
+static uint8_t dht11_read_byte(int *ok)
 {
     uint8_t byte = 0;
+    *ok = 1;
 
     for (int i = 0; i < 8; i++) {
         /* 等待数据前置信号50us低电平结束 */
         portDISABLE_INTERRUPTS();
-        while (gpio_get_level(DHT11_DATA_GPIO) == 0);
+        if (dht11_wait_level(0, DHT11_TIMEOUT_LOOPS) != 0) {
+            portENABLE_INTERRUPTS();
+            ESP_LOGW(TAG_DHT11, "bit%d 低电平超时", i);
+            *ok = 0;
+            return 0;
+        }
 
         /* 等待40us左右判断是1还是0 */
         esp_rom_delay_us(40);
@@ -114,7 +149,12 @@ static uint8_t dht11_read_byte(void)
         if (gpio_get_level(DHT11_DATA_GPIO) == 1) {
             byte |= (0x80 >> i);
             /* 等待高电平结束 */
-            while (gpio_get_level(DHT11_DATA_GPIO) == 1);
+            if (dht11_wait_level(1, DHT11_TIMEOUT_LOOPS) != 0) {
+                portENABLE_INTERRUPTS();
+                ESP_LOGW(TAG_DHT11, "bit%d 高电平超时", i);
+                *ok = 0;
+                return 0;
+            }
         }
         portENABLE_INTERRUPTS();
     }
@@ -147,6 +187,21 @@ esp_err_t dht11_init(void)
     return ESP_OK;
 }
 
+/**
+ * @brief DHT11 GPIO 复位: 重新初始为开漏模式并拉高总线
+ *
+ * 任何 while-polling 超时后调用, 清除卡死状态
+ */
+static void dht11_gpio_reset(void)
+{
+    /* 切回推挽输出, 强制拉低→拉高→再切回开漏 */
+    gpio_set_direction(DHT11_DATA_GPIO, GPIO_MODE_OUTPUT);
+    gpio_set_level(DHT11_DATA_GPIO, 0);
+    esp_rom_delay_us(100);
+    gpio_set_level(DHT11_DATA_GPIO, 1);
+    gpio_set_direction(DHT11_DATA_GPIO, GPIO_MODE_INPUT_OUTPUT_OD);
+}
+
 esp_err_t dht11_read(dht11_data_t *data)
 {
     if (data == NULL) {
@@ -154,18 +209,28 @@ esp_err_t dht11_read(dht11_data_t *data)
     }
 
     uint8_t dht11_data[5];
+    int byte_ok;
 
     /* 1. 复位并检测响应 */
     if (dht11_reset() != 0) {
+        dht11_gpio_reset();
         data->temp = -1;
         data->humi = -1;
         data->err  = 0x01;
         return ESP_FAIL;
     }
 
-    /* 2. 读取 5 字节数据 */
+    /* 2. 读取 5 字节数据 (带超时保护) */
     for (int j = 0; j < 5; j++) {
-        dht11_data[j] = dht11_read_byte();
+        dht11_data[j] = dht11_read_byte(&byte_ok);
+        if (!byte_ok) {
+            /* 位读取超时: 复位 GPIO 后返回失败 */
+            dht11_gpio_reset();
+            data->temp = -1;
+            data->humi = -1;
+            data->err  = 0x01;
+            return ESP_FAIL;
+        }
     }
 
     /* 3. 拉高总线 */

@@ -2,7 +2,7 @@
 
 > **文档目的**：记录项目当前状态、规范和已实现功能，方便后续 Agent 理解和继续开发
 > 
-> **最后更新**：2026-05-27
+> **最后更新**：2026-06-01（OLED 验证通过，修复 I2C 数据传输 Bug）
 
 ---
 
@@ -36,6 +36,7 @@
 | **MQ-135** | GPIO21(AO) / GPIO22(DO) | ✅ 已实现 | 空气质量传感器，ADC1_CH5 |
 | **DHT11** | GPIO2 | ✅ 已验证 | 温湿度传感器，精度 ±2°C / ±5%RH |
 | **光敏电阻** | GPIO20(AO) / GPIO23(DO) | ✅ 已验证 | 光照强度测量，使用 ADC1_CH4 |
+| **OLED SSD1306** | GPIO7(SDA) / GPIO8(SCL) | ✅ 已验证 | 0.96寸 I2C OLED，8行 6x8 字体，1秒刷新 |
 
 ### 2.2 传感器参数
 
@@ -78,12 +79,26 @@
 
 ```
 main/
-├── hello_world_main.c    # 主入口，任务创建
-├── sensors.h             # 传感器驱动头文件
+├── hello_world_main.c    # 主入口，4传感器任务(独立) + OLED显示任务
+├── sensors.h             # 传感器驱动头文件 + sensor_shared_t 共享结构体
 ├── sensors.c            # 传感器驱动实现 (MQ-135 + DS18B20 + DHT11 + 光敏电阻)
+├── oled_ssd1306.h        # SSD1306 OLED 驱动头文件 (I2C, GPIO7/8, 6x8字体)
+├── oled_ssd1306.c        # SSD1306 OLED 驱动实现 (128x64 framebuffer, 整屏刷新)
 ├── udp_sender.h         # [待实现] UDP 任务声明
 └── udp_sender.c         # [待实现] JSON 组包 + UDP Socket
 ```
+
+### 2.4 OLED 显示内容（8行布局）
+
+| 行 | 内容 | 说明 |
+|----|------|------|
+| 0 | `Smart Monitor` | 系统标题 |
+| 1 | `DHT11:T=29C H=54%` | 空气温湿度（整数精度） |
+| 2 | `DS18B20: 27.875 C` | 高精度温度（0.0625°C分辨率） |
+| 3 | `MQ135: 0.99V OK` | 空气质量（电压 + 报警状态） |
+| 4 | `Light: 1375 OK` | 光照强度（ADC原始值 + 报警状态） |
+| 5 | `Alrt:OFF Err:0x00` | 报警汇总 + 传感器错误码 |
+| 6~7 | 空行 | 预留扩展 |
 
 ---
 
@@ -113,6 +128,8 @@ main/
 | MQ-135 | DO | **GPIO 22** | 数字输入（需电平转换 5V→3.3V） |
 | 光敏电阻 | AO | **GPIO 20** | ADC1_CH4（模拟输入） |
 | 光敏电阻 | DO | **GPIO 23** | 数字输入 |
+| OLED SSD1306 | SDA | **GPIO 7** | I2C 数据线 |
+| OLED SSD1306 | SCL | **GPIO 8** | I2C 时钟线 |
 
 ### 3.3 待实现引脚分配
 
@@ -120,7 +137,7 @@ main/
 |--------|------|-----------|------|
 | 蜂鸣器+LED | 控制 | GPIO 25 | 数字输出（需驱动电路） |
 
-### 3.3 电路要求
+### 3.4 电路要求
 
 | 项目 | 要求 |
 |------|------|
@@ -129,6 +146,7 @@ main/
 | MQ-135 DO 电平转换 | 模块 5V 供电时 DO = 5V TTL，必须经 2KΩ:1KΩ 电阻分压降至 3.3V |
 | MQ-135 预热 | 上电后 **预热 ≥ 3 分钟**读数稳定 |
 | DHT11 上电稳定 | 上电后 **等待 ≥ 1 秒**越过不稳定状态 |
+| OLED I2C 上拉 | SDA(IO7)/SCL(IO8) 各接 **4.7KΩ** 电阻至 3.3V（或开启内部上拉） |
 
 ---
 
@@ -150,6 +168,20 @@ typedef struct {
     int     do_level;   /* DO 电平: 0=超阈值, 1=正常 */
     int     err;        /* 错误标志: bit3=光敏ADC异常 */
 } photo_data_t;
+
+/* 传感器共享数据结构体 (sensors.h, OLED 显示用) */
+typedef struct {
+    int     dht11_temp, dht11_humi, dht11_err;
+    float   ds18b20_temp;
+    int     ds18b20_err;
+    int     mq135_ao_raw, mq135_do, mq135_err;
+    float   mq135_voltage;
+    int     photo_raw, photo_do, photo_err;
+} sensor_shared_t;
+
+/* 全局共享数据句柄 */
+extern sensor_shared_t g_sensor_data;
+extern SemaphoreHandle_t g_sensor_mutex;
 ```
 
 ### 4.2 错误处理规范
@@ -159,8 +191,8 @@ typedef struct {
 | DHT11 校验失败 | checksum != DATA[0]+DATA[1]+DATA[2]+DATA[3] | err \|= 0x01 |
 | DHT11 无响应 | 复位后检测响应失败 | err \|= 0x01 |
 | 光敏 ADC 异常 | 12 次采样全为 0 或全为 4095 | err \|= 0x08 |
-| DS18B20 无响应 | One_Wire_Init() 返回非 0（待实现） | err \|= 0x02 |
-| MQ-135 ADC 异常 | 12 次采样全为 0 或全为 4095（待实现） | err \|= 0x04 |
+| DS18B20 无响应 | One_Wire_Init() 返回非 0 | err \|= 0x02 |
+| MQ-135 ADC 异常 | 12 次采样全为 0 或全为 4095 | err \|= 0x04 |
 
 ### 4.3 ADC 配置规范
 
@@ -274,17 +306,34 @@ portENABLE_INTERRUPTS();
 |------|----------|------|------|
 | DHT11 驱动 | 2026-05-27 | ✅ 通过 | 温湿度数据稳定，无校验错误 |
 | 光敏电阻驱动 | 2026-05-27 | ✅ 通过 | ADC 读取正常，DO 检测正常 |
+| DS18B20 驱动 | 2026-05-27 | ✅ 通过 | 温度数据稳定，精度 0.0625°C |
+| MQ-135 驱动 | 2026-05-27 | ✅ 通过 | AO 电压读取正常，DO 报警正常 |
+| OLED SSD1306 | 2026-06-01 | ✅ 通过 | I2C 通信稳定，显示清晰，无丢帧 |
 
-### 7.2 测试日志
+### 7.2 测试日志（OLED 验证通过）
 
 ```
-I (1059) dht11: 等待 DHT11 上电稳定 (1秒)...
-I (2063) dht11: DHT11 初始化完成 (DATA=GPIO2)
-I (2087) main: DHT11: 温度=31°C | 湿度=47%RH
-I (3120) main: 光敏: AO_raw=464 | DO=0 (超阈值)
-I (4111) main: DHT11: 温度=31°C | 湿度=47%RH
-I (10182) main: DHT11: 温度=30°C | 湿度=46%RH
+I (365) main: ESP32-P4 智能环境监测系统 + OLED 显示
+I (370) oled: 初始化 OLED SSD1306 (SDA=GPIO7, SCL=GPIO8)...
+I (376) oled: 找到 OLED 设备, I2C 地址 = 0x3C
+I (483) oled: OLED SSD1306 初始化完成
+I (483) mq135: MQ-135 初始化完成 ...
+I (484) ds18b20: DS18B20 初始化完成 ...
+I (493) dht11: 等待 DHT11 上电稳定 ...
+I (493) photo_sensor: 光敏电阻传感器初始化完成 ...
+I (508) main: MQ-135: AO_raw=1228 | V=0.99V | DO=1 (正常)
+I (525) main: 光敏: AO_raw=1384 | DO=1 (正常)
+I (1294) ds18b20: DS18B20: 温度=27.8750°C (raw=0x01BE)
+I (1516) main: DHT11: 温度=29°C | 湿度=54%RH
 ```
+
+### 7.3 已知 Bug 及修复
+
+| Bug | 根因 | 修复 |
+|-----|------|------|
+| OLED 无显示 | `ssd1306_send_data()` 将控制字节 0x40 和数据分两次 I2C 事务发送，STOP 信号重置 SSD1306 状态机 | 合并为一次 I2C 事务 `[0x40, data...]` |
+| 字体顶部缺失 | `fb_write_char()` 位掩码用 `0x3F`(6位) 而非 `0xFF`(8位)，丢失每列顶部 2 像素 | 改为 `0xFF` 完整字节掩码 |
+| I2C 通信超时 | OLED 模块上拉电阻不足，内部上拉未开启 | `enable_internal_pullup: true` |
 
 ---
 
@@ -297,18 +346,22 @@ I (10182) main: DHT11: 温度=30°C | 湿度=46%RH
 - [ ] **蜂鸣器报警** - 异常状态声光报警
 - [ ] **LED 报警** - 异常状态 LED 指示
 
-### 8.2 数据通信
+### 8.2 数据显示
+
+- [x] **OLED SSD1306 显示** - GPIO7(SDA)/GPIO8(SCL) I2C, 6x8字体, 8行, 1秒刷新 ✅ 2026-06-01
+
+### 8.3 数据通信
 
 - [ ] **UDP Socket** - 建立 UDP 连接
 - [ ] **JSON 组包** - 按协议格式封装数据
 - [ ] **上位机脚本** - Windows Python 接收端
 
-### 8.3 数据处理
+### 8.4 数据处理
 
-- [ ] **FreeRTOS 任务设计** - Task_SensorFetch (优先级3, Core0)
-- [ ] **FreeRTOS 任务设计** - Task_UDP_Send (优先级2, Core1)
-- [ ] **互斥锁保护** - xSensorMutex 保护共享数据
-- [ ] **事件通知** - ulTaskNotifyGive 触发 UDP 发送
+- [x] **FreeRTOS 传感器任务** - 4个独立传感器任务（MQ-135/DS18B20/DHT11/光敏）✅ 2026-05-27
+- [x] **FreeRTOS OLED 任务** - OLED 显示刷新任务（优先级2, 1秒刷新）✅ 2026-06-01
+- [x] **互斥锁保护** - g_sensor_mutex 保护 sensor_shared_t ✅ 2026-06-01
+- [ ] **UDP 发送任务** - 事件驱动 + 定时发送
 
 ---
 
@@ -380,6 +433,8 @@ I (10182) main: DHT11: 温度=30°C | 湿度=46%RH
 | 2026-05-27 | 实现 DS18B20 驱动 | Agent | 从 51 参考代码移植，包含 1-Wire 协议 |
 | 2026-05-27 | 实现 MQ-135 驱动 | Agent | 从 51 参考代码移植，ADC1_CH5 + DO 检测 |
 | 2026-05-27 | 完成 DHT11 + 光敏电阻测试 | Agent | 验证通过 |
+| 2026-06-01 | 新增 OLED SSD1306 显示 | Agent | GPIO7/GPIO8 I2C，共享数据结构体，OLED 显示任务 |
+| 2026-06-01 | 修复 OLED 无显示 Bug | Agent | I2C 控制字节+数据分开发送；字体掩码 0x3F→0xFF；启用内部上拉 |
 
 ---
 

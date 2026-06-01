@@ -32,6 +32,8 @@
 
 #include "esp_err.h"
 #include "esp_adc/adc_oneshot.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #include "stdint.h"
 
 /* ==================== DS18B20 引脚定义 ==================== */
@@ -83,6 +85,33 @@ typedef struct {
     int     do_level;   /*!< DO 电平: 0=超阈值(暗), 1=正常(亮) */
     int     err;        /*!< 错误标志: bit3=光敏ADC异常 (REQUIREMENT.md 5.7) */
 } photo_data_t;
+
+/* ==================== 传感器共享数据结构体 (OLED 显示用) ==================== */
+typedef struct {
+    /* DHT11 */
+    int     dht11_temp;     /*!< DHT11 温度 (°C) */
+    int     dht11_humi;     /*!< DHT11 湿度 (%RH) */
+    int     dht11_err;      /*!< DHT11 错误标志 */
+
+    /* DS18B20 */
+    float   ds18b20_temp;   /*!< DS18B20 温度 (°C) */
+    int     ds18b20_err;    /*!< DS18B20 错误标志 */
+
+    /* MQ-135 */
+    int     mq135_ao_raw;   /*!< MQ-135 AO 原始值 */
+    float   mq135_voltage;  /*!< MQ-135 电压 (V) */
+    int     mq135_do;       /*!< MQ-135 DO: 0=超阈值, 1=正常 */
+    int     mq135_err;      /*!< MQ-135 错误标志 */
+
+    /* 光敏电阻 */
+    int     photo_raw;      /*!< 光敏 AO 原始值 */
+    int     photo_do;       /*!< 光敏 DO: 0=超阈值, 1=正常 */
+    int     photo_err;      /*!< 光敏错误标志 */
+} sensor_shared_t;
+
+/* 全局共享数据句柄 */
+extern sensor_shared_t g_sensor_data;
+extern SemaphoreHandle_t g_sensor_mutex;
 
 /* ==================== DHT11 函数声明 ==================== */
 /**

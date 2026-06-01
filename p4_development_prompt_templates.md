@@ -19,9 +19,10 @@ ESP32-P4 开发[模块名称]：
    - 检查现有代码风格：
      - 命名规范（snake_case 变量/函数，UPPER_CASE 宏）
      - 注释格式（中文，标注数据来源）
-     - 错误处理（检查 ESP_IDF API 返回值，标记 err 位）
-     - FreeRTOS 任务设置（栈大小 4096，优先级 3）
+     - 错误处理（检查 ESP-IDF API 返回值，标记 err 位）
+     - FreeRTOS 任务设置（栈大小 4096，传感器优先级 3，OLED 优先级 2）
      - ADC 使用（共享 ADC1，使用 adc1_shared_init()，复用 adc_filter_sample()）
+     - OLED 使用（sensor_shared_t + g_sensor_mutex 共享传感器数据，oled_show_line() 格式化输出）
 
 2. 总体方案（先给我看，等我确认再动手！）
    - 引脚验证：
@@ -135,7 +136,8 @@ ESP32-P4 开发蜂鸣器+LED报警模块：
 | 规则 | 说明 |
 |------|------|
 | GPIO0-6, 20-27, 32-33, 36, 45-48, 53 | 排针可用 |
-| GPIO7-8, 37-38 | 保留给 I2C/UART |
+| GPIO7-8 | I2C 保留（OLED SSD1306 SDA/SCL） |
+| GPIO37-38 | UART 保留 |
 | GPIO16-23 | ADC1 专用 |
 | GPIO4-5 | **不是** ADC 引脚 |
 
@@ -145,6 +147,7 @@ ESP32-P4 开发蜂鸣器+LED报警模块：
 |------|------|
 | 5V 供电模块 DO | 必须电平转换 5V→3.3V（2KΩ:1KΩ分压） |
 | 1-Wire 总线（DHT11/DS18B20） | 外接上拉电阻（5KΩ/4.7KΩ） |
+| I2C 总线（OLED SSD1306） | SDA/SCL 各接 4.7KΩ 上拉至 3.3V（或开启芯片内部上拉） |
 | MQ-135 加热 | 供电 5V 最佳，3.3V 也可用 |
 
 ### 代码规范
@@ -155,7 +158,8 @@ ESP32-P4 开发蜂鸣器+LED报警模块：
 | 注释 | 中文，标注数据来源（REQUIREMENT.md / 数据手册） |
 | 错误处理 | 检查 API 返回值，设置 err 位（REQUIREMENT.md 5.7） |
 | ADC 使用 | 共享 ADC1，调用 adc1_shared_init()，复用 adc_filter_sample() |
-| FreeRTOS 任务 | 栈 4096，优先级 3 |
+| OLED 显示 | sensor_shared_t 共享数据 + g_sensor_mutex 互斥锁，oled_show_line() 格式化 |
+| FreeRTOS 任务 | 栈 4096，传感器优先级 3，OLED 优先级 2 |
 
 ---
 
@@ -169,4 +173,4 @@ ESP32-P4 开发蜂鸣器+LED报警模块：
 
 ---
 
-> **最后更新**：2026-05-29
+> **最后更新**：2026-06-01

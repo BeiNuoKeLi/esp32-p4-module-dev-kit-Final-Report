@@ -5,6 +5,7 @@
  */
 
 #include <stdio.h>
+#include <string.h>
 #include "esp_log.h"
 #include "esp_wifi.h"
 #include "esp_wifi_remote.h"
@@ -13,13 +14,19 @@
 #include "esp_event.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/semphr.h"
 #include "sensors.h"
+#include "oled_ssd1306.h"
 
 /* ================== Wi-Fi 配置（通过 menuconfig 设置）================== */
 #define WIFI_SSID   CONFIG_EXAMPLE_WIFI_SSID
 #define WIFI_PASS   CONFIG_EXAMPLE_WIFI_PASSWORD
 
 static const char *TAG = "main";
+
+/* ================== 全局共享数据 (各传感器任务写入, OLED任务读取) ================== */
+sensor_shared_t g_sensor_data = {0};
+SemaphoreHandle_t g_sensor_mutex = NULL;
 
 /* ================== Wi-Fi 事件回调 ================== */
 static void wifi_event_handler(void *arg, esp_event_base_t event_base,
@@ -39,7 +46,7 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
 }
 
 /* ================== Wi-Fi 初始化 ================== */
-static void wifi_init_sta(void)
+static __attribute__((unused)) void wifi_init_sta(void)
 {
     /* 1. 初始化 NVS */
     esp_err_t ret = nvs_flash_init();
@@ -85,7 +92,6 @@ static void mq135_task(void *arg)
 {
     mq135_data_t data;
 
-    /* 初始化 MQ-135 空气质量传感器 */
     esp_err_t ret = mq135_init();
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "MQ-135 初始化失败");
@@ -93,9 +99,16 @@ static void mq135_task(void *arg)
         return;
     }
 
-    /* 循环读取传感器数据, 每 2 秒一次 (REQUIREMENT.md 5.2) */
     while (1) {
         mq135_read(&data);
+
+        if (xSemaphoreTake(g_sensor_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+            g_sensor_data.mq135_ao_raw  = data.ao_raw;
+            g_sensor_data.mq135_voltage = data.voltage;
+            g_sensor_data.mq135_do      = data.do_level;
+            g_sensor_data.mq135_err     = data.err;
+            xSemaphoreGive(g_sensor_mutex);
+        }
 
         if (data.err) {
             ESP_LOGW(TAG, "MQ-135: 读取失败, err=0x%02X", data.err);
@@ -114,7 +127,6 @@ static void ds18b20_task(void *arg)
 {
     ds18b20_data_t data;
 
-    /* 初始化 DS18B20 传感器 */
     esp_err_t ret = ds18b20_init();
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "DS18B20 初始化失败");
@@ -122,9 +134,14 @@ static void ds18b20_task(void *arg)
         return;
     }
 
-    /* 循环读取传感器数据, 每 3 秒一次 (包含 800ms 转换时间) */
     while (1) {
         ds18b20_read(&data);
+
+        if (xSemaphoreTake(g_sensor_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+            g_sensor_data.ds18b20_temp = data.temp;
+            g_sensor_data.ds18b20_err  = data.err;
+            xSemaphoreGive(g_sensor_mutex);
+        }
 
         if (data.err) {
             ESP_LOGW(TAG, "DS18B20: 读取失败, err=0x%02X", data.err);
@@ -141,7 +158,6 @@ static void dht11_task(void *arg)
 {
     dht11_data_t data;
 
-    /* 初始化 DHT11 传感器 */
     esp_err_t ret = dht11_init();
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "DHT11 初始化失败");
@@ -149,9 +165,15 @@ static void dht11_task(void *arg)
         return;
     }
 
-    /* 循环读取传感器数据, 每 2 秒一次 (REQUIREMENT.md 5.2, 采样周期≥2秒) */
     while (1) {
         dht11_read(&data);
+
+        if (xSemaphoreTake(g_sensor_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+            g_sensor_data.dht11_temp = data.temp;
+            g_sensor_data.dht11_humi = data.humi;
+            g_sensor_data.dht11_err  = data.err;
+            xSemaphoreGive(g_sensor_mutex);
+        }
 
         if (data.err) {
             ESP_LOGW(TAG, "DHT11: 读取失败, err=0x%02X", data.err);
@@ -168,7 +190,6 @@ static void photo_sensor_task(void *arg)
 {
     photo_data_t data;
 
-    /* 初始化光敏电阻传感器 */
     esp_err_t ret = photo_sensor_init();
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "光敏电阻传感器初始化失败");
@@ -176,11 +197,16 @@ static void photo_sensor_task(void *arg)
         return;
     }
 
-    /* 循环读取传感器数据, 每 2 秒一次 (REQUIREMENT.md 5.2) */
     while (1) {
         photo_sensor_read(&data);
 
-        /* AO 原始 ADC 值 + DO 电平 + 错误状态 */
+        if (xSemaphoreTake(g_sensor_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+            g_sensor_data.photo_raw = data.light_raw;
+            g_sensor_data.photo_do  = data.do_level;
+            g_sensor_data.photo_err = data.err;
+            xSemaphoreGive(g_sensor_mutex);
+        }
+
         ESP_LOGI(TAG, "光敏: AO_raw=%d | DO=%d (%s)",
                  data.light_raw, data.do_level,
                  data.do_level ? "正常" : "超阈值");
@@ -193,16 +219,94 @@ static void photo_sensor_task(void *arg)
     }
 }
 
+/* ================== OLED 显示刷新任务 ================== */
+static void oled_display_task(void *arg)
+{
+    sensor_shared_t local = {0};
+
+    /* 等待其他传感器任务初始化完成 */
+    vTaskDelay(pdMS_TO_TICKS(3000));
+
+    while (1) {
+        /* 持锁读取共享数据 */
+        if (xSemaphoreTake(g_sensor_mutex, pdMS_TO_TICKS(50)) == pdTRUE) {
+            memcpy(&local, &g_sensor_data, sizeof(sensor_shared_t));
+            xSemaphoreGive(g_sensor_mutex);
+        }
+
+        /* ---- 行 0: 标题 ---- */
+        oled_show_line(0, "  Smart Monitor   ");
+
+        /* ---- 行 1: DHT11 温湿度 ---- */
+        if (local.dht11_err) {
+            oled_show_line(1, "DHT11: ERR         ");
+        } else {
+            oled_show_line(1, "DHT11:T=%-2dC H=%-2d%%",
+                           local.dht11_temp, local.dht11_humi);
+        }
+
+        /* ---- 行 2: DS18B20 高精度温度 ---- */
+        if (local.ds18b20_err) {
+            oled_show_line(2, "DS18B20: ERR       ");
+        } else {
+            oled_show_line(2, "DS18B20: %.4f C",
+                           local.ds18b20_temp);
+        }
+
+        /* ---- 行 3: MQ-135 空气质量 ---- */
+        if (local.mq135_err) {
+            oled_show_line(3, "MQ135: ERR         ");
+        } else {
+            oled_show_line(3, "MQ135: %.2fV %s",
+                           local.mq135_voltage,
+                           local.mq135_do ? "OK" : "ALM");
+        }
+
+        /* ---- 行 4: 光敏电阻 ---- */
+        if (local.photo_err) {
+            oled_show_line(4, "Light: ERR         ");
+        } else {
+            oled_show_line(4, "Light: %-4draw %s",
+                           local.photo_raw,
+                           local.photo_do ? "OK" : "ALM");
+        }
+
+        /* ---- 行 5: 报警状态汇总 ---- */
+        int alert = (!local.mq135_do || !local.photo_do) ? 1 : 0;
+        int err_sum = local.dht11_err | local.ds18b20_err | local.mq135_err | local.photo_err;
+        oled_show_line(5, "Alrt:%s Err:0x%02x",
+                       alert ? "ON " : "OFF", err_sum);
+
+        /* ---- 行 6~7: 空白 ---- */
+        oled_show_line(6, "                   ");
+        oled_show_line(7, "                   ");
+
+        vTaskDelay(pdMS_TO_TICKS(1000));  /* 每 1 秒刷新一次 */
+    }
+}
+
 /* ================== 主入口 ================== */
 void app_main(void)
 {
-    ESP_LOGI(TAG, "ESP32-P4 MQ-135 + DS18B20 + DHT11 + 光敏电阻传感器测试");
+    ESP_LOGI(TAG, "ESP32-P4 智能环境监测系统 + OLED 显示");
 
-    /* WiFi STA 初始化 — 暂时注释, 避免 SDIO 重连 crash 干扰传感器测试
-     * 后续需要 WiFi 传输时再启用: wifi_init_sta(); */
+    /* 创建互斥锁 */
+    g_sensor_mutex = xSemaphoreCreateMutex();
+    if (g_sensor_mutex == NULL) {
+        ESP_LOGE(TAG, "互斥锁创建失败!");
+        return;
+    }
+
+    /* 初始化 OLED */
+    esp_err_t ret = oled_init();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "OLED 初始化失败: %s", esp_err_to_name(ret));
+    }
+
+    /* WiFi STA 初始化 — 当前注释，后续需要时启用 */
     // wifi_init_sta();
 
-    /* 创建 MQ-135 空气质量传感器读取任务 (优先级3, 栈4096) */
+    /* 创建 MQ-135 传感器读取任务 (优先级3, 栈4096) */
     xTaskCreate(mq135_task, "mq135_sensor", 4096, NULL, 3, NULL);
 
     /* 创建 DS18B20 传感器读取任务 (优先级3, 栈4096) */
@@ -213,4 +317,7 @@ void app_main(void)
 
     /* 创建光敏电阻传感器读取任务 (优先级3, 栈4096) */
     xTaskCreate(photo_sensor_task, "photo_sensor", 4096, NULL, 3, NULL);
+
+    /* 创建 OLED 显示刷新任务 (优先级2, 栈4096) */
+    xTaskCreate(oled_display_task, "oled_display", 4096, NULL, 2, NULL);
 }

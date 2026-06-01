@@ -64,6 +64,8 @@
 | 光敏电阻 | AO | **GPIO 20** | ADC1_CH4（模拟输入，`ADC1_CHANNEL_4_GPIO_NUM=20`） |
 | 光敏电阻 | DO | **GPIO 23** | 数字输入（需电平转换） |
 | 蜂鸣器+LED | 控制 | **GPIO 25** | 数字输出（需驱动电路） |
+| OLED SSD1306 | SDA | **GPIO 7** | I2C 数据线（需上拉 4.7KΩ） |
+| OLED SSD1306 | SCL | **GPIO 8** | I2C 时钟线（需上拉 4.7KΩ） |
 
 ### 3.2 关键电路要求（来自文档）
 
@@ -174,9 +176,11 @@ Rs = (Vc / Vout - 1) × RL
 
 ```
 main/
-├── hello_world_main.c   # 已有：WiFi STA 初始化（wifi_init_sta），修改仅在 app_main() 末尾添加任务创建
-├── sensors.h            # 新建：引脚宏、数据结构、函数声明
-├── sensors.c            # 新建：所有传感器驱动 + 报警逻辑
+├── hello_world_main.c   # 已有：WiFi STA 初始化 + 传感器/OLED 任务创建
+├── sensors.h            # 已有：引脚宏、传感器数据结构、函数声明
+├── sensors.c            # 已有：全部传感器驱动 + ADC 滤波 + 错误处理
+├── oled_ssd1306.h       # 已有：SSD1306 OLED I2C 驱动头文件
+├── oled_ssd1306.c       # 已有：SSD1306 OLED framebuffer 渲染 + 6x8 字体
 ├── udp_sender.h         # 新建：UDP 任务声明
 └── udp_sender.c         # 新建：JSON 组包 + UDP Socket
 ```
@@ -185,17 +189,20 @@ main/
 
 | 任务 | 优先级 | 栈大小 | 绑定核心 | 周期 |
 |------|--------|--------|----------|------|
-| `Task_SensorFetch` | 3 | 4096 | Core 0 | 每 2 秒 |
-| `Task_UDP_Send` | 2 | 4096 | Core 1 | 事件驱动（`ulTaskNotifyTake`） |
+| `mq135_sensor` | 3 | 4096 | 自动 | 每 2 秒 |
+| `ds18b20_sensor` | 3 | 4096 | 自动 | 每 3 秒 |
+| `dht11_sensor` | 3 | 4096 | 自动 | 每 2 秒 |
+| `photo_sensor` | 3 | 4096 | 自动 | 每 2 秒 |
+| `oled_display` | 2 | 4096 | 自动 | 每 1 秒 |
+| `Task_UDP_Send` | 2 | 4096 | Core 1 | 事件驱动（待实现） |
 
 ### 5.3 任务间数据同步
 
 ```
-               xSensorMutex (互斥锁)
-Task_SensorFetch ──────────► sensor_data_t ◄────────── Task_UDP_Send
-                              (共享结构体)
-                              
-Task_SensorFetch 写入完成后 → xTaskNotifyGive(Task_UDP_Send)
+                  g_sensor_mutex (互斥锁)
+4 传感器任务 ──────────► sensor_shared_t ◄────────── oled_display 任务
+                              ↓
+                        Task_UDP_Send (待实现)
 ```
 
 ### 5.4 ADC 配置（来自 ESP-IDF v5.x oneshot API）
@@ -352,12 +359,14 @@ snprintf(buf, sizeof(buf),
 
 | # | 文件 | 类型 | 说明 |
 |---|------|------|------|
-| 1 | `main/sensors.h` | 新建 | 引脚宏、`sensor_data_t` 结构体、函数声明 |
-| 2 | `main/sensors.c` | 新建 | 全部传感器驱动 + ADC 滤波 + 报警逻辑 + 错误处理 |
-| 3 | `main/udp_sender.h` | 新建 | UDP 任务声明 |
-| 4 | `main/udp_sender.c` | 新建 | JSON 组包 + UDP Socket 发送 |
-| 5 | `main/hello_world_main.c` | 修改 | 在 `app_main()` 末尾创建两个 FreeRTOS 任务 |
-| 6 | `pc_receiver.py` | 新建 | Windows 上位机 Python 接收脚本 |
+| 1 | `main/sensors.h` | 已有 | 引脚宏、`sensor_data_t` 结构体、函数声明 |
+| 2 | `main/sensors.c` | 已有 | 全部传感器驱动 + ADC 滤波 + 报警逻辑 + 错误处理 |
+| 3 | `main/oled_ssd1306.h` | 已有 | SSD1306 OLED I2C 驱动头文件 |
+| 4 | `main/oled_ssd1306.c` | 已有 | SSD1306 OLED framebuffer 渲染 + 6x8 字体 |
+| 5 | `main/udp_sender.h` | 新建 | UDP 任务声明 |
+| 6 | `main/udp_sender.c` | 新建 | JSON 组包 + UDP Socket 发送 |
+| 7 | `main/hello_world_main.c` | 已有 | 传感器任务 + OLED 显示任务创建 |
+| 8 | `pc_receiver.py` | 新建 | Windows 上位机 Python 接收脚本 |
 
 ---
 
@@ -379,7 +388,7 @@ Agent 在编写驱动时，应将开发文档中的 **51 单片机参考代码**
 
 ---
 
-> **最后更新**：2026-05-21（引脚全面修正：GPIO4/5 改为 GPIO20/21；DHT11 → GPIO2，DS18B20 → GPIO1，MQ-135 AO → GPIO21/ADC1_CH5；废弃旧版 ADC API，改为 adc_oneshot API；根据微雪排针图核验所有引脚均在排针上）
+> **最后更新**：2026-06-01（新增 OLED SSD1306 显示模块引脚、文件结构、任务设计）
 >
 > **基于文档**：`开发文档/` 下 DHT11、DS18B20、MQ-135、光敏电阻传感器 四个模块的全套资料
 >

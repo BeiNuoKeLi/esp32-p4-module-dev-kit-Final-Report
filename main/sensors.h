@@ -54,6 +54,9 @@
 #define PHOTO_DO_GPIO       23              /*!< DO → GPIO23, 数字输入 */
 #define PHOTO_ADC_CHAN      ADC_CHANNEL_4   /*!< GPIO20 对应 ADC1_CH4 */
 
+/* ==================== 蜂鸣器引脚定义 ==================== */
+#define BUZZER_GPIO         25              /*!< 蜂鸣器控制 → GPIO25, 数字输出 (REQUIREMENT.md 3.1) */
+
 /* ==================== ADC 滤波参数 (REQUIREMENT.md 5.5) ==================== */
 #define ADC_SAMPLE_COUNT    12      /*!< 连续采样次数 */
 #define ADC_DISCARD_COUNT   2       /*!< 每端去掉的个数，剩余 8 个取平均 */
@@ -107,6 +110,9 @@ typedef struct {
     int     photo_raw;      /*!< 光敏 AO 原始值 */
     int     photo_do;       /*!< 光敏 DO: 0=超阈值, 1=正常 */
     int     photo_err;      /*!< 光敏错误标志 */
+
+    /* 蜂鸣器 */
+    int     buzzer_on;      /*!< 蜂鸣器状态: 0=静音, 1=鸣叫中 */
 } sensor_shared_t;
 
 /* 全局共享数据句柄 */
@@ -209,5 +215,25 @@ esp_err_t photo_sensor_init(void);
  * @return ESP_OK 成功, ESP_ERR_INVALID_ARG 参数无效
  */
 esp_err_t photo_sensor_read(photo_data_t *data);
+
+/* ==================== 蜂鸣器函数声明 ==================== */
+/**
+ * @brief 初始化蜂鸣器 (GPIO25)
+ *
+ * - 配置 GPIO25 为推挽输出, 初始低电平 (静音)
+ * - 下拉使能, 防止上电误触发
+ * - 有源蜂鸣器 + S8050 NPN 三极管驱动 (REQUIREMENT.md 3.2)
+ *
+ * @return ESP_OK 成功
+ */
+esp_err_t buzzer_init(void);
+
+/**
+ * @brief 设置蜂鸣器状态
+ *
+ * @param on 1=鸣叫, 0=静音
+ * @return ESP_OK 成功
+ */
+esp_err_t buzzer_set(int on);
 
 #endif /* SENSORS_H */

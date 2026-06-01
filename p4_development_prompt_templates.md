@@ -23,6 +23,7 @@ ESP32-P4 开发[模块名称]：
      - FreeRTOS 任务设置（栈大小 4096，传感器优先级 3，OLED 优先级 2）
      - ADC 使用（共享 ADC1，使用 adc1_shared_init()，复用 adc_filter_sample()）
      - OLED 使用（sensor_shared_t + g_sensor_mutex 共享传感器数据，oled_show_line() 格式化输出）
+     - 蜂鸣器使用（buzzer_init()/buzzer_set()，访问 g_sensor_data 的 mq135_do/photo_do/buzzer_on）
 
 2. 总体方案（先给我看，等我确认再动手！）
    - 引脚验证：
@@ -159,7 +160,7 @@ ESP32-P4 开发蜂鸣器+LED报警模块：
 | 错误处理 | 检查 API 返回值，设置 err 位（REQUIREMENT.md 5.7） |
 | ADC 使用 | 共享 ADC1，调用 adc1_shared_init()，复用 adc_filter_sample() |
 | OLED 显示 | sensor_shared_t 共享数据 + g_sensor_mutex 互斥锁，oled_show_line() 格式化 |
-| FreeRTOS 任务 | 栈 4096，传感器优先级 3，OLED 优先级 2 |
+| FreeRTOS 任务 | 栈 4096（蜂鸣器 2048），传感器优先级 3，OLED/蜂鸣器优先级 2 |
 
 ---
 
@@ -173,4 +174,4 @@ ESP32-P4 开发蜂鸣器+LED报警模块：
 
 ---
 
-> **最后更新**：2026-06-01
+> **最后更新**：2026-06-01（OLED Page Addressing 逐页刷新）

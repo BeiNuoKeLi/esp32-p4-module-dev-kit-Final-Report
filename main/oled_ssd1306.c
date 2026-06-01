@@ -148,35 +148,54 @@ static esp_err_t ssd1306_send_cmd(uint8_t cmd)
  *
  * 控制字节 0x40 必须和数据在同一个 I2C 事务中发送，
  * 否则 STOP 信号会重置 SSD1306 的 Co/D/C# 状态机。
+ *
+ * 调用方保证 len ≤ 128（单页），使用 129 字节栈缓冲区即可。
  */
 static esp_err_t ssd1306_send_data(const uint8_t *data, size_t len)
 {
-    if (len > sizeof(s_fb)) return ESP_ERR_INVALID_SIZE;
+    if (len > OLED_WIDTH) return ESP_ERR_INVALID_SIZE;
 
-    /* 用静态缓冲区避免栈溢出: [0x40 | data...] 一次性发送 */
-    static uint8_t tx_buf[OLED_WIDTH * (OLED_HEIGHT / 8) + 1];
-    tx_buf[0] = 0x40;
+    uint8_t tx_buf[OLED_WIDTH + 1];  /* 128 + 1 = 129 字节, 栈安全 */
+    tx_buf[0] = 0x40;                /* Co=0, D/C#=1 → 数据模式 */
     memcpy(tx_buf + 1, data, len);
-    return i2c_master_transmit(s_i2c_dev, tx_buf, len + 1, pdMS_TO_TICKS(500));
+    return i2c_master_transmit(s_i2c_dev, tx_buf, len + 1, pdMS_TO_TICKS(100));
 }
 
 /**
  * @brief 将 framebuffer 整屏刷新到 SSD1306
+ *
+ * 使用 Page Addressing Mode (0x02)，逐页发送 128 字节。
+ * 避免一次性发送 1025 字节的单次 I2C 事务超出 ESP32 FIFO 能力，
+ * 导致数据丢失和乱码。
  */
 static esp_err_t ssd1306_refresh(void)
 {
-    /* 设置列地址范围 0~127 */
-    ssd1306_send_cmd(0x21);  /* 列地址设置命令 */
-    ssd1306_send_cmd(0x00);  /* 起始列 = 0 */
-    ssd1306_send_cmd(127);   /* 结束列 = 127 */
+    esp_err_t ret;
 
-    /* 设置页地址范围 0~7 */
-    ssd1306_send_cmd(0x22);  /* 页地址设置命令 */
-    ssd1306_send_cmd(0x00);  /* 起始页 = 0 */
-    ssd1306_send_cmd(0x07);  /* 结束页 = 7 */
+    /* 切换到 Page Addressing Mode (自动回绕, 不需要设置列/页范围) */
+    ret = ssd1306_send_cmd(0x20);  /* 内存寻址模式命令 */
+    if (ret != ESP_OK) return ret;
+    ret = ssd1306_send_cmd(0x02);  /* 页寻址模式 */
+    if (ret != ESP_OK) return ret;
 
-    /* 发送 framebuffer */
-    return ssd1306_send_data(s_fb, sizeof(s_fb));
+    /* 逐页刷新: 每页 128 字节, 8 次小 I2C 事务 */
+    for (uint8_t page = 0; page < 8; page++) {
+        /* 设置页地址 (0xB0~0xB7) */
+        ret = ssd1306_send_cmd(0xB0 | page);
+        if (ret != ESP_OK) return ret;
+
+        /* 设置列地址 = 0 (低4位 0x00, 高4位 0x10) */
+        ret = ssd1306_send_cmd(0x00);
+        if (ret != ESP_OK) return ret;
+        ret = ssd1306_send_cmd(0x10);
+        if (ret != ESP_OK) return ret;
+
+        /* 发送本页 128 字节 */
+        ret = ssd1306_send_data(s_fb + page * OLED_WIDTH, OLED_WIDTH);
+        if (ret != ESP_OK) return ret;
+    }
+
+    return ESP_OK;
 }
 
 /**

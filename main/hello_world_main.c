@@ -277,11 +277,50 @@ static void oled_display_task(void *arg)
         oled_show_line(5, "Alrt:%s Err:0x%02x",
                        alert ? "ON " : "OFF", err_sum);
 
-        /* ---- 行 6~7: 空白 ---- */
-        oled_show_line(6, "                   ");
+        /* ---- 行 6: 蜂鸣器状态 ---- */
+        oled_show_line(6, "Buzzer: %s        ",
+                       local.buzzer_on ? "ON " : "OFF");
+
+        /* ---- 行 7: 空白 ---- */
         oled_show_line(7, "                   ");
 
         vTaskDelay(pdMS_TO_TICKS(1000));  /* 每 1 秒刷新一次 */
+    }
+}
+
+/* ================== 蜂鸣器报警控制任务 ================== */
+static void buzzer_task(void *arg)
+{
+    esp_err_t ret = buzzer_init();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "蜂鸣器初始化失败");
+        vTaskDelete(NULL);
+        return;
+    }
+
+    while (1) {
+        int mq135_do = 1;
+        int photo_do = 1;
+
+        /* 持锁读取报警状态 */
+        if (xSemaphoreTake(g_sensor_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+            mq135_do  = g_sensor_data.mq135_do;
+            photo_do  = g_sensor_data.photo_do;
+
+            /* 更新蜂鸣器状态到共享数据 (供 OLED 显示) */
+            g_sensor_data.buzzer_on = (!mq135_do || !photo_do) ? 1 : 0;
+            xSemaphoreGive(g_sensor_mutex);
+        }
+
+        /* 报警逻辑: MQ-135 或 光敏任一 DO=0 → 蜂鸣器间歇鸣叫 */
+        if (!mq135_do || !photo_do) {
+            buzzer_set(1);                      /* 鸣叫 */
+            vTaskDelay(pdMS_TO_TICKS(100));
+            buzzer_set(0);                      /* 静音 */
+            vTaskDelay(pdMS_TO_TICKS(500));
+        } else {
+            vTaskDelay(pdMS_TO_TICKS(500));     /* 正常时每 500ms 检查一次 */
+        }
     }
 }
 
@@ -320,4 +359,7 @@ void app_main(void)
 
     /* 创建 OLED 显示刷新任务 (优先级2, 栈4096) */
     xTaskCreate(oled_display_task, "oled_display", 4096, NULL, 2, NULL);
+
+    /* 创建蜂鸣器报警任务 (优先级2, 栈2048) */
+    xTaskCreate(buzzer_task, "buzzer_alarm", 2048, NULL, 2, NULL);
 }

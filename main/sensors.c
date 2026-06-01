@@ -571,3 +571,35 @@ esp_err_t photo_sensor_read(photo_data_t *data)
 
     return ESP_OK;
 }
+
+/* ==================== 蜂鸣器驱动 ==================== */
+
+static const char *TAG_BUZZER = "buzzer";
+
+esp_err_t buzzer_init(void)
+{
+    /* 配置 GPIO25 为推挽输出, 初始低电平 (静音)
+     * 下拉使能: 上电/复位期间保持低电平, 防止误触发蜂鸣器
+     * 驱动电路: GPIO25 → 1KΩ → S8050基极 (REQUIREMENT.md 3.2) */
+    gpio_config_t io_conf = {
+        .pin_bit_mask  = (1ULL << BUZZER_GPIO),
+        .mode          = GPIO_MODE_OUTPUT,
+        .pull_up_en    = GPIO_PULLUP_DISABLE,
+        .pull_down_en  = GPIO_PULLDOWN_ENABLE,
+        .intr_type     = GPIO_INTR_DISABLE,
+    };
+    ESP_ERROR_CHECK(gpio_config(&io_conf));
+
+    /* 确保初始为低电平 */
+    gpio_set_level(BUZZER_GPIO, 0);
+
+    ESP_LOGI(TAG_BUZZER, "蜂鸣器初始化完成 (GPIO%d)", BUZZER_GPIO);
+    return ESP_OK;
+}
+
+esp_err_t buzzer_set(int on)
+{
+    /* 有源蜂鸣器: 高电平 → S8050导通 → 蜂鸣器鸣叫 */
+    gpio_set_level(BUZZER_GPIO, on ? 1 : 0);
+    return ESP_OK;
+}

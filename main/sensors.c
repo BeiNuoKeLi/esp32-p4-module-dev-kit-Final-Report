@@ -454,6 +454,9 @@ static int adc_filter_sample(adc_channel_t channel);
 
 /* ==================== MQ-135 公共函数 ==================== */
 
+/* MQ-135 预热状态标志 (预热期间 DO 不可信) */
+static bool s_mq135_warmed_up = false;
+
 esp_err_t mq135_init(void)
 {
     /* 1. 确保 ADC1 单元已初始化 (与光敏共享, 只初始化一次) */
@@ -479,9 +482,48 @@ esp_err_t mq135_init(void)
     };
     ESP_ERROR_CHECK(gpio_config(&io_conf));
 
-    ESP_LOGI(TAG_MQ135, "MQ-135 初始化完成 (AO=GPIO%d/ADC1_CH5, DO=GPIO%d) 预热需≥3分钟",
+    /* 4. 预热到 DO 稳定为 1 (空气质量正常) 或超时
+     * - 技术手册要求预热 ≥3 分钟才能稳定
+     * - 加热丝加热过程中 DO 可能输出不稳定，直到敏感电阻达到稳态
+     * - 连续 5 次读数为 1 才认为稳定，避免噪声抖动
+     * - 最大等待 60 秒，防止异常情况死等
+     * 注意: 使用静态变量 s_mq135_warmed_up，不访问 g_sensor_data 避免与 ESP-Hosted 冲突 */
+    s_mq135_warmed_up = false;  /* 重置预热状态 */
+    ESP_LOGI(TAG_MQ135, "MQ-135 预热中，等待 DO 稳定...");
+    int stable_count = 0;
+    int warmup_timeout = 600;  /* 60 秒超时 (600 x 100ms) */
+
+    while (warmup_timeout-- > 0) {
+        int do_level = gpio_get_level(MQ135_DO_GPIO);
+
+        if (do_level == 1) {
+            stable_count++;
+            if (stable_count >= 5) {
+                /* 连续 5 次稳定 → 预热完成 */
+                break;
+            }
+        } else {
+            stable_count = 0;  /* 复位计数 */
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+
+    if (warmup_timeout > 0) {
+        ESP_LOGI(TAG_MQ135, "MQ-135 预热完成 (约耗时 %ds)", (600 - warmup_timeout) / 10);
+    } else {
+        ESP_LOGW(TAG_MQ135, "MQ-135 预热超时 (60s)，继续运行");
+    }
+
+    s_mq135_warmed_up = true;
+    ESP_LOGI(TAG_MQ135, "MQ-135 初始化完成 (AO=GPIO%d/ADC1_CH5, DO=GPIO%d)",
              MQ135_AO_GPIO, MQ135_DO_GPIO);
     return ESP_OK;
+}
+
+bool mq135_is_warmed_up(void)
+{
+    return s_mq135_warmed_up;
 }
 
 esp_err_t mq135_read(mq135_data_t *data)

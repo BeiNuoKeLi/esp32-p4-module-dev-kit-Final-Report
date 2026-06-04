@@ -101,10 +101,10 @@ typedef struct {
     int     ds18b20_err;    /*!< DS18B20 错误标志 */
 
     /* MQ-135 */
-    int     mq135_ao_raw;   /*!< MQ-135 AO 原始值 */
-    float   mq135_voltage;  /*!< MQ-135 电压 (V) */
-    int     mq135_do;       /*!< MQ-135 DO: 0=超阈值, 1=正常 */
-    int     mq135_err;      /*!< MQ-135 错误标志 */
+    int     mq135_ao_raw;       /*!< MQ-135 AO 原始值 */
+    float   mq135_voltage;      /*!< MQ-135 电压 (V) */
+    int     mq135_do;            /*!< MQ-135 DO: 0=超阈值, 1=正常 */
+    int     mq135_err;          /*!< MQ-135 错误标志 */
 
     /* 光敏电阻 */
     int     photo_raw;      /*!< 光敏 AO 原始值 */
@@ -193,6 +193,16 @@ esp_err_t mq135_init(void);
  * @return ESP_OK 成功, ESP_ERR_INVALID_ARG 参数无效
  */
 esp_err_t mq135_read(mq135_data_t *data);
+
+/**
+ * @brief 检查 MQ-135 是否已完成预热
+ *
+ * - MQ-135 模块需预热 ≥3 分钟读数才稳定 (技术手册)
+ * - 预热期间 DO 读数不可信，直接返回 false 避免误报警
+ *
+ * @return true 已预热, false 预热中
+ */
+bool mq135_is_warmed_up(void);
 
 /* ==================== 光敏电阻函数声明 ==================== */
 /**

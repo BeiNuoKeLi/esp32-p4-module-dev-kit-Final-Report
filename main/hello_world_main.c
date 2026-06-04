@@ -254,7 +254,10 @@ static void oled_display_task(void *arg)
         }
 
         /* ---- 行 3: MQ-135 空气质量 ---- */
-        if (local.mq135_err) {
+        /* 预热期间显示 "Warming..."，与 buzzer_task 判断逻辑保持一致 */
+        if (!mq135_is_warmed_up()) {
+            oled_show_line(3, "MQ135: Warming...  ");
+        } else if (local.mq135_err) {
             oled_show_line(3, "MQ135: ERR         ");
         } else {
             oled_show_line(3, "MQ135: %.2fV %s",
@@ -272,7 +275,9 @@ static void oled_display_task(void *arg)
         }
 
         /* ---- 行 5: 报警状态汇总 ---- */
-        int alert = (!local.mq135_do || !local.photo_do) ? 1 : 0;
+        /* 预热期间忽略 MQ-135 DO，避免误统计 (与 buzzer_task 逻辑一致) */
+        int mq135_do_for_alert = mq135_is_warmed_up() ? local.mq135_do : 1;
+        int alert = (!mq135_do_for_alert || !local.photo_do) ? 1 : 0;
         int err_sum = local.dht11_err | local.ds18b20_err | local.mq135_err | local.photo_err;
         oled_show_line(5, "Alrt:%s Err:0x%02x",
                        alert ? "ON " : "OFF", err_sum);
@@ -299,12 +304,13 @@ static void buzzer_task(void *arg)
     }
 
     while (1) {
-        int mq135_do = 1;
+        int mq135_do = 1;    /* 默认正常 (预热期间强制为1) */
         int photo_do = 1;
 
         /* 持锁读取报警状态 */
         if (xSemaphoreTake(g_sensor_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
-            mq135_do  = g_sensor_data.mq135_do;
+            /* 预热期间忽略 MQ-135 DO，避免误报警 (REQUIREMENT.md 4.3: 预热≥3分钟) */
+            mq135_do  = mq135_is_warmed_up() ? g_sensor_data.mq135_do : 1;
             photo_do  = g_sensor_data.photo_do;
 
             /* 更新蜂鸣器状态到共享数据 (供 OLED 显示) */

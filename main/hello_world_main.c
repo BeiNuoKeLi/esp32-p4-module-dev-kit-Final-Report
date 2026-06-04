@@ -17,6 +17,7 @@
 #include "freertos/semphr.h"
 #include "sensors.h"
 #include "oled_ssd1306.h"
+#include "udp_sender.h"
 
 /* ================== Wi-Fi 配置（通过 menuconfig 设置）================== */
 #define WIFI_SSID   CONFIG_EXAMPLE_WIFI_SSID
@@ -368,4 +369,7 @@ void app_main(void)
 
     /* 创建蜂鸣器报警任务 (优先级2, 栈2048) */
     xTaskCreate(buzzer_task, "buzzer_alarm", 2048, NULL, 2, NULL);
+
+    /* 创建 UDP 传感器数据发送任务 (优先级2, 栈4096, 绑核1) (REQUIREMENT.md 5.2) */
+    xTaskCreatePinnedToCore(udp_sender_task, "Task_UDP_Send", 4096, NULL, 2, NULL, 1);
 }

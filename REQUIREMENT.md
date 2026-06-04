@@ -16,7 +16,7 @@
 | 编译器 | RISC-V 32-bit |
 | PSRAM | 已启用 32MB（`CONFIG_SPIRAM=y`，200MHz 16线模式），详见 `PSRAM_DEBUG_GUIDE.md` |
 | WiFi | 已通过 `esp_wifi_remote`（SDIO → ESP32-C6 协处理器）联网，`app_main()` 中已调用 `wifi_init_sta()` |
-| 上位机 IP | `192.168.5.5`（Windows 局域网） |
+| 上位机 IP | `10.16.234.215`（Windows 局域网, 2026-06-04 ipconfig 确认） |
 | 通信端口 | `8080`（UDP） |
 
 ---

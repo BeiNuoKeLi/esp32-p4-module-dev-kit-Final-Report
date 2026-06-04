@@ -1,0 +1,39 @@
+/**
+ * @file udp_sender.h
+ * @brief UDP 传感器数据发送任务声明
+ *
+ * 功能（REQUIREMENT.md 第6节）：
+ *   - 每2秒读取 g_sensor_data（持锁）
+ *   - snprintf() 构建 JSON（REQUIREMENT.md 6.3）
+ *   - 通过 UDP socket 发送到 192.168.5.5:8080（REQUIREMENT.md 6.1）
+ *
+ * 任务参数（REQUIREMENT.md 5.2）：
+ *   - 优先级: 2
+ *   - 栈大小: 4096
+ *   - 绑定核心: Core 1
+ */
+
+#ifndef UDP_SENDER_H
+#define UDP_SENDER_H
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/**
+ * @brief UDP 传感器数据发送任务入口
+ *
+ * 流程：
+ *   1. 等待 5 秒确保 Wi-Fi 连接就绪
+ *   2. 创建 UDP socket (AF_INET, SOCK_DGRAM)
+ *   3. 循环：持锁读传感器数据 → 构建 JSON → sendto() → 等2秒
+ *
+ * @param arg 未使用（NULL）
+ */
+void udp_sender_task(void *arg);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif /* UDP_SENDER_H */

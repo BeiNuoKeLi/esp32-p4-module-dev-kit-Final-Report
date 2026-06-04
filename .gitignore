@@ -30,4 +30,7 @@ __pycache__/
 .DS_Store
 Thumbs.db
 
+# Runtime output
+sensor_log.csv
+
 开发文档

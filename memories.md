@@ -2,7 +2,7 @@
 
 > **文档目的**：记录项目当前状态、规范和已实现功能，方便后续 Agent 理解和继续开发
 >
-> **最后更新**：2026-06-04（MQ-135 预热功能实现，动态变量改为静态避免 ESP-Hosted 冲突）
+> **最后更新**：2026-06-04（UDP 发送模块 + pc_receiver.py 上位机 + 端到端 WiFi 传输验证通过）
 
 ---
 
@@ -18,7 +18,7 @@
 | **框架** | ESP-IDF v5.5.1 |
 | **编译器** | RISC-V 32-bit |
 | **通信** | WiFi STA (通过 SDIO → ESP32-C6 协处理器) |
-| **上位机** | Windows, IP: 192.168.5.5:8080 (UDP) |
+| **上位机** | Windows, IP: 10.16.234.215:8080 (UDP) (2026-06-04 ipconfig 确认) |
 
 ### 1.2 项目目标
 
@@ -99,8 +99,9 @@ main/
 ├── sensors.c            # 传感器驱动实现 (MQ-135预热 + DS18B20 + DHT11 + 光敏 + 蜂鸣器)
 ├── oled_ssd1306.h        # SSD1306 OLED 驱动头文件 (I2C, GPIO7/8, 6x8字体)
 ├── oled_ssd1306.c        # SSD1306 OLED 驱动实现 (128x64 framebuffer, Page Addressing 逐页刷新)
-├── udp_sender.h         # [待实现] UDP 任务声明
-└── udp_sender.c         # [待实现] JSON 组包 + UDP Socket
+├── udp_sender.h         # ✅ UDP 任务声明（2026-06-04 实现）
+└── udp_sender.c         # ✅ JSON 组包 + UDP Socket 发送（2026-06-04 实现）
+└── pc_receiver.py       # ✅ Windows 上位机 UDP 接收脚本（2026-06-04 实现）
 ```
 
 ### 2.4 OLED 显示内容（8行布局）
@@ -265,36 +266,48 @@ portENABLE_INTERRUPTS();
 
 ---
 
-## 六、通信协议规范（待实现）
+## 六、通信协议规范 ✅ 已实现
 
 ### 6.1 UDP 参数
 
 | 参数 | 值 |
 |------|-----|
-| 目标 IP | `192.168.5.5` |
+| 目标 IP | `10.16.234.215` (2026-06-04 ipconfig 确认) |
+| ESP32-P4 IP | `10.16.234.86` (DHCP 自动获取) |
 | 目标端口 | `8080` |
 | 发送间隔 | 每 2 秒 |
-| 单包最大 | < 512 字节 |
+| 单包实际 | ~110 bytes (< 512 字节限制) |
+| Socket API | lwip/sockets.h (BSD socket 兼容层) |
 
 ### 6.2 JSON 报文格式
 
 ```json
 {
-  "ts": 120000,
-  "dht11_t": 26.0,
-  "dht11_h": 62.0,
-  "ds18b20_t": 28.3125,
-  "mq135_v": 1.25,
-  "light_v": 0.85,
+  "ts": 12360,
+  "dht11_t": 28.0,
+  "dht11_h": 56.0,
+  "ds18b20_t": 28.4375,
+  "mq135_v": 0.31,
+  "light_v": 1.34,
   "alert": 0,
-  "buzzer": 0,
   "err": 0
 }
 ```
 
+| 字段 | 类型 | 精度 | 说明 |
+|------|------|------|------|
+| `ts` | int | 毫秒 | esp_timer_get_time() / 1000 |
+| `dht11_t` | float | 1 位小数 | DHT11 温度 (°C) |
+| `dht11_h` | float | 1 位小数 | DHT11 湿度 (%RH) |
+| `ds18b20_t` | float | 4 位小数 | DS18B20 温度, 0.0625°C 分辨率 |
+| `mq135_v` | float | 2 位小数 | MQ-135 AO 电压 (V) |
+| `light_v` | float | 2 位小数 | 光敏 AO 电压, photo_raw × 3.3 / 4095 |
+| `alert` | int | 0/1 | 任一 DO 为低 → 1 |
+| `err` | int | 位掩码 | bit0=DHT11, bit1=DS18B20, bit2=MQ135, bit3=光敏 |
+
 ### 6.3 JSON 组包方式
 
-> 使用 `snprintf()` 直接拼接，**不引入** cJSON 等第三方库
+> 使用 `snprintf()` 直接拼接，**不引入** cJSON 等第三方库（REQUIREMENT.md 6.3）
 
 ---
 
@@ -311,6 +324,9 @@ portENABLE_INTERRUPTS();
 | OLED SSD1306 | 2026-06-01 | ✅ 通过 | I2C 通信稳定，显示清晰，无丢帧 |
 | 蜂鸣器 | 2026-06-01 | ✅ 通过 | GPIO25 间歇鸣叫，报警逻辑正常 |
 | MQ-135 预热 | 2026-06-04 | ✅ 通过 | 动态变量改为静态，避免 ESP-Hosted 冲突 |
+| UDP 发送模块 | 2026-06-04 | ✅ 通过 | ESP32 → 10.16.234.215:8080, snprintf JSON, 2秒间隔 |
+| pc_receiver.py | 2026-06-04 | ✅ 通过 | UDP 监听 + JSON 解析 + 控制台输出 + CSV 日志 |
+| 端到端 WiFi 传输 | 2026-06-04 | ✅ 通过 | ESP32(10.16.234.86) → PC(10.16.234.215) 稳定传输 |
 
 ### 7.2 已知 Bug 及修复
 
@@ -341,9 +357,9 @@ portENABLE_INTERRUPTS();
 
 ### 8.3 数据通信
 
-- [ ] **UDP Socket** - 建立 UDP 连接
-- [ ] **JSON 组包** - 按协议格式封装数据
-- [ ] **上位机脚本** - Windows Python 接收端
+- [x] **UDP Socket** - 建立 UDP 连接, lwip/sockets.h ✅ 2026-06-04
+- [x] **JSON 组包** - snprintf() 按协议格式封装数据 ✅ 2026-06-04
+- [x] **上位机脚本** - pc_receiver.py, UDP 监听 + CSV 日志 ✅ 2026-06-04
 
 ### 8.4 数据处理
 
@@ -351,7 +367,7 @@ portENABLE_INTERRUPTS();
 - [x] **FreeRTOS OLED 任务** - OLED 显示刷新任务（优先级2, 1秒刷新）✅ 2026-06-01
 - [x] **互斥锁保护** - g_sensor_mutex 保护 sensor_shared_t ✅ 2026-06-01
 - [x] **蜂鸣器报警任务** - 引用共享数据，间歇鸣叫（100ms/500ms）✅ 2026-06-01
-- [ ] **UDP 发送任务** - 事件驱动 + 定时发送
+- [x] **UDP 发送任务** - Task_UDP_Send (优先级2, 栈4096, Core 1, 每2秒) ✅ 2026-06-04
 
 ---
 
@@ -438,6 +454,7 @@ portENABLE_INTERRUPTS();
 | 2026-06-01 | 修复 OLED 后续行乱码 | Agent | 切换为 Page Addressing Mode，逐页 128B 发送，避免 1025B 单次传输丢数据 |
 | 2026-06-04 | MQ-135 预热功能 | Agent | 预热到 DO 稳定为 1，OLED 显示预热状态 |
 | 2026-06-04 | 修复 ESP-Hosted 崩溃 | Agent | MQ-135 预热状态改为静态变量，避免 SDIO 中断冲突 |
+| 2026-06-04 | UDP 发送模块 + 上位机脚本 | Agent | udp_sender.c/h + pc_receiver.py，端到端 WiFi 传输验证通过，IP 更新为 10.16.234.215 |
 
 ---
 

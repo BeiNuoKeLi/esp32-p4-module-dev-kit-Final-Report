@@ -38,13 +38,34 @@ idf.py build flash monitor
 
 ```
 4 × 传感器任务 (prio 3) ──→ sensor_shared_t ←── OLED 显示任务 (prio 2)
-                                  ↑                   Buzzer 报警任务 (prio 2)
-                            g_sensor_mutex
+                                  ↓                   Buzzer 报警任务 (prio 2)
+                            g_sensor_mutex            UDP 发送任务 (prio 2, Core 1)
+                                  ↓
+                         udp_sender.c → 10.16.234.215:8080
+                                  ↓
+                         pc_receiver.py (Windows 上位机)
 ```
 
 - **`sensors.c/h`**：DHT11 / DS18B20 / MQ-135 / 光敏 / 蜂鸣器 驱动
 - **`oled_ssd1306.c/h`**：SSD1306 I2C 驱动，Page Addressing 逐页刷新
-- **`hello_world_main.c`**：主入口，Wi-Fi STA（SDIO → ESP32-C6）
+- **`udp_sender.c/h`**：JSON 组包 + UDP Socket 发送 (snprintf, lwip/sockets.h)
+- **`hello_world_main.c`**：主入口，Wi-Fi STA + 7 个 FreeRTOS 任务创建
+- **`pc_receiver.py`**：Windows 上位机 UDP 接收脚本 (监听 8080, CSV 日志)
+
+## 通信
+
+| 参数 | 值 |
+|------|-----|
+| ESP32-P4 IP | DHCP 自动获取 (当前 10.16.234.86) |
+| 上位机 IP | 10.16.234.215 |
+| 端口 | 8080 UDP |
+| 间隔 | 每 2 秒 |
+| 格式 | JSON (8 字段: ts, dht11_t/h, ds18b20_t, mq135_v, light_v, alert, err) |
+
+```bash
+# 启动上位机接收端
+D:\Anaconda3\envs\ForAgents\python.exe pc_receiver.py
+```
 
 ## 关键约束
 

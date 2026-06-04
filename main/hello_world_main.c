@@ -349,7 +349,7 @@ void app_main(void)
     }
 
     /* WiFi STA 初始化 — 当前注释，后续需要时启用 */
-    // wifi_init_sta();
+    wifi_init_sta();
 
     /* 创建 MQ-135 传感器读取任务 (优先级3, 栈4096) */
     xTaskCreate(mq135_task, "mq135_sensor", 4096, NULL, 3, NULL);

@@ -710,3 +710,75 @@ esp_err_t buzzer_set(int on)
     gpio_set_level(BUZZER_GPIO, on ? 1 : 0);
     return ESP_OK;
 }
+
+/* ==================== LED 驱动（共阴极双色LED）==================== */
+
+static const char *TAG_LED = "led";
+
+esp_err_t led_init(void)
+{
+    /* 配置 GPIO26 (红色) 和 GPIO27 (绿色) 为推挽输出, 初始低电平 (熄灭)
+     * 共阴极双色LED: 公共阴极已外接 GND, 阳极高电平触发点亮
+     * 驱动电路: GPIO → 220Ω → LED阳极 → 共阴 → GND (REQUIREMENT.md 3.2) */
+    gpio_config_t io_conf = {
+        .pin_bit_mask  = (1ULL << LED_RED_GPIO) | (1ULL << LED_GREEN_GPIO),
+        .mode          = GPIO_MODE_OUTPUT,
+        .pull_up_en    = GPIO_PULLUP_DISABLE,
+        .pull_down_en  = GPIO_PULLDOWN_ENABLE,
+        .intr_type     = GPIO_INTR_DISABLE,
+    };
+    ESP_ERROR_CHECK(gpio_config(&io_conf));
+
+    /* 确保初始为低电平 (全部熄灭) */
+    gpio_set_level(LED_RED_GPIO, 0);
+    gpio_set_level(LED_GREEN_GPIO, 0);
+
+    ESP_LOGI(TAG_LED, "LED初始化完成 (红:GPIO%d, 绿:GPIO%d)", LED_RED_GPIO, LED_GREEN_GPIO);
+    return ESP_OK;
+}
+
+esp_err_t led_set_red(int on)
+{
+    /* 高电平 → 红色LED点亮 */
+    gpio_set_level(LED_RED_GPIO, on ? 1 : 0);
+    return ESP_OK;
+}
+
+esp_err_t led_set_green(int on)
+{
+    /* 高电平 → 绿色LED点亮 */
+    gpio_set_level(LED_GREEN_GPIO, on ? 1 : 0);
+    return ESP_OK;
+}
+
+/* ==================== 继电器驱动 ==================== */
+
+static const char *TAG_RELAY = "relay";
+
+esp_err_t relay_init(void)
+{
+    /* 配置 GPIO32 为推挽输出, 初始低电平 (断开)
+     * 下拉使能: 上电/复位期间保持低电平, 防止误触发继电器
+     * 驱动电路: GPIO32 → 1KΩ → 继电器模块 IN (REQUIREMENT.md 3.2) */
+    gpio_config_t io_conf = {
+        .pin_bit_mask  = (1ULL << RELAY_GPIO),
+        .mode          = GPIO_MODE_OUTPUT,
+        .pull_up_en    = GPIO_PULLUP_DISABLE,
+        .pull_down_en  = GPIO_PULLDOWN_ENABLE,
+        .intr_type     = GPIO_INTR_DISABLE,
+    };
+    ESP_ERROR_CHECK(gpio_config(&io_conf));
+
+    /* 确保初始为低电平 (继电器断开) */
+    gpio_set_level(RELAY_GPIO, 0);
+
+    ESP_LOGI(TAG_RELAY, "继电器初始化完成 (GPIO%d)", RELAY_GPIO);
+    return ESP_OK;
+}
+
+esp_err_t relay_set(int on)
+{
+    /* 高电平 → 继电器闭合 → 风扇启动 */
+    gpio_set_level(RELAY_GPIO, on ? 1 : 0);
+    return ESP_OK;
+}

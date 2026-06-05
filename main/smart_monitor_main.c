@@ -39,10 +39,20 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
     } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
         wifi_event_sta_disconnected_t *disconn = (wifi_event_sta_disconnected_t *)event_data;
         ESP_LOGW(TAG, "Disconnected, reason: %d, reconnecting...", disconn->reason);
+        /* 更新 Wi-Fi 状态到共享数据 */
+        if (g_sensor_mutex && xSemaphoreTake(g_sensor_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+            g_sensor_data.wifi_connected = 0;
+            xSemaphoreGive(g_sensor_mutex);
+        }
         esp_wifi_connect();
     } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t *event = (ip_event_got_ip_t *)event_data;
         ESP_LOGI(TAG, "Got IP: " IPSTR, IP2STR(&event->ip_info.ip));
+        /* 更新 Wi-Fi 状态到共享数据 */
+        if (g_sensor_mutex && xSemaphoreTake(g_sensor_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+            g_sensor_data.wifi_connected = 1;
+            xSemaphoreGive(g_sensor_mutex);
+        }
     }
 }
 
@@ -283,12 +293,16 @@ static void oled_display_task(void *arg)
         oled_show_line(5, "Alrt:%s Err:0x%02x",
                        alert ? "ON " : "OFF", err_sum);
 
-        /* ---- 行 6: 蜂鸣器状态 ---- */
-        oled_show_line(6, "Buzzer: %s        ",
-                       local.buzzer_on ? "ON " : "OFF");
+        /* ---- 行 6: 蜂鸣器 + Wi-Fi 状态 ---- */
+        oled_show_line(6, "Buz:%s  WiFi:%s",
+                       local.buzzer_on ? "ON " : "OFF",
+                       local.wifi_connected ? "OK  " : "DOWN");
 
-        /* ---- 行 7: 空白 ---- */
-        oled_show_line(7, "                   ");
+        /* ---- 行 7: 继电器+LED 状态 ---- */
+        int relay_on = !local.buzzer_on;  /* 正常时继电器闭合(风扇启动), 报警时断开 */
+        oled_show_line(7, "Fan:%s LED:%s",
+                       relay_on ? "ON " : "OFF",
+                       relay_on ? "GRN" : "RED");
 
         vTaskDelay(pdMS_TO_TICKS(1000));  /* 每 1 秒刷新一次 */
     }
@@ -302,6 +316,16 @@ static void buzzer_task(void *arg)
         ESP_LOGE(TAG, "蜂鸣器初始化失败");
         vTaskDelete(NULL);
         return;
+    }
+
+    ret = led_init();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "LED初始化失败");
+    }
+
+    ret = relay_init();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "继电器初始化失败");
     }
 
     while (1) {
@@ -319,14 +343,23 @@ static void buzzer_task(void *arg)
             xSemaphoreGive(g_sensor_mutex);
         }
 
-        /* 报警逻辑: MQ-135 或 光敏任一 DO=0 → 蜂鸣器间歇鸣叫 */
+        /* 报警逻辑: MQ-135 或 光敏任一 DO=0 → 触发报警 */
         if (!mq135_do || !photo_do) {
-            buzzer_set(1);                      /* 鸣叫 */
+            /* 报警状态: 蜂鸣器鸣叫, 红灯亮, 绿灯灭, 继电器闭合(风扇启动) */
+            buzzer_set(1);                          /* 鸣叫 */
+            led_set_red(1);                         /* 红灯亮 */
+            led_set_green(0);                       /* 绿灯灭 */
+            relay_set(0);                           /* 继电器断开(风扇停止) */
             vTaskDelay(pdMS_TO_TICKS(100));
-            buzzer_set(0);                      /* 静音 */
+            /* 间歇停止: 蜂鸣器静音, LED保持报警状态, 继电器保持断开 */
+            buzzer_set(0);                          /* 静音 */
             vTaskDelay(pdMS_TO_TICKS(500));
         } else {
-            vTaskDelay(pdMS_TO_TICKS(500));     /* 正常时每 500ms 检查一次 */
+            /* 正常状态: 红灯灭, 绿灯亮, 继电器闭合(风扇启动) */
+            led_set_red(0);                         /* 红灯灭 */
+            led_set_green(1);                       /* 绿灯亮 */
+            relay_set(1);                           /* 继电器闭合(风扇启动) */
+            vTaskDelay(pdMS_TO_TICKS(500));         /* 正常时每 500ms 检查一次 */
         }
     }
 }

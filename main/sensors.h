@@ -57,6 +57,13 @@
 /* ==================== 蜂鸣器引脚定义 ==================== */
 #define BUZZER_GPIO         25              /*!< 蜂鸣器控制 → GPIO25, 数字输出 (REQUIREMENT.md 3.1) */
 
+/* ==================== LED 引脚定义（共阴极双色LED）==================== */
+#define LED_RED_GPIO        26              /*!< 红色LED阳极 → GPIO26, 数字输出, 高电平点亮 (REQUIREMENT.md 3.1) */
+#define LED_GREEN_GPIO      27              /*!< 绿色LED阳极 → GPIO27, 数字输出, 高电平点亮 (REQUIREMENT.md 3.1) */
+
+/* ==================== 继电器引脚定义 ==================== */
+#define RELAY_GPIO          32              /*!< 继电器IN → GPIO32, 数字输出, 高电平闭合 (REQUIREMENT.md 3.1) */
+
 /* ==================== ADC 滤波参数 (REQUIREMENT.md 5.5) ==================== */
 #define ADC_SAMPLE_COUNT    12      /*!< 连续采样次数 */
 #define ADC_DISCARD_COUNT   2       /*!< 每端去掉的个数，剩余 8 个取平均 */
@@ -113,6 +120,9 @@ typedef struct {
 
     /* 蜂鸣器 */
     int     buzzer_on;      /*!< 蜂鸣器状态: 0=静音, 1=鸣叫中 */
+
+    /* Wi-Fi */
+    int     wifi_connected; /*!< Wi-Fi 连接状态: 0=断开, 1=已连接 */
 } sensor_shared_t;
 
 /* 全局共享数据句柄 */
@@ -245,5 +255,52 @@ esp_err_t buzzer_init(void);
  * @return ESP_OK 成功
  */
 esp_err_t buzzer_set(int on);
+
+/* ==================== LED 函数声明 ==================== */
+/**
+ * @brief 初始化双色LED (GPIO26 红色, GPIO27 绿色)
+ *
+ * - 配置 GPIO26/GPIO27 为推挽输出, 初始低电平 (熄灭)
+ * - 共阴极双色LED，公共阴极已外接 GND
+ * - 高电平触发点亮
+ *
+ * @return ESP_OK 成功
+ */
+esp_err_t led_init(void);
+
+/**
+ * @brief 设置红色LED状态
+ *
+ * @param on 1=点亮, 0=熄灭
+ * @return ESP_OK 成功
+ */
+esp_err_t led_set_red(int on);
+
+/**
+ * @brief 设置绿色LED状态
+ *
+ * @param on 1=点亮, 0=熄灭
+ * @return ESP_OK 成功
+ */
+esp_err_t led_set_green(int on);
+
+/* ==================== 继电器函数声明 ==================== */
+/**
+ * @brief 初始化继电器 (GPIO32)
+ *
+ * - 配置 GPIO32 为推挽输出, 初始低电平 (断开)
+ * - 高电平触发继电器闭合，控制风扇
+ *
+ * @return ESP_OK 成功
+ */
+esp_err_t relay_init(void);
+
+/**
+ * @brief 设置继电器状态
+ *
+ * @param on 1=闭合(风扇启动), 0=断开(风扇停止)
+ * @return ESP_OK 成功
+ */
+esp_err_t relay_set(int on);
 
 #endif /* SENSORS_H */

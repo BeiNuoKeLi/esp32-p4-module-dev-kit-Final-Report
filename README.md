@@ -49,7 +49,7 @@ idf.py build flash monitor
 - **`sensors.c/h`**：DHT11 / DS18B20 / MQ-135 / 光敏 / 蜂鸣器 驱动
 - **`oled_ssd1306.c/h`**：SSD1306 I2C 驱动，Page Addressing 逐页刷新
 - **`udp_sender.c/h`**：JSON 组包 + UDP Socket 发送 (snprintf, lwip/sockets.h)
-- **`hello_world_main.c`**：主入口，Wi-Fi STA + 7 个 FreeRTOS 任务创建
+- **`smart_monitor_main.c`**：主入口，Wi-Fi STA + 7 个 FreeRTOS 任务创建
 - **`pc_receiver.py`**：Windows 上位机 UDP 接收脚本 (监听 8080, CSV 日志)
 
 ## 通信

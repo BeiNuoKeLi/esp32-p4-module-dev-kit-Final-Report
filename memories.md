@@ -94,7 +94,7 @@
 
 ```
 main/
-├── hello_world_main.c    # 主入口，4传感器任务 + OLED + 蜂鸣器任务
+├── smart_monitor_main.c    # 主入口，4传感器任务 + OLED + 蜂鸣器任务
 ├── sensors.h             # 传感器+蜂鸣器驱动头文件 + sensor_shared_t
 ├── sensors.c            # 传感器驱动实现 (MQ-135预热 + DS18B20 + DHT11 + 光敏 + 蜂鸣器)
 ├── oled_ssd1306.h        # SSD1306 OLED 驱动头文件 (I2C, GPIO7/8, 6x8字体)

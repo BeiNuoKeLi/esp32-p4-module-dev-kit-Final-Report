@@ -24,7 +24,8 @@ JSON 报文格式（REQUIREMENT.md 6.2）：
   "mq135_v": 1.25,            // MQ-135 AO 电压 (V)
   "light_v": 0.85,            // 光敏 AO 电压 (V)
   "alert": 0,                 // 0=正常, 1=报警
-  "err": 0                    // 错误位掩码
+  "err": 0,                   // 错误位掩码
+  "reason": ""                // 报警原因 (mq135 / light / mq135,light)
 }
 
 仅使用标准库，无需 pip install（REQUIREMENT.md 7.3）
@@ -155,11 +156,13 @@ class UdpReceiver:
         light_v = obj.get("light_v", 0)
         alert = obj.get("alert", 0)
         err = obj.get("err", 0)
+        reason = obj.get("reason", "")  # 报警原因: mq135 / light / mq135,light
         esp_ts = obj.get("ts", 0)  # ESP32 端时间戳
 
         # 构造报警状态字符串
         if alert == 1:
-            alert_str = "ALARM!"
+            reason_str = f" ({reason})" if reason else ""
+            alert_str = f"ALARM!{reason_str}"
             # ANSI 红色高亮（REQUIREMENT.md 7.1: \033[91m）
             alert_field = f"\033[91m{alert_str:>7}\033[0m"
         else:
@@ -188,7 +191,7 @@ class UdpReceiver:
         追加写入 CSV 日志文件
 
         首次写入时自动写表头（REQUIREMENT.md 7.1）
-        CSV 列: timestamp, esp_ts, dht11_t, dht11_h, ds18b20_t, mq135_v, light_v, alert, err
+        CSV 列: timestamp, esp_ts, dht11_t, dht11_h, ds18b20_t, mq135_v, light_v, alert, err, reason
         """
         try:
             with open(CSV_FILE, "a", newline="", encoding="utf-8") as f:
@@ -201,7 +204,7 @@ class UdpReceiver:
                         "dht11_t", "dht11_h",
                         "ds18b20_t",
                         "mq135_v", "light_v",
-                        "alert", "err"
+                        "alert", "err", "reason"
                     ])
                     self.csv_written_header = True
 
@@ -215,7 +218,8 @@ class UdpReceiver:
                     obj.get("mq135_v", ""),
                     obj.get("light_v", ""),
                     obj.get("alert", ""),
-                    f"0x{obj.get('err', 0):02X}"
+                    f"0x{obj.get('err', 0):02X}",
+                    obj.get("reason", "")
                 ])
         except OSError as e:
             print(f"[{self._now()}] [错误] CSV 写入失败: {e}")

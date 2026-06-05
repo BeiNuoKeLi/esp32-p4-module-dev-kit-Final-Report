@@ -177,7 +177,7 @@ Rs = (Vc / Vout - 1) × RL
 
 ```
 main/
-├── hello_world_main.c   # 已有：WiFi STA 初始化 + 传感器/OLED 任务创建
+├── smart_monitor_main.c   # 已有：WiFi STA 初始化 + 传感器/OLED 任务创建
 ├── sensors.h            # 已有：引脚宏、传感器数据结构、函数声明
 ├── sensors.c            # 已有：全部传感器驱动 + ADC 滤波 + 错误处理
 ├── oled_ssd1306.h       # 已有：SSD1306 OLED I2C 驱动头文件
@@ -369,7 +369,7 @@ snprintf(buf, sizeof(buf),
 | 4 | `main/oled_ssd1306.c` | 已有 | SSD1306 OLED framebuffer 渲染 + 6x8 字体 |
 | 5 | `main/udp_sender.h` | 新建 | UDP 任务声明 |
 | 6 | `main/udp_sender.c` | 新建 | JSON 组包 + UDP Socket 发送 |
-| 7 | `main/hello_world_main.c` | 已有 | 传感器任务 + OLED 显示任务创建 |
+| 7 | `main/smart_monitor_main.c` | 已有 | 传感器任务 + OLED 显示任务创建 |
 | 8 | `pc_receiver.py` | 新建 | Windows 上位机 Python 接收脚本 |
 
 ---

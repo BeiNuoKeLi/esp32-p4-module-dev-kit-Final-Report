@@ -143,7 +143,7 @@ f:/BeiNuoKeLi/esp/esp-idf/examples/
 | BSS 段 | ✅ PSRAM |
 | 内存测试 | ✅ 启用 |
 
-完整配置见 [PSRAM_DEBUG_GUIDE.md](file:///F:/CodeProject/iiot_Experiment_2/code/02_HelloWorld/PSRAM_DEBUG_GUIDE.md)
+完整配置见 [PSRAM_DEBUG_GUIDE.md](file:///F:/CodeProject/iiot_Experiment_2/code/SmartMonitor/PSRAM_DEBUG_GUIDE.md)
 
 ---
 

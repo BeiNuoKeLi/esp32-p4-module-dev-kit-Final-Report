@@ -1,6 +1,6 @@
 # ESP32-P4 开发提示词模板
 
-适用于本项目：`F:\CodeProject\iiot_Experiment_2\code\02_HelloWorld`
+适用于本项目：`F:\CodeProject\iiot_Experiment_2\code\02_SmartMonitor`
 
 ---
 
@@ -15,7 +15,7 @@ ESP32-P4 开发[模块名称]：
    - 确认现有代码架构：
      - main/sensors.h（数据结构、引脚宏、函数声明）
      - main/sensors.c（驱动实现）
-     - main/hello_world_main.c（任务创建）
+     - main/smart_monitor_main.c（任务创建）
    - 检查现有代码风格：
      - 命名规范（snake_case 变量/函数，UPPER_CASE 宏）
      - 注释格式（中文，标注数据来源）
@@ -37,7 +37,7 @@ ESP32-P4 开发[模块名称]：
    - 软件架构：
      - 新增数据结构？（加在 sensors.h 对应位置）
      - 新增函数？（声明在 sensors.h，实现在 sensors.c）
-     - 任务创建？（加在 hello_world_main.c 的 app_main()）
+     - 任务创建？（加在 smart_monitor_main.c 的 app_main()）
 
 3. 写代码
    - 严格遵循现有风格

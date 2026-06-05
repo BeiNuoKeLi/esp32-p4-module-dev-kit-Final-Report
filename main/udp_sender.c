@@ -11,7 +11,8 @@
  *
  * JSON 报文格式（REQUIREMENT.md 6.2）：
  *   {"ts":毫秒,"dht11_t":°C,"dht11_h":%,"ds18b20_t":°C,
- *    "mq135_v":V,"light_v":V,"alert":0/1,"err":位掩码}
+ *    "mq135_v":V,"light_v":V,"alert":0/1,"err":位掩码,
+ *    "reason":"触发原因"}
  *
  * 组包方式（REQUIREMENT.md 6.3）：
  *   - 使用 snprintf() 直接拼接，不引入 cJSON 等第三方库
@@ -109,6 +110,18 @@ void udp_sender_task(void *arg)
          * 此时仅当 DO 明确为 0 才报警 */
         int alert = (!local.mq135_do || !local.photo_do) ? 1 : 0;
 
+        /* 报警原因: 记录具体哪个传感器触发了报警 */
+        char reason[32] = "";
+        if (alert) {
+            if (!local.mq135_do && !local.photo_do) {
+                snprintf(reason, sizeof(reason), "mq135,light");
+            } else if (!local.mq135_do) {
+                snprintf(reason, sizeof(reason), "mq135");
+            } else if (!local.photo_do) {
+                snprintf(reason, sizeof(reason), "light");
+            }
+        }
+
         /* 错误码（REQUIREMENT.md 5.7 位掩码）:
          * bit0 = DHT11, bit1 = DS18B20, bit2 = MQ135, bit3 = 光敏 */
         int err = local.dht11_err | local.ds18b20_err
@@ -118,11 +131,11 @@ void udp_sender_task(void *arg)
         int written = snprintf(buf, sizeof(buf),
             "{\"ts\":%lu,\"dht11_t\":%.1f,\"dht11_h\":%.1f,"
             "\"ds18b20_t\":%.4f,\"mq135_v\":%.2f,\"light_v\":%.2f,"
-            "\"alert\":%d,\"err\":%d}",
+            "\"alert\":%d,\"err\":%d,\"reason\":\"%s\"}",
             ts,
             (float)local.dht11_temp, (float)local.dht11_humi,
             local.ds18b20_temp, mq135_v, light_v,
-            alert, err);
+            alert, err, reason);
 
         /* 检查是否超出缓冲区（REQUIREMENT.md 6.1: < 512 字节） */
         if (written < 0 || written >= (int)sizeof(buf)) {

@@ -14,7 +14,7 @@ from pytest_embedded_qemu.dut import QemuDut
 @pytest.mark.supported_targets
 @pytest.mark.preview_targets
 @pytest.mark.generic
-def test_hello_world(
+def test_smart_monitor(
     dut: IdfDut, log_minimum_free_heap_size: Callable[..., None]
 ) -> None:
     dut.expect('Hello world!')
@@ -23,7 +23,7 @@ def test_hello_world(
 
 @pytest.mark.linux
 @pytest.mark.host_test
-def test_hello_world_linux(dut: IdfDut) -> None:
+def test_smart_monitor_linux(dut: IdfDut) -> None:
     dut.expect('Hello world!')
 
 
@@ -44,7 +44,7 @@ def verify_elf_sha256_embedding(app: QemuApp, sha256_reported: str) -> None:
 @pytest.mark.esp32  # we only support qemu on esp32 for now
 @pytest.mark.host_test
 @pytest.mark.qemu
-def test_hello_world_host(app: QemuApp, dut: QemuDut) -> None:
+def test_smart_monitor_host(app: QemuApp, dut: QemuDut) -> None:
     sha256_reported = (
         dut.expect(r'ELF file SHA256:\s+([a-f0-9]+)').group(1).decode('utf-8')
     )

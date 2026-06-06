@@ -21,12 +21,14 @@ extern "C" {
 #endif
 
 /**
- * @brief UDP 传感器数据发送任务入口
+ * @brief UDP 传感器数据发送任务入口 (v2.0 分级报警)
  *
  * 流程：
  *   1. 等待 5 秒确保 Wi-Fi 连接就绪
  *   2. 创建 UDP socket (AF_INET, SOCK_DGRAM)
- *   3. 循环：持锁读传感器数据 → 构建 JSON → sendto() → 等2秒
+ *   3. 循环：持锁读传感器数据 → 计算分级报警源 → 构建 JSON → sendto() → 等2秒
+ *
+ * JSON 格式 v2.0: {"type":"data","level":0,"ts":...,"dht11_t":...,...,"reason":"..."}
  *
  * @param arg 未使用（NULL）
  */

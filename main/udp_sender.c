@@ -9,10 +9,10 @@
  *   - 发送间隔: 每 2 秒
  *   - 单包最大: < 512 字节
  *
- * JSON 报文格式（REQUIREMENT.md 6.2）：
- *   {"ts":毫秒,"dht11_t":°C,"dht11_h":%,"ds18b20_t":°C,
- *    "mq135_v":V,"light_v":V,"alert":0/1,"err":位掩码,
- *    "reason":"触发原因"}
+ * JSON 报文格式 v2.0（分级报警）：
+ *   {"type":"data","level":0,"ts":毫秒,"dht11_t":°C,"dht11_h":%,
+ *    "ds18b20_t":°C,"mq135_v":V,"light_v":V,"alert":0/1,"err":位掩码,
+ *    "reason":"触发原因(mq135/dht11_temp/ds18b20_temp/photo/dht11_humi)"}
  *
  * 组包方式（REQUIREMENT.md 6.3）：
  *   - 使用 snprintf() 直接拼接，不引入 cJSON 等第三方库
@@ -105,21 +105,35 @@ void udp_sender_task(void *arg)
         /* MQ-135 电压: 已在 mq135_read() 中计算并存入 g_sensor_data */
         float mq135_v = local.mq135_voltage;
 
-        /* 报警标志（REQUIREMENT.md 6.2: 任一 DO 为低 → alert=1）
-         * 注意: 当传感器数据不可用时 (raw < 0), DO 可能为无效值,
-         * 此时仅当 DO 明确为 0 才报警 */
-        int alert = (!local.mq135_do || !local.photo_do) ? 1 : 0;
+        /* 报警标志 (v2.0 分级报警):
+         * alert = 任一报警源触发 (A 类 OR B 类)
+         * A 类: MQ-135 DO=0 / DHT11 高温 / DS18B20 高温
+         * B 类: 光敏 DO=0 / DHT11 高湿 */
+        int alert_a_mq135    = (!local.mq135_do) ? 1 : 0;
+        int alert_a_temp_dht = (local.dht11_temp >= ALARM_TEMP_HIGH_DHT11
+                                && local.dht11_temp <= 50) ? 1 : 0;
+        int alert_a_temp_ds  = (local.ds18b20_temp >= ALARM_TEMP_HIGH_DS18B20
+                                && local.ds18b20_temp <= 125.0f) ? 1 : 0;
+        int alert_b_photo    = (!local.photo_do) ? 1 : 0;
+        int alert_b_humi     = (local.dht11_humi >= ALARM_HUMI_HIGH
+                                && local.dht11_humi <= 90) ? 1 : 0;
+        int alert = (alert_a_mq135 || alert_a_temp_dht || alert_a_temp_ds
+                     || alert_b_photo || alert_b_humi) ? 1 : 0;
 
-        /* 报警原因: 记录具体哪个传感器触发了报警 */
-        char reason[32] = "";
+        /* 报警原因: 记录具体哪些传感器触发了报警 (v2.0 扩展) */
+        char reason[64] = "";
         if (alert) {
-            if (!local.mq135_do && !local.photo_do) {
-                snprintf(reason, sizeof(reason), "mq135,light");
-            } else if (!local.mq135_do) {
-                snprintf(reason, sizeof(reason), "mq135");
-            } else if (!local.photo_do) {
-                snprintf(reason, sizeof(reason), "light");
-            }
+            int first = 1;
+            if (alert_a_mq135)    { snprintf(reason + strlen(reason),
+                 sizeof(reason) - strlen(reason), "%smq135", first ? "" : ","); first = 0; }
+            if (alert_a_temp_dht) { snprintf(reason + strlen(reason),
+                 sizeof(reason) - strlen(reason), "%sdht11_temp", first ? "" : ","); first = 0; }
+            if (alert_a_temp_ds)  { snprintf(reason + strlen(reason),
+                 sizeof(reason) - strlen(reason), "%sds18b20_temp", first ? "" : ","); first = 0; }
+            if (alert_b_photo)    { snprintf(reason + strlen(reason),
+                 sizeof(reason) - strlen(reason), "%sphoto", first ? "" : ","); first = 0; }
+            if (alert_b_humi)     { snprintf(reason + strlen(reason),
+                 sizeof(reason) - strlen(reason), "%sdht11_humi", first ? "" : ","); first = 0; }
         }
 
         /* 错误码（REQUIREMENT.md 5.7 位掩码）:
@@ -127,11 +141,13 @@ void udp_sender_task(void *arg)
         int err = local.dht11_err | local.ds18b20_err
                 | local.mq135_err  | local.photo_err;
 
-        /* ---- 4.3 构建 JSON 报文（REQUIREMENT.md 6.3: snprintf 直接拼接）---- */
+        /* ---- 4.3 构建 JSON 报文（v2.0: 新增 type + level 字段）---- */
         int written = snprintf(buf, sizeof(buf),
-            "{\"ts\":%lu,\"dht11_t\":%.1f,\"dht11_h\":%.1f,"
+            "{\"type\":\"data\",\"level\":%d,"
+            "\"ts\":%lu,\"dht11_t\":%.1f,\"dht11_h\":%.1f,"
             "\"ds18b20_t\":%.4f,\"mq135_v\":%.2f,\"light_v\":%.2f,"
             "\"alert\":%d,\"err\":%d,\"reason\":\"%s\"}",
+            (int)local.alarm_level,
             ts,
             (float)local.dht11_temp, (float)local.dht11_humi,
             local.ds18b20_temp, mq135_v, light_v,

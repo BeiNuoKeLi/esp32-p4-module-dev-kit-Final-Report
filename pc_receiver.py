@@ -15,18 +15,30 @@
   - 传输方式: UDP (socket.SOCK_DGRAM)
   - 单包最大: < 512 字节
 
-JSON 报文格式（REQUIREMENT.md 6.2）：
+JSON 报文格式 v2.0（分级报警）：
 {
+  "type": "data",             // NEW: 消息类型 (data/checkin/alert_image)
+  "level": 0,                 // NEW: 报警级别 (0=正常,1=预警,2=严重,3=紧急)
   "ts": 120000,               // FreeRTOS 启动后毫秒时间戳
   "dht11_t": 26.0,            // DHT11 温度 (°C)
   "dht11_h": 62.0,            // DHT11 湿度 (%RH)
   "ds18b20_t": 28.3125,       // DS18B20 温度 (°C, 4位小数)
   "mq135_v": 1.25,            // MQ-135 AO 电压 (V)
   "light_v": 0.85,            // 光敏 AO 电压 (V)
-  "alert": 0,                 // 0=正常, 1=报警
+  "alert": 0,                 // 0=正常, 1=任一报警源触发
   "err": 0,                   // 错误位掩码
-  "reason": ""                // 报警原因 (mq135 / light / mq135,light)
+  "reason": ""                // 报警原因 (mq135/dht11_temp/ds18b20_temp/photo/dht11_humi)
 }
+
+报警源分类:
+  A类(风机关联): MQ-135 DO=0 / DHT11温度≥38°C / DS18B20温度≥38°C
+  B类(仅提醒):   光敏 DO=0 / DHT11湿度≥85%
+  
+显示颜色:
+  L0 正常: 绿色
+  L1 预警: 黄色
+  L2 严重: 橙色
+  L3 紧急: 红色
 
 仅使用标准库，无需 pip install（REQUIREMENT.md 7.3）
 """
@@ -140,15 +152,19 @@ class UdpReceiver:
 
     def _print_data(self, obj: dict) -> None:
         """
-        控制台格式化输出
+        控制台格式化输出 (v2.0 分级报警)
 
-        格式要求（REQUIREMENT.md 7.2）：
-        [2026-05-21 14:30:02]  DHT11:  26.0°C |  62.0% || DS18B20: 28.3125°C ...
-        alert==1 时使用红色标记
+        按报警级别显示不同颜色:
+          L0 正常: 绿色
+          L1 预警: 黄色
+          L2 严重: 橙色 (亮红)
+          L3 紧急: 红色 + 闪烁前缀
         """
         ts = self._now()
 
         # 安全提取字段（容错：字段可能缺失）
+        msg_type = obj.get("type", "?")
+        level = obj.get("level", 0)
         dht11_t = obj.get("dht11_t", 0)
         dht11_h = obj.get("dht11_h", 0)
         ds18b20_t = obj.get("ds18b20_t", 0)
@@ -156,42 +172,48 @@ class UdpReceiver:
         light_v = obj.get("light_v", 0)
         alert = obj.get("alert", 0)
         err = obj.get("err", 0)
-        reason = obj.get("reason", "")  # 报警原因: mq135 / light / mq135,light
-        esp_ts = obj.get("ts", 0)  # ESP32 端时间戳
+        reason = obj.get("reason", "")
+        esp_ts = obj.get("ts", 0)
+
+        # 按级别映射颜色和标签
+        level_label = {0: "L0 OK", 1: "L1 YuJing", 2: "L2 YanZhong", 3: "L3 JinJi"}.get(level, f"L?({level})")
+        level_color = {
+            0: "\033[92m",   # 绿色  L0 正常
+            1: "\033[93m",   # 黄色  L1 预警
+            2: "\033[38;5;208m",  # 橙色  L2 严重
+            3: "\033[91m",   # 红色  L3 紧急
+        }.get(level, "\033[0m")
 
         # 构造报警状态字符串
+        alert_str = f"{level_label}"
         if alert == 1:
             reason_str = f" ({reason})" if reason else ""
-            alert_str = f"ALARM!{reason_str}"
-            # ANSI 红色高亮（REQUIREMENT.md 7.1: \033[91m）
-            alert_field = f"\033[91m{alert_str:>7}\033[0m"
-        else:
-            alert_str = "OK"
-            alert_field = f"{alert_str:>7}"
 
         # 构造错误码字符串
         err_field = f"0x{err:02X}"
 
         # 格式化输出
-        # 格式: [时间] DHT11: 温度°C | 湿度% || DS18B20: 温度°C || MQ135: 电压V | Light: 电压V || Alert: 状态 | Err: 错误码
         line = (f"[{ts}] "
                 f"DHT11: {dht11_t:>5.1f}°C | {dht11_h:>5.1f}% "
                 f"|| DS18B20: {ds18b20_t:>8.4f}°C "
                 f"|| MQ135: {mq135_v:>.2f}V | Light: {light_v:>.2f}V "
-                f"|| Alert: {alert_field} | Err: {err_field}")
+                f"|| {level_color}{alert_str:>14}\033[0m | Err: {err_field}")
 
-        # 如果报警，整行加红色前缀提示
-        if alert == 1:
-            print(f"\033[91m{line}\033[0m")
+        if level >= 3:
+            print(f"\033[91m[紧急] {line}\033[0m")
+        elif level >= 2:
+            print(line)
+        elif level >= 1:
+            print(line)
         else:
             print(line)
 
     def _write_csv(self, obj: dict) -> None:
         """
-        追加写入 CSV 日志文件
+        追加写入 CSV 日志文件 (v2.0 分级报警)
 
-        首次写入时自动写表头（REQUIREMENT.md 7.1）
-        CSV 列: timestamp, esp_ts, dht11_t, dht11_h, ds18b20_t, mq135_v, light_v, alert, err, reason
+        首次写入时自动写表头
+        CSV 列: timestamp, esp_ts, type, level, dht11_t, dht11_h, ds18b20_t, mq135_v, light_v, alert, err, reason
         """
         try:
             with open(CSV_FILE, "a", newline="", encoding="utf-8") as f:
@@ -201,6 +223,7 @@ class UdpReceiver:
                 if not self.csv_written_header:
                     writer.writerow([
                         "timestamp", "esp_ts",
+                        "type", "level",
                         "dht11_t", "dht11_h",
                         "ds18b20_t",
                         "mq135_v", "light_v",
@@ -212,6 +235,8 @@ class UdpReceiver:
                 writer.writerow([
                     datetime.datetime.now().isoformat(),
                     obj.get("ts", 0),
+                    obj.get("type", ""),
+                    obj.get("level", 0),
                     obj.get("dht11_t", ""),
                     obj.get("dht11_h", ""),
                     obj.get("ds18b20_t", ""),
@@ -227,9 +252,10 @@ class UdpReceiver:
     def _print_banner(self) -> None:
         """打印启动横幅"""
         print("=" * 60)
-        print("  智能环境监测系统 - 上位机接收端")
+        print("  智慧化工仓储环境监测系统 - 上位机接收端 v2.0")
         print(f"  监听端口: {self.port}")
         print(f"  日志文件: {CSV_FILE}")
+        print("  报警级别: L0 正常 | L1 预警 | L2 严重 | L3 紧急")
         print("=" * 60)
         print("  等待 ESP32-P4 数据... (Ctrl+C 退出)\n")
 

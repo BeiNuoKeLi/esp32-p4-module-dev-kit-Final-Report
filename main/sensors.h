@@ -68,6 +68,31 @@
 #define ADC_SAMPLE_COUNT    12      /*!< 连续采样次数 */
 #define ADC_DISCARD_COUNT   2       /*!< 每端去掉的个数，剩余 8 个取平均 */
 
+/* ==================== 分级报警阈值 (危化品仓库业务场景) ==================== */
+#define ALARM_TEMP_HIGH_DHT11     38      /*!< DHT11 高温阈值 (°C)，超过则触发 A 类报警开风扇 */
+#define ALARM_TEMP_HIGH_DS18B20   38.0f   /*!< DS18B20 高温阈值 (°C)，超过则触发 A 类报警开风扇 */
+#define ALARM_HUMI_HIGH           85      /*!< DHT11 高湿阈值 (%RH)，超过则触发 B 类报警(仅提醒) */
+#define ALARM_ESCALATE_MS         30000   /*!< 报警持续多久升级到 L3 紧急 (毫秒) */
+
+/* ==================== 仿真模式通信端口 ==================== */
+#define SIM_UDP_PORT               8081    /*!< PC → ESP32 仿真注入 UDP 端口 */
+
+/* ==================== 报警级别枚举 ==================== */
+/**
+ * @brief 分级报警级别 (v2.0)
+ *
+ * L0: 正常 — 无传感器触发
+ * L1: 预警 — 仅 B 类源触发 (光敏/湿度异常, 不涉及毒气)
+ * L2: 严重 — 单个 A 类源触发 (毒气/高温, 需排风)
+ * L3: 紧急 — 多个 A 类源触发 或 报警持续超时
+ */
+typedef enum {
+    ALARM_OFF       = 0,   /*!< L0 正常 */
+    ALARM_WARNING   = 1,   /*!< L1 预警: 仅 B 类源触发, 风扇不动 */
+    ALARM_SEVERE    = 2,   /*!< L2 严重: 单个 A 类源触发, 开风扇排风 */
+    ALARM_EMERGENCY = 3    /*!< L3 紧急: 多 A 类源或持续超时, 紧急排风 */
+} alarm_level_t;
+
 /* ==================== DHT11 传感器数据结构 ==================== */
 typedef struct {
     int     temp;       /*!< 温度 (°C), 整数 (DHT11 小数恒为0) */
@@ -120,6 +145,20 @@ typedef struct {
 
     /* 蜂鸣器 */
     int     buzzer_on;      /*!< 蜂鸣器状态: 0=静音, 1=鸣叫中 */
+
+    /* 分级报警 (v2.0) */
+    alarm_level_t alarm_level;  /*!< 当前报警级别: 0=正常,1=预警,2=严重,3=紧急 */
+    int     fan_on;             /*!< 排风扇状态: 0=关闭, 1=运行 (仅 A 类源触发时才开启) */
+
+    /* 仿真模式 (PC GUI 远程注入) */
+    int     sim_active;         /*!< 仿真模式: 0=真实传感器, 1=注入仿真值 */
+    int     sim_dht11_t;        /*!< DHT11 温度仿真值 (°C) */
+    int     sim_dht11_h;        /*!< DHT11 湿度仿真值 (%RH) */
+    float   sim_ds18b20_t;      /*!< DS18B20 温度仿真值 (°C) */
+    int     sim_mq135_do;       /*!< MQ-135 DO 仿真值: 0=超阈值, 1=正常 */
+    float   sim_mq135_v;        /*!< MQ-135 电压仿真值 (V) */
+    int     sim_photo_do;       /*!< 光敏 DO 仿真值: 0=超阈值, 1=正常 */
+    int     sim_photo_raw;      /*!< 光敏 AO 仿真值 (0~4095) */
 
     /* Wi-Fi */
     int     wifi_connected; /*!< Wi-Fi 连接状态: 0=断开, 1=已连接 */

@@ -25,6 +25,7 @@ __pycache__/
 *.pyo
 .env
 .venv
+.codebuddy
 
 # OS
 .DS_Store

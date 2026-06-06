@@ -2,7 +2,7 @@
 
 > **文档目的**：记录项目当前状态、规范和已实现功能，方便后续 Agent 理解和继续开发
 >
-> **最后更新**：2026-06-04（UDP 发送模块 + pc_receiver.py 上位机 + 端到端 WiFi 传输验证通过）
+> **最后更新**：2026-06-06（摄像头图像流模块完成，端到端 UDP 传输验证通过）
 
 ---
 
@@ -102,6 +102,12 @@ main/
 ├── udp_sender.h         # ✅ UDP 任务声明（2026-06-04 实现）
 └── udp_sender.c         # ✅ JSON 组包 + UDP Socket 发送（2026-06-04 实现）
 └── pc_receiver.py       # ✅ Windows 上位机 UDP 接收脚本（2026-06-04 实现）
+
+# 摄像头图像流模块 (2026-06-06 实现)
+camera_capture_sender.py    # ✅ 摄像头采集 + Gamma校正/锐化 + JPEG编码 + UDP分包发送
+camera_display_receiver.py  # ✅ UDP接收 + 分片重组 + JPEG解码 + OpenCV实时显示
+camera_protocol.py          # ✅ Magic 0xAA55 协议头编解码 (大端序, 8字节头, 4096字节payload)
+CAMERA_DEBUG_LOG.md         # 摄像头调试历史 & 参数速查
 ```
 
 ### 2.4 OLED 显示内容（8行布局）
@@ -309,6 +315,20 @@ portENABLE_INTERRUPTS();
 
 > 使用 `snprintf()` 直接拼接，**不引入** cJSON 等第三方库（REQUIREMENT.md 6.3）
 
+### 6.4 摄像头图像流协议 ✅ 已实现
+
+> 详情见 `CAMERA_DEBUG_LOG.md`
+
+| 参数 | 值 |
+|------|-----|
+| 摄像头 | KYT-U400 工业 USB UVC |
+| 分辨率 / 格式 | 640×360 MJPG |
+| 传输端口 | 8082 UDP (与传感器数据 8080 隔离) |
+| 协议头 | Magic 0xAA55 + FrameID(2B) + ChunkIdx(2B) + TotalChunks(2B) |
+| 单包载荷 | 4096 字节 |
+| 发送端 | `camera_capture_sender.py` (OpenCV → Gamma/Sharpen → JPEG → UDP) |
+| 接收端 | `camera_display_receiver.py` (UDP → 重组 → 解码 → imshow) |
+
 ---
 
 ## 七、测试状态
@@ -369,6 +389,14 @@ portENABLE_INTERRUPTS();
 - [x] **互斥锁保护** - g_sensor_mutex 保护 sensor_shared_t ✅ 2026-06-01
 - [x] **蜂鸣器报警任务** - 引用共享数据，间歇鸣叫（100ms/500ms）✅ 2026-06-01
 - [x] **UDP 发送任务** - Task_UDP_Send (优先级2, 栈4096, Core 1, 每2秒) ✅ 2026-06-04
+
+### 8.5 摄像头图像流
+
+- [x] **摄像头采集** - OpenCV DirectShow 后端, 640×360 MJPG, 10fps ✅ 2026-06-06
+- [x] **画质处理** - Gamma 0.55 提亮 + Sharpen 0.2 锐化 + JPEG q=80 ✅ 2026-06-06
+- [x] **UDP 分包发送** - Magic 0xAA55 协议, 4096 字节/包 ✅ 2026-06-06
+- [x] **接收显示** - 分片重组 + JPEG解码 + OpenCV imshow + FPS叠加 ✅ 2026-06-06
+- [x] **调试文档** - CAMERA_DEBUG_LOG.md (8阶段调试历史 + 参数速查表) ✅ 2026-06-06
 
 ---
 
@@ -457,6 +485,7 @@ portENABLE_INTERRUPTS();
 | 2026-06-04 | 修复 ESP-Hosted 崩溃 | Agent | MQ-135 预热状态改为静态变量，避免 SDIO 中断冲突 |
 | 2026-06-04 | UDP 发送模块 + 上位机脚本 | Agent | udp_sender.c/h + pc_receiver.py，端到端 WiFi 传输验证通过，IP 更新为 10.16.234.215 |
 | 2026-06-05 | 新增 LED + 继电器驱动 | Agent | GPIO26(红灯)/GPIO27(绿灯) 共阴极双色LED，GPIO32 继电器风扇控制，集成到 buzzer 任务 |
+| 2026-06-06 | 摄像头图像流模块 | Agent | KYT-U400 USB 摄像头, DirectShow + MJPG, Gamma/Sharpen 画质处理, UDP 分包, 接收显示, 8个阶段调试完成 |
 
 ---
 

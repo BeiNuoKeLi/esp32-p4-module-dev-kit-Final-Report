@@ -57,6 +57,8 @@ idf.py build flash monitor
 
 ## 通信
 
+### 传感器数据 (ESP32 → PC)
+
 | 参数 | 值 |
 |------|-----|
 | ESP32-P4 IP | DHCP 自动获取 (当前 10.16.234.86) |
@@ -70,9 +72,33 @@ idf.py build flash monitor
 D:\Anaconda3\envs\ForAgents\python.exe pc_receiver.py
 ```
 
+### 摄像头图像流 (KYT-U400 → PC)
+
+| 参数 | 值 |
+|------|-----|
+| 摄像头 | KYT-U400 工业 USB UVC, DirectShow 后端 |
+| 分辨率 | 640×360 MJPG |
+| 帧率 | 10 fps |
+| JPEG 质量 | 80 |
+| 传输协议 | UDP 分包 (Magic 0xAA55, 4096 字节/包) |
+| 端口 | 8082 UDP |
+| 软件处理 | Gamma=0.55 提亮 + 锐化强度 0.2 |
+
+```bash
+# 启动接收端 (先开)
+D:\Anaconda3\envs\ForAgents\python.exe f:/CodeProject/iiot_Experiment_2/code/SmartMonitor/camera_display_receiver.py
+
+# 启动发送端 (后开)
+D:\Anaconda3\envs\ForAgents\python.exe f:/CodeProject/iiot_Experiment_2/code/SmartMonitor/camera_capture_sender.py --camera 1
+```
+
+> **重要**：在 VideoCapture 独立控制面板中预先调好焦点/曝光/增益，OpenCV 不覆盖这些参数。
+
 ## 关键约束
 
 - PSRAM 已启用 32MB（200MHz 16线模式），支持 ESP-IDF 堆分配器自动使用外部内存
 - MQ-135 上电预热 ≥ 3 分钟数据稳定
 - DS18B20 12 位精度 0.0625°C，转换时间 ≥ 750ms
 - OLED I2C 需 4.7KΩ 上拉电阻，已启用内部上拉
+- **摄像头图像参数** (焦点/曝光/增益) 在 VideoCapture 控制面板中调好，OpenCV 不做修改
+- 摄像头调试记录见 `CAMERA_DEBUG_LOG.md`

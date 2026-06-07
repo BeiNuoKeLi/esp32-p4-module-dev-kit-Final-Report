@@ -47,13 +47,18 @@ idf.py build flash monitor
                          udp_sender.c → 10.16.234.215:8080
                                   ↓
                          pc_receiver.py (Windows 上位机)
+
+ESP32-CAM ──HTTP──→ camera_http_fetch.c ──UDP:8082──→ camera_display_receiver.py
+                           (prio 1)                    (Windows 上位机)
 ```
 
 - **`sensors.c/h`**：DHT11 / DS18B20 / MQ-135 / 光敏 / 蜂鸣器 / LED / 继电器 驱动
 - **`oled_ssd1306.c/h`**：SSD1306 I2C 驱动，Page Addressing 逐页刷新
-- **`udp_sender.c/h`**：JSON 组包 + UDP Socket 发送 (snprintf, lwip/sockets.h)
-- **`smart_monitor_main.c`**：主入口，Wi-Fi STA + 7 个 FreeRTOS 任务创建（LED/继电器集成在 buzzer 任务中）
+- **`udp_sender.c/h`**：JSON 组包 + UDP Socket 发送 (snprintf, lwip/sockets.h)，带 ENOMEM 退避重试
+- **`camera_http_fetch.c/h`**：HTTP 拉取 ESP32-CAM JPEG → 0xAA55 协议 UDP 分包转发
+- **`smart_monitor_main.c`**：主入口，Wi-Fi STA + 8 个 FreeRTOS 任务创建（LED/继电器集成在 buzzer 任务中）
 - **`pc_receiver.py`**：Windows 上位机 UDP 接收脚本 (监听 8080, CSV 日志)
+- **`camera_display_receiver.py`**：摄像头图像流 UDP 接收 + JPEG 解码 + OpenCV 显示
 
 ## 通信
 
@@ -72,27 +77,25 @@ idf.py build flash monitor
 D:\Anaconda3\envs\ForAgents\python.exe pc_receiver.py
 ```
 
-### 摄像头图像流 (KYT-U400 → PC)
+### 摄像头图像流 (ESP32-CAM → ESP32-P4 → PC)
 
 | 参数 | 值 |
 |------|-----|
-| 摄像头 | KYT-U400 工业 USB UVC, DirectShow 后端 |
-| 分辨率 | 640×360 MJPG |
-| 帧率 | 10 fps |
-| JPEG 质量 | 80 |
-| 传输协议 | UDP 分包 (Magic 0xAA55, 4096 字节/包) |
+| 摄像头模块 | ESP32-CAM (Arduino CameraWebServer) |
+| 采集方式 | ESP32-P4 通过 HTTP GET `/capture` 拉取 JPEG |
+| 转发协议 | UDP 分包 (Magic 0xAA55, 4096 字节/包) |
 | 端口 | 8082 UDP |
-| 软件处理 | Gamma=0.55 提亮 + 锐化强度 0.2 |
+| 帧率 | 3 fps (可配置 1-10) |
+| 配置项 | `CONFIG_CAMERA_HTTP_FPS` / `CONFIG_CAMERA_HTTP_ESP32CAM_URL` |
 
 ```bash
 # 启动接收端 (先开)
 D:\Anaconda3\envs\ForAgents\python.exe f:/CodeProject/iiot_Experiment_2/code/SmartMonitor/camera_display_receiver.py
-
-# 启动发送端 (后开)
-D:\Anaconda3\envs\ForAgents\python.exe f:/CodeProject/iiot_Experiment_2/code/SmartMonitor/camera_capture_sender.py --camera 1
 ```
 
-> **重要**：在 VideoCapture 独立控制面板中预先调好焦点/曝光/增益，OpenCV 不覆盖这些参数。
+> ESP32-CAM 端需先烧录 Arduino CameraWebServer 示例，P4 侧通过 Kconfig 配置其 IP。
+>
+> **备选方案**：也可用本地 USB 摄像头 (KYT-U400) + `camera_capture_sender.py` 直连 PC，详见 `CAMERA_DEBUG_LOG.md`。
 
 ## 关键约束
 
@@ -100,5 +103,6 @@ D:\Anaconda3\envs\ForAgents\python.exe f:/CodeProject/iiot_Experiment_2/code/Sma
 - MQ-135 上电预热 ≥ 3 分钟数据稳定
 - DS18B20 12 位精度 0.0625°C，转换时间 ≥ 750ms
 - OLED I2C 需 4.7KΩ 上拉电阻，已启用内部上拉
-- **摄像头图像参数** (焦点/曝光/增益) 在 VideoCapture 控制面板中调好，OpenCV 不做修改
-- 摄像头调试记录见 `CAMERA_DEBUG_LOG.md`
+- ESP-Hosted SDIO Wi-Fi 初始化需约 13s，任务启动后通过 `esp_netif_is_netif_up()` 轮询等待（最多 20s）
+- Camera HTTP 拉图与 Sensor UDP 共用 lwIP pbuf 池，已实现 ENOMEM(errno=12) 退避重试 + 每包 5ms 微延迟防止资源争抢
+- Camera UDP 端口 8082 与 Sensor 数据端口 8080 隔离

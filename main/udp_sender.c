@@ -31,6 +31,7 @@
 #include "sensors.h"
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "esp_netif.h"
 #include "lwip/sockets.h"
 #include <string.h>
 #include <stdio.h>
@@ -47,11 +48,26 @@ void udp_sender_task(void *arg)
 {
     (void)arg;
 
-    /* ---- 1. 等待 Wi-Fi 连接就绪 ---- */
-    /* Wi-Fi 初始化在 app_main() 中已调用 wifi_init_sta()，
-     * 等待 5 秒确保 DHCP 获取 IP 完成 */
+    /* ---- 1. 轮询等待 Wi-Fi 获取 IP (ESP-Hosted SDIO 需要 ~13s) ---- */
     ESP_LOGI(TAG_UDP, "等待 Wi-Fi 连接...");
-    vTaskDelay(pdMS_TO_TICKS(5000));
+    {
+        esp_netif_t *sta_netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+        esp_netif_ip_info_t ip_info;
+        int wait = 0;
+        while (wait < 200) {  /* 最多等 20s */
+            if (sta_netif && esp_netif_is_netif_up(sta_netif)) {
+                esp_netif_get_ip_info(sta_netif, &ip_info);
+                if (ip_info.ip.addr != 0) break;
+            }
+            vTaskDelay(pdMS_TO_TICKS(100));
+            wait++;
+        }
+        if (wait >= 200) {
+            ESP_LOGE(TAG_UDP, "Wi-Fi 连接超时");
+            vTaskDelete(NULL);
+            return;
+        }
+    }
 
     /* ---- 2. 创建 UDP socket ---- */
     /* API: socket(domain, type, protocol)
@@ -161,14 +177,35 @@ void udp_sender_task(void *arg)
             continue;
         }
 
-        /* ---- 4.4 发送 UDP 数据报 ---- */
+        /* ---- 4.4 发送 UDP 数据报 (带 ENOMEM 退避重试) ---- */
         /* API: sendto(sock, buf, len, flags, dest_addr, addrlen)
-         * 来自 lwip/sockets.h */
-        int sent = sendto(sock, buf, written, 0,
+         * 来自 lwip/sockets.h
+         *
+         * errno=12 (ENOMEM): lwIP pbuf 池暂时耗尽 (Camera 大包占用了),
+         * 等待 200ms 让 Camera 完成发送后重试, 最多 3 次 */
+        int sent = -1;
+        for (int retry = 0; retry < 3; retry++) {
+            sent = sendto(sock, buf, written, 0,
                           (const struct sockaddr *)&dest_addr,
                           sizeof(dest_addr));
+            if (sent >= 0) break;
+
+            if (errno == 12) { /* ENOMEM: pbuf 暂时耗尽, 可恢复 */
+                if (retry < 2) {
+                    vTaskDelay(pdMS_TO_TICKS(200));
+                }
+            } else {
+                break; /* 其他错误不重试 */
+            }
+        }
+
         if (sent < 0) {
-            ESP_LOGW(TAG_UDP, "UDP 发送失败: errno=%d", errno);
+            /* 只对非 ENOMEM 错误打 WARNING, ENOMEM 打 DEBUG 避免刷屏 */
+            if (errno == 12) {
+                ESP_LOGD(TAG_UDP, "UDP 发送 ENOMEM (已重试), 跳过本轮");
+            } else {
+                ESP_LOGW(TAG_UDP, "UDP 发送失败: errno=%d", errno);
+            }
         } else {
             ESP_LOGI(TAG_UDP, "已发送 (%d bytes): %s", sent, buf);
         }

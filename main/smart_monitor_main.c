@@ -18,6 +18,7 @@
 #include "sensors.h"
 #include "oled_ssd1306.h"
 #include "udp_sender.h"
+#include "camera_http_fetch.h"
 #include "lwip/sockets.h"
 
 /* ================== Wi-Fi 配置（通过 menuconfig 设置）================== */
@@ -709,4 +710,11 @@ void app_main(void)
 
     /* 创建 UDP 仿真命令接收任务 (优先级1, 栈3072) — PC GUI 远程注入传感器值 */
     xTaskCreate(udp_sim_command_task, "Task_UDP_Sim", 3072, NULL, 1, NULL);
+
+    /* 创建 HTTP 摄像头拉图转发任务 (优先级1, 栈8192) — ESP32-CAM → HTTP → UDP */
+#ifdef CONFIG_CAMERA_HTTP_ENABLED
+    xTaskCreate(camera_http_fetch_task, "Task_Cam_HTTP", 8192, NULL, 1, NULL);
+#else
+    ESP_LOGI(TAG, "HTTP 摄像头已禁用 (CONFIG_CAMERA_HTTP_ENABLED=n)");
+#endif
 }

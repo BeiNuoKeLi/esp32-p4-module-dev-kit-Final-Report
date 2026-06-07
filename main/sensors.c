@@ -58,8 +58,14 @@ static bool s_adc1_inited = false;
 
 /* ==================== DHT11 内部函数 ==================== */
 
-/* DHT11 忙等待超时次数 (每次 ~10us, 共 ~200us) */
-#define DHT11_TIMEOUT_LOOPS  20
+/* DHT11 忙等待超时次数 (每次 ~1us, 共 ~200us)
+ * 修复: 从 10us/步 改为 1us/步, 提高脉冲宽度测量精度 */
+#define DHT11_TIMEOUT_LOOPS  200
+
+/* DHT11 数据位脉冲宽度判定阈值 (us)
+ * 数据位0: 高电平 ~28us | 数据位1: 高电平 ~70us
+ * 阈值取 45us, 给两侧各 ~17us 的抖动余量 */
+#define DHT11_BIT_THRESHOLD_US  45
 
 /**
  * @brief 带超时的 GPIO 电平变化等待 (中断已关闭时使用)
@@ -74,7 +80,7 @@ static int dht11_wait_level(int target, int loops)
         if (gpio_get_level(DHT11_DATA_GPIO) != target) {
             return 0;  /* 电平已翻转, 正常 */
         }
-        esp_rom_delay_us(10);
+        esp_rom_delay_us(1);  /* 1us 粒度, 提高时序精度 */
     }
     return -1;  /* 超时: GPIO 卡死 */
 }
@@ -122,7 +128,15 @@ static int dht11_reset(void)
 }
 
 /**
- * @brief DHT11 读取一个字节 (来自51参考代码 DHT11_ReadData)
+ * @brief DHT11 读取一个字节 (脉冲宽度测量法)
+ *
+ * 修复: v2.3 — 用 1µs 粒度直接测量高电平脉冲宽度，替代固定 40µs 延时+检测。
+ * 原方法在 ESP32 多任务环境下因时序抖动导致 ~95% 读取失败。
+ *
+ * 协议回顾:
+ *   - 数据位0: 50us 低电平 → 28us 高电平 → 下一位的 50us 低电平
+ *   - 数据位1: 50us 低电平 → 70us 高电平 → 下一位的 50us 低电平
+ * 新方法: 测量高电平宽度, >45us 为 bit 1, ≤45us 为 bit 0
  *
  * @param ok 输出参数: 1=成功, 0=超时
  * @return 读取到的字节 (ok=0 时返回值无效)
@@ -133,7 +147,7 @@ static uint8_t dht11_read_byte(int *ok)
     *ok = 1;
 
     for (int i = 0; i < 8; i++) {
-        /* 等待数据前置信号50us低电平结束 */
+        /* 1. 等待 50us 起始低电平结束 (上升沿) */
         portDISABLE_INTERRUPTS();
         if (dht11_wait_level(0, DHT11_TIMEOUT_LOOPS) != 0) {
             portENABLE_INTERRUPTS();
@@ -142,20 +156,28 @@ static uint8_t dht11_read_byte(int *ok)
             return 0;
         }
 
-        /* 等待40us左右判断是1还是0 */
-        esp_rom_delay_us(40);
-
-        /* 如果是高电平 → 数据1; 低电平 → 数据0 */
-        if (gpio_get_level(DHT11_DATA_GPIO) == 1) {
-            byte |= (0x80 >> i);
-            /* 等待高电平结束 */
-            if (dht11_wait_level(1, DHT11_TIMEOUT_LOOPS) != 0) {
-                portENABLE_INTERRUPTS();
-                ESP_LOGW(TAG_DHT11, "bit%d 高电平超时", i);
-                *ok = 0;
-                return 0;
-            }
+        /* 2. 直接测量高电平脉冲宽度 (1µs 粒度)
+         *    bit0: ~28us  |  bit1: ~70us
+         *    上限 150us, 覆盖最坏情况且有充足余量 */
+        int high_us = 0;
+        while (gpio_get_level(DHT11_DATA_GPIO) == 1 && high_us < 150) {
+            esp_rom_delay_us(1);
+            high_us++;
         }
+
+        if (high_us >= 150) {
+            portENABLE_INTERRUPTS();
+            ESP_LOGW(TAG_DHT11, "bit%d 高电平超时", i);
+            *ok = 0;
+            return 0;
+        }
+
+        /* 3. 脉冲宽度判定: >45us → bit 1, ≤45us → bit 0 */
+        if (high_us > DHT11_BIT_THRESHOLD_US) {
+            byte |= (0x80 >> i);
+        }
+        /* else: bit 0, 对应位保持默认的 0 */
+
         portENABLE_INTERRUPTS();
     }
 

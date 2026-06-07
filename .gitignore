@@ -33,5 +33,9 @@ Thumbs.db
 
 # Runtime output
 sensor_log.csv
+warehouse.db
+
+# Generated files
+qr_labels/
 
 开发文档

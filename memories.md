@@ -2,7 +2,7 @@
 
 > **文档目的**：记录项目当前状态、规范和已实现功能，方便后续 Agent 理解和继续开发
 >
-> **最后更新**：2026-06-06（摄像头图像流模块完成，端到端 UDP 传输验证通过）
+> **最后更新**：2026-06-07（Camera HTTP Relay 上线，ENOMEM/Wi-Fi 等待修复）
 
 ---
 
@@ -94,13 +94,15 @@
 
 ```
 main/
-├── smart_monitor_main.c    # 主入口，4传感器任务 + OLED + 蜂鸣器任务
+├── smart_monitor_main.c    # 主入口，8任务(WiFi STA + OLED + Buzzer + UDP Send + UDP Sim + Cam HTTP)
 ├── sensors.h             # 传感器+蜂鸣器驱动头文件 + sensor_shared_t
 ├── sensors.c            # 传感器驱动实现 (MQ-135预热 + DS18B20 + DHT11 + 光敏 + 蜂鸣器)
 ├── oled_ssd1306.h        # SSD1306 OLED 驱动头文件 (I2C, GPIO7/8, 6x8字体)
 ├── oled_ssd1306.c        # SSD1306 OLED 驱动实现 (128x64 framebuffer, Page Addressing 逐页刷新)
-├── udp_sender.h         # ✅ UDP 任务声明（2026-06-04 实现）
-└── udp_sender.c         # ✅ JSON 组包 + UDP Socket 发送（2026-06-04 实现）
+├── udp_sender.h         # ✅ UDP 任务声明（2026-06-04 实现, 2026-06-07 ENOMEM 重试）
+├── udp_sender.c         # ✅ JSON 组包 + UDP Socket 发送（ENOMEM 退避 + Wi-Fi 轮询等待）
+├── camera_http_fetch.h  # ✅ Camera HTTP Relay 声明（2026-06-07 新增）
+└── camera_http_fetch.c  # ✅ HTTP 拉取 ESP32-CAM JPEG → UDP 分包转发（2026-06-07 新增）
 └── pc_receiver.py       # ✅ Windows 上位机 UDP 接收脚本（2026-06-04 实现）
 
 # 摄像头图像流模块 (2026-06-06 实现)
@@ -279,16 +281,21 @@ portENABLE_INTERRUPTS();
 | 参数 | 值 |
 |------|-----|
 | 目标 IP | `10.16.234.215` (2026-06-04 ipconfig 确认) |
-| ESP32-P4 IP | `10.16.234.86` (DHCP 自动获取) |
-| 目标端口 | `8080` |
-| 发送间隔 | 每 2 秒 |
-| 单包实际 | ~110 bytes (< 512 字节限制) |
+| ESP32-P4 IP | DHCP 自动获取 |
+| 目标端口 | `8080` (传感器 JSON) / `8082` (Camera JPEG 中继) |
+| 发送间隔 | 每 2 秒 (传感器) / 每 ~333ms (Camera, 3fps) |
+| 单包实际 | ~110 bytes (传感器), ≤4104 bytes (Camera 分包) |
 | Socket API | lwip/sockets.h (BSD socket 兼容层) |
+| Wi-Fi 等待 | `esp_netif_is_netif_up()` 轮询, 最多 20s (ESP-Hosted SDIO 需 ~13s) |
+| ENOMEM 处理 | sendto errno=12 时 200ms 退避 × 3 次重试 |
+| Camera 延迟 | 每包 5ms 微延迟, 防止 pbuf 池耗尽 |
 
 ### 6.2 JSON 报文格式
 
 ```json
 {
+  "type": "data",
+  "level": 0,
   "ts": 12360,
   "dht11_t": 28.0,
   "dht11_h": 56.0,
@@ -296,12 +303,15 @@ portENABLE_INTERRUPTS();
   "mq135_v": 0.31,
   "light_v": 1.34,
   "alert": 0,
-  "err": 0
+  "err": 0,
+  "reason": ""
 }
 ```
 
 | 字段 | 类型 | 精度 | 说明 |
 |------|------|------|------|
+| `type` | string | — | 报文类型, 固定 `"data"` |
+| `level` | int | — | 报警级别: 0=正常, 1=预警, 2=严重, 3=紧急 |
 | `ts` | int | 毫秒 | esp_timer_get_time() / 1000 |
 | `dht11_t` | float | 1 位小数 | DHT11 温度 (°C) |
 | `dht11_h` | float | 1 位小数 | DHT11 湿度 (%RH) |
@@ -310,6 +320,7 @@ portENABLE_INTERRUPTS();
 | `light_v` | float | 2 位小数 | 光敏 AO 电压, photo_raw × 3.3 / 4095 |
 | `alert` | int | 0/1 | 任一 DO 为低 → 1 |
 | `err` | int | 位掩码 | bit0=DHT11, bit1=DS18B20, bit2=MQ135, bit3=光敏 |
+| `reason` | string | — | 报警原因枚举 (如 `"mq135"`, `"dht11_temp"`)
 
 ### 6.3 JSON 组包方式
 
@@ -321,13 +332,25 @@ portENABLE_INTERRUPTS();
 
 | 参数 | 值 |
 |------|-----|
-| 摄像头 | KYT-U400 工业 USB UVC |
+| 摄像头 | KYT-U400 工业 USB UVC (PC直连) 或 ESP32-CAM (P4 HTTP中继) |
 | 分辨率 / 格式 | 640×360 MJPG |
 | 传输端口 | 8082 UDP (与传感器数据 8080 隔离) |
 | 协议头 | Magic 0xAA55 + FrameID(2B) + ChunkIdx(2B) + TotalChunks(2B) |
 | 单包载荷 | 4096 字节 |
-| 发送端 | `camera_capture_sender.py` (OpenCV → Gamma/Sharpen → JPEG → UDP) |
+| 发送端 | `camera_capture_sender.py` (PC直连) 或 `camera_http_fetch.c` (P4中继) |
 | 接收端 | `camera_display_receiver.py` (UDP → 重组 → 解码 → imshow) |
+
+### 6.5 Camera HTTP Relay 配置 ✅ 已实现
+
+| 参数 | 值 |
+|------|-----|
+| Kconfig 开关 | `CONFIG_CAMERA_HTTP_ENABLED` (默认 y) |
+| ESP32-CAM URL | `CONFIG_CAMERA_HTTP_ESP32CAM_URL` (默认 `http://10.16.234.23/capture`) |
+| 目标 IP | `CONFIG_CAMERA_HTTP_UDP_IP` (默认 `10.16.234.215`) |
+| 帧率 | `CONFIG_CAMERA_HTTP_FPS` (1-10, 默认 3) |
+| 缓冲区 | JPEG 128KB + UDP 64KB (PSRAM 分配) |
+| HTTP 超时 | 5000ms |
+| 依赖 | `esp_http_client` (IDF 内置, 无需额外 component) |
 
 ---
 
@@ -347,6 +370,9 @@ portENABLE_INTERRUPTS();
 | UDP 发送模块 | 2026-06-04 | ✅ 通过 | ESP32 → 10.16.234.215:8080, snprintf JSON, 2秒间隔 |
 | pc_receiver.py | 2026-06-04 | ✅ 通过 | UDP 监听 + JSON 解析 + 控制台输出 + CSV 日志 |
 | 端到端 WiFi 传输 | 2026-06-04 | ✅ 通过 | ESP32(10.16.234.86) → PC(10.16.234.215) 稳定传输 |
+| Camera HTTP Relay | 2026-06-07 | ✅ 通过 | ESP32-CAM → HTTP → P4 → UDP:8082 → PC, 3fps 稳定 |
+| ENOMEM 退避重试 | 2026-06-07 | ✅ 通过 | Camera/Sensor UDP 并发无 pbuf 耗尽, errno=12 自动恢复 |
+| Wi-Fi 轮询等待 | 2026-06-07 | ✅ 通过 | esp_netif_is_netif_up() 替换固定 vTaskDelay, 适应 ESP-Hosted SDIO
 
 ### 7.2 已知 Bug 及修复
 
@@ -358,6 +384,9 @@ portENABLE_INTERRUPTS();
 | OLED 仅第1行显示，其余乱码 | 单次 I2C 事务 1025 字节超 ESP32 TX FIFO(32B) 容量，数据丢失导致页面错乱 | 改用 Page Addressing Mode (0x20,0x02)，逐页发送 128 字节 × 8 次小事务 |
 | ESP-Hosted Handler 多重进入崩溃 | `mq135_init()` 中访问 `g_sensor_data` 与 ESP-Hosted SDIO 中断冲突 | MQ-135 预热状态改用**静态变量** `s_mq135_warmed_up`，不访问共享结构 |
 | MQ-135 上电误报警 | 预热期间 DO 输出不稳定 | 预热到 DO 连续 5 次为 1 或最大 60 秒超时，预热期间不参与报警 |
+| Sensor UDP ENOMEM(errno=12) | Camera UDP 发送 4KB+ 大包耗尽 lwIP pbuf 池 | Sensor sendto 失败时 200ms 退避 × 3 次重试; Camera 每包 5ms 微延迟让路 |
+| SO_SNDBUF errno=109 | lwIP UDP socket 不支持 SO_SNDBUF | 移除 setsockopt 调用, ENOMEM 退避已足够解决 |
+| Camera HTTP "Host unreachable" | 固定 8s Wi-Fi 等待不足 (ESP-Hosted SDIO 需 ~13s) | 改用 esp_netif_is_netif_up() 轮询, 最多 20s |
 
 ---
 
@@ -486,6 +515,8 @@ portENABLE_INTERRUPTS();
 | 2026-06-04 | UDP 发送模块 + 上位机脚本 | Agent | udp_sender.c/h + pc_receiver.py，端到端 WiFi 传输验证通过，IP 更新为 10.16.234.215 |
 | 2026-06-05 | 新增 LED + 继电器驱动 | Agent | GPIO26(红灯)/GPIO27(绿灯) 共阴极双色LED，GPIO32 继电器风扇控制，集成到 buzzer 任务 |
 | 2026-06-06 | 摄像头图像流模块 | Agent | KYT-U400 USB 摄像头, DirectShow + MJPG, Gamma/Sharpen 画质处理, UDP 分包, 接收显示, 8个阶段调试完成 |
+| 2026-06-07 | Camera HTTP Relay | Agent | 新增 camera_http_fetch.c/h, ESP32-CAM HTTP 拉图 → UDP 0xAA55 分包转发, Kconfig 可配置, Task_Cam_HTTP 任务 |
+| 2026-06-07 | UDP 稳定性修复 | Agent | ENOMEM(errno=12) 退避重试; Camera 每包 5ms 微延迟; 移除 lwIP 不支持的 SO_SNDBUF; Wi-Fi 等待改用 esp_netif 轮询 |
 
 ---
 

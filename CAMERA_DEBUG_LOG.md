@@ -1,7 +1,7 @@
 # 摄像头调试记忆 & 当前状态
 
-> 最后更新: 2026-06-06 18:54
-> 硬件: KYT-U400 工业 USB UVC 摄像头
+> 最后更新: 2026-06-07 19:50
+> 硬件: KYT-U400 工业 USB UVC 摄像头 / ESP32-CAM (OV2640)
 > 操作系统: Windows 11, Python 3.x (D:\Anaconda3\envs\ForAgents)
 
 ---
@@ -181,3 +181,35 @@ D:\Anaconda3\envs\ForAgents\python.exe f:/CodeProject/iiot_Experiment_2/code/Sma
 | 噪点太多 | `camera_capture_sender.py` | 45/47 | 提高 `JPEG_QUALITY` 或 降 `SHARPEN_STRENGTH` | - |
 | 帧率提高 | 命令行 `--fps` | - | - | 15 或 20 |
 | 分辨率调整 | `camera_capture_sender.py` | 43-44 | `FRAME_WIDTH/HEIGHT` | - |
+
+---
+
+## ESP32-P4 中继模式 (2026-06-07)
+
+当 PC USB 摄像头不可用或需要远程监控时，ESP32-P4 可通过 HTTP 从局域网内的 **ESP32-CAM** 拉取 JPEG 并 UDP 转发到 PC：
+
+```
+ESP32-CAM (OV2640) ──HTTP GET /capture──→ ESP32-P4 ──UDP :8082──→ PC (camera_display_receiver.py)
+```
+
+### 配置方式
+
+通过 `idf.py menuconfig` → `Example Configuration` 设置：
+
+| 配置项 | 默认值 | 说明 |
+|--------|--------|------|
+| `CAMERA_HTTP_ENABLED` | y | 启用/禁用中继任务 |
+| `CAMERA_HTTP_ESP32CAM_URL` | `http://10.16.234.23/capture` | ESP32-CAM 地址 |
+| `CAMERA_HTTP_UDP_IP` | `10.16.234.215` | PC 端 IP |
+| `CAMERA_HTTP_FPS` | 3 | 拉图帧率 (1-10) |
+
+### 实现文件
+
+- `main/camera_http_fetch.c/h` — FreeRTOS 任务: HTTP GET → JPEG 缓冲 → 0xAA55 分包 → sendto
+- 协议与 `camera_protocol.py` 完全兼容, PC 端用同一个 `camera_display_receiver.py` 即可
+
+### 已验证结果
+
+- ESP32-CAM @ 10.16.234.23, JPEG ~5-7KB, 3fps 稳定
+- HTTP 延迟 200-600ms, 每帧 2 包 UDP
+- 与 Sensor JSON UDP 并发无冲突 (ENOMEM 退避 + 5ms 微延迟)

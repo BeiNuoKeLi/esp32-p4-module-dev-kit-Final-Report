@@ -50,6 +50,12 @@ idf.py build flash monitor
 
 ESP32-CAM ──HTTP──→ camera_http_fetch.c ──UDP:8082──→ camera_display_receiver.py
                            (prio 1)                    (Windows 上位机)
+
+smart_monitor_sim_gui.py (综合工具体 v3.0)
+    ├── Tab 1: 仿真测试 (UDP 8081 → ESP32)
+    └── Tab 2: 仓储管理 (UDP 8082 摄像头 → pyzbar 扫码 → SQLite 入库/出库)
+         ├── warehouse_db.py (SQLite CRUD)
+         └── generate_qr_labels.py (二维码标签生成)
 ```
 
 - **`sensors.c/h`**：DHT11 / DS18B20 / MQ-135 / 光敏 / 蜂鸣器 / LED / 继电器 驱动
@@ -59,6 +65,9 @@ ESP32-CAM ──HTTP──→ camera_http_fetch.c ──UDP:8082──→ camera
 - **`smart_monitor_main.c`**：主入口，Wi-Fi STA + 8 个 FreeRTOS 任务创建（LED/继电器集成在 buzzer 任务中）
 - **`pc_receiver.py`**：Windows 上位机 UDP 接收脚本 (监听 8080, CSV 日志)
 - **`camera_display_receiver.py`**：摄像头图像流 UDP 接收 + JPEG 解码 + OpenCV 显示
+- **`smart_monitor_sim_gui.py`**：综合工具体 v3.0 — 仿真控制 (Tab 1) + 仓储管理 (Tab 2)，摄像头预览以独立 Toplevel 窗口显示
+- **`warehouse_db.py`**：SQLite 数据库模块 (inventory 库存表 + check_log 操作日志)
+- **`generate_qr_labels.py`**：二维码标签批量生成工具 (8 种与传感器匹配的危化品)
 
 ## 通信
 
@@ -96,6 +105,29 @@ D:\Anaconda3\envs\ForAgents\python.exe f:/CodeProject/iiot_Experiment_2/code/Sma
 > ESP32-CAM 端需先烧录 Arduino CameraWebServer 示例，P4 侧通过 Kconfig 配置其 IP。
 >
 > **备选方案**：也可用本地 USB 摄像头 (KYT-U400) + `camera_capture_sender.py` 直连 PC，详见 `CAMERA_DEBUG_LOG.md`。
+
+### 仓储管理 (二维码扫码)
+
+```bash
+# 1. 生成二维码标签
+D:\Anaconda3\envs\ForAgents\python.exe generate_qr_labels.py
+
+# 2. 启动综合工具体
+D:\Anaconda3\envs\ForAgents\python.exe smart_monitor_sim_gui.py
+```
+
+| 文件 | 说明 |
+|------|------|
+| `warehouse_db.py` | SQLite 数据库 (inventory + check_log 表) |
+| `generate_qr_labels.py` | 生成 8 种危化品二维码标签到 `qr_labels/` |
+| `smart_monitor_sim_gui.py` Tab 2 | 摄像头拉流 → pyzbar 扫码 → 入库/出库 → TreeView 表格
+| 摄像头预览 | 点击顶部「打开摄像头预览」按钮，独立窗口 640×480+ 展示画面
+
+## 已知问题 & 修复
+
+| 问题 | 原因 | 修复 |
+|------|------|------|
+| DHT11 高电平超时 (~95% 失败率) | ESP32-P4 双核中断 + `esp_rom_delay_us(10)` 粒度过粗 | 改为 1µs 粒度脉冲宽度直接测量，45µs 阈值区分 bit0/bit1 |
 
 ## 关键约束
 

@@ -1,0 +1,492 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SmartMonitor 仪表盘</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+:root {
+  --bg: #0f1923;
+  --card: #1a2733;
+  --text: #e0e8f0;
+  --text-dim: #8899aa;
+  --border: #2a3a4a;
+  --accent: #00bcd4;
+  --green: #4caf50;
+  --yellow: #ffc107;
+  --orange: #ff9800;
+  --red: #f44336;
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+body {
+  font-family: 'Segoe UI', system-ui, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+  transition: background 0.6s;
+}
+body.l3-flash { animation: flash-bg 0.8s infinite; }
+@keyframes flash-bg {
+  0%,100% { background: var(--bg); }
+  50% { background: #3a1010; }
+}
+
+/* Header */
+header {
+  background: var(--card);
+  border-bottom: 1px solid var(--border);
+  padding: 16px 32px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  position: sticky; top:0; z-index:100;
+}
+header h1 { font-size: 1.4rem; font-weight: 600; }
+header h1 span { color: var(--accent); }
+
+/* Alert badge */
+.alert-badge {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 18px; border-radius: 24px;
+  font-weight: 700; font-size: 0.95rem;
+  background: var(--border); color: var(--text-dim);
+  transition: all 0.3s;
+}
+.alert-badge.level-0 { background: #1b3a1b; color: var(--green); }
+.alert-badge.level-1 { background: #3a3510; color: var(--yellow); }
+.alert-badge.level-2 { background: #3a2810; color: var(--orange); }
+.alert-badge.level-3 { background: #3a1010; color: var(--red); animation: pulse 0.6s infinite; }
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.5} }
+.alert-reason { font-size: 0.8rem; color: var(--text-dim); }
+
+/* Main layout */
+main { padding: 24px 32px; display: grid; gap: 20px; }
+.grid-cols-4 { display: grid; grid-template-columns: repeat(4,1fr); gap: 16px; }
+.grid-cols-2 { display: grid; grid-template-columns: repeat(2,1fr); gap: 16px; }
+
+/* Cards */
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 20px;
+}
+.card h3 {
+  font-size: 0.85rem; color: var(--text-dim);
+  text-transform: uppercase; letter-spacing: 0.5px;
+  margin-bottom: 12px;
+}
+
+/* Sensor value cards */
+.sensor-card {
+  text-align: center;
+  padding: 18px 12px;
+}
+.sensor-card .value {
+  font-size: 2rem; font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.sensor-card .unit { font-size: 0.85rem; color: var(--text-dim); margin-left: 2px; }
+.sensor-card .label { font-size: 0.8rem; color: var(--text-dim); margin-top: 6px; }
+
+/* Charts */
+.chart-wrap { position:relative; height:240px; }
+.chart-wrap canvas { width:100%!important; height:100%!important; }
+
+/* Table */
+table { width:100%; border-collapse:collapse; font-size:0.85rem; }
+th,td { padding:10px 14px; text-align:left; border-bottom:1px solid var(--border); }
+th { color:var(--text-dim); font-weight:600; white-space:nowrap; }
+.status-badge {
+  padding:2px 10px; border-radius:10px; font-size:0.75rem; font-weight:600;
+}
+.status-in { background:#1b3a1b; color:var(--green); }
+.status-out { background:#3a1515; color:var(--red); }
+
+/* Status bar */
+.status-bar {
+  display:flex; align-items:center; gap:16px;
+  padding:10px 16px; font-size:0.8rem; color:var(--text-dim);
+  border-top:1px solid var(--border); margin-top:20px;
+}
+.status-dot { width:8px; height:8px; border-radius:50%; display:inline-block; }
+.status-dot.online { background:var(--green); }
+.status-dot.offline { background:var(--red); }
+
+.empty-state { text-align:center; padding:40px; color:var(--text-dim); }
+
+@media(max-width:900px) {
+  .grid-cols-4 { grid-template-columns: repeat(2,1fr); }
+  .grid-cols-2 { grid-template-columns: 1fr; }
+  main { padding:16px; }
+}
+</style>
+</head>
+<body>
+
+<!-- Header -->
+<header>
+  <h1>📡 Smart<span>Monitor</span> 仪表盘</h1>
+  <div style="display:flex;align-items:center;gap:16px;">
+    <span class="alert-badge" id="alertBadge">L0 正常</span>
+    <span id="reasonLabel" class="alert-reason"></span>
+  </div>
+</header>
+
+<main>
+  <!-- Sensor real-time values -->
+  <div class="grid-cols-4">
+    <div class="card sensor-card">
+      <div class="value" id="valDhtT">--</div>
+      <span class="unit">°C</span>
+      <div class="label">DHT11 温度</div>
+    </div>
+    <div class="card sensor-card">
+      <div class="value" id="valDhtH">--</div>
+      <span class="unit">%RH</span>
+      <div class="label">DHT11 湿度</div>
+    </div>
+    <div class="card sensor-card">
+      <div class="value" id="valDs18">--</div>
+      <span class="unit">°C</span>
+      <div class="label">DS18B20 温度</div>
+    </div>
+    <div class="card sensor-card">
+      <div class="value" id="valMq135">--</div>
+      <span class="unit">V</span>
+      <div class="label">MQ-135 电压</div>
+    </div>
+  </div>
+
+  <!-- Charts row 1: Temperature & Humidity -->
+  <div class="grid-cols-2">
+    <div class="card">
+      <h3>📈 温度趋势（最近 60 条）</h3>
+      <div class="chart-wrap"><canvas id="chartTemp"></canvas></div>
+    </div>
+    <div class="card">
+      <h3>💧 湿度趋势</h3>
+      <div class="chart-wrap"><canvas id="chartHumi"></canvas></div>
+    </div>
+  </div>
+
+  <!-- Charts row 2: MQ135 & Light -->
+  <div class="grid-cols-2">
+    <div class="card">
+      <h3>⚠️ MQ-135 气体传感器电压</h3>
+      <div class="chart-wrap"><canvas id="chartGas"></canvas></div>
+    </div>
+    <div class="card">
+      <h3>💡 光照传感器电压</h3>
+      <div class="chart-wrap"><canvas id="chartLight"></canvas></div>
+    </div>
+  </div>
+
+  <!-- Inventory table -->
+  <div class="card">
+    <h3>📦 库存清单</h3>
+    <div id="inventoryTable"><div class="empty-state">加载中...</div></div>
+  </div>
+
+  <!-- Status bar -->
+  <div class="status-bar" style="margin-top:0;">
+    <span class="status-dot online" id="wsDot"></span>
+    <span id="wsStatus">WebSocket 连接中...</span>
+    <span style="margin-left:auto;">最后更新: <span id="lastUpdate">--</span></span>
+  </div>
+</main>
+
+<script>
+// ==================== Chart.js 初始化 ====================
+const MAX_POINTS = 60;
+const chartColors = { temp:'#ff7043', humi:'#42a5f5', gas:'#ab47bc', light:'#ffca28' };
+
+function makeChart(canvasId, label, color, yLabel) {
+  const ctx = document.getElementById(canvasId).getContext('2d');
+  return new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: [],
+      datasets: [{
+        label, data: [],
+        borderColor: color, backgroundColor: color + '22',
+        borderWidth: 2, pointRadius: 0, tension: 0.3,
+        fill: true
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      animation: { duration: 300 },
+      scales: {
+        x: { display: false },
+        y: {
+          title: { display: true, text: yLabel, color: '#8899aa' },
+          ticks: { color: '#8899aa', font: { size: 10 } },
+          grid: { color: '#2a3a4a33' }
+        }
+      },
+      plugins: {
+        legend: { labels: { color: '#8899aa', font: { size: 10 } } }
+      }
+    }
+  });
+}
+
+const chartTemp = makeChart('chartTemp', 'DHT11 温度', chartColors.temp, '°C');
+const chartHumi = makeChart('chartHumi', 'DHT11 湿度', chartColors.humi, '%RH');
+const chartGas = makeChart('chartGas', 'MQ-135 电压', chartColors.gas, 'V');
+
+// Light chart - also show DS18B20
+const ctxLight = document.getElementById('chartLight').getContext('2d');
+const chartLight = new Chart(ctxLight, {
+  type: 'line',
+  data: {
+    labels: [],
+    datasets: [
+      { label:'DS18B20 温度', data:[], borderColor:'#26c6da', backgroundColor:'#26c6da22', borderWidth:2, pointRadius:0, tension:0.3, fill:true },
+      { label:'光敏电压', data:[], borderColor:chartColors.light, backgroundColor:'#ffca2822', borderWidth:2, pointRadius:0, tension:0.3, fill:true, yAxisID:'y1' }
+    ]
+  },
+  options: {
+    responsive: true, maintainAspectRatio: false,
+    animation: { duration: 300 },
+    scales: {
+      x: { display: false },
+      y: {
+        title: { display: true, text: '°C', color: '#8899aa' },
+        ticks: { color: '#8899aa', font:{size:10} },
+        grid: { color:'#2a3a4a33' }
+      },
+      y1: {
+        position: 'right',
+        title: { display: true, text: 'V', color: '#8899aa' },
+        ticks: { color: '#8899aa', font:{size:10} },
+        grid: { display: false }
+      }
+    },
+    plugins: {
+      legend: { labels: { color: '#8899aa', font:{size:10} } }
+    }
+  }
+});
+
+// ==================== Data management ====================
+const timeLabels = [];
+function addDataPoint(chart, dataArr, value, label) {
+  if (value == null) return;
+  dataArr.push(value);
+  if (dataArr.length > MAX_POINTS) dataArr.shift();
+  chart.data.datasets[0].data = dataArr;
+  chart.data.labels = timeLabels;
+  chart.update();
+}
+function addDataPointDual(chart, dataArr0, v0, dataArr1, v1) {
+  if (v0 != null) { dataArr0.push(v0); if(dataArr0.length>MAX_POINTS)dataArr0.shift(); }
+  if (v1 != null) { dataArr1.push(v1); if(dataArr1.length>MAX_POINTS)dataArr1.shift(); }
+  chart.data.datasets[0].data = dataArr0;
+  chart.data.datasets[1].data = dataArr1;
+  chart.data.labels = timeLabels;
+  chart.update();
+}
+
+const tempData=[], humiData=[], gasData=[], ds18Data=[], lightData=[];
+
+// ==================== Alert level display ====================
+function updateAlert(level, reason) {
+  const badge = document.getElementById('alertBadge');
+  const reasonEl = document.getElementById('reasonLabel');
+  const labels = {0:'L0 正常', 1:'L1 预警', 2:'L2 严重', 3:'L3 紧急'};
+  badge.textContent = labels[level] || 'L? 未知';
+  badge.className = 'alert-badge level-' + level;
+  reasonEl.textContent = reason || '';
+
+  // L3 页面红色闪烁
+  if (level >= 3) document.body.classList.add('l3-flash');
+  else document.body.classList.remove('l3-flash');
+}
+
+// ==================== WebSocket ====================
+let ws = null;
+function connectWS() {
+  // 关闭旧连接，防止重复实例
+  if (ws) {
+    try { ws.close(); } catch(e) {}
+    if (ws._heartbeat) { clearInterval(ws._heartbeat); ws._heartbeat = null; }
+  }
+  const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const wsUrl = protocol + '//' + location.host + '/ws';
+  ws = new WebSocket(wsUrl);
+
+  ws.onopen = () => {
+    document.getElementById('wsDot').className = 'status-dot online';
+    document.getElementById('wsStatus').textContent = 'WebSocket 已连接';
+    // 每 25 秒发送一次心跳，防止空闲断开
+    ws._heartbeat = setInterval(() => {
+      if (ws.readyState === WebSocket.OPEN) {
+        try { ws.send(JSON.stringify({type:'ping'})); } catch(e) {}
+      }
+    }, 25000);
+  };
+
+  ws.onmessage = (evt) => {
+    try {
+      const msg = JSON.parse(evt.data);
+      if (msg.type === 'sensor_update') {
+        handleSensorData(msg.data, msg.timestamp);
+      }
+      // 忽略 ping/pong 心跳响应
+    } catch(e) { console.warn('WS parse error:', e); }
+  };
+
+  ws.onclose = () => {
+    if (ws._heartbeat) { clearInterval(ws._heartbeat); ws._heartbeat = null; }
+    document.getElementById('wsDot').className = 'status-dot offline';
+    document.getElementById('wsStatus').textContent = 'WebSocket 断开，3秒后重连...';
+    setTimeout(connectWS, 3000);
+  };
+
+  ws.onerror = (err) => { console.error('WS error:', err); ws.close(); };
+}
+connectWS();
+
+// ==================== Sensor data handling ====================
+function handleSensorData(data, timestamp) {
+  // Update real-time values
+  document.getElementById('valDhtT').textContent = data.dht11_t != null ? data.dht11_t.toFixed(1) : '--';
+  document.getElementById('valDhtH').textContent = data.dht11_h != null ? data.dht11_h.toFixed(1) : '--';
+  document.getElementById('valMq135').textContent = data.mq135_v != null ? data.mq135_v.toFixed(3) : '--';
+
+  // Update alert
+  updateAlert(data.level || 0, data.reason || '');
+
+  // Update last update time
+  const timeStr = timestamp || new Date().toLocaleTimeString();
+  document.getElementById('lastUpdate').textContent = timeStr;
+
+  // Add time label
+  timeLabels.push(timeStr);
+  if (timeLabels.length > MAX_POINTS) timeLabels.shift();
+
+  // Update charts
+  addDataPoint(chartTemp, tempData, data.dht11_t);
+  addDataPoint(chartHumi, humiData, data.dht11_h);
+  addDataPoint(chartGas, gasData, data.mq135_v);
+  addDataPointDual(chartLight, ds18Data, data.ds18b20_t, lightData, data.light_v);
+
+  // Update value cards that might have changed
+  if (data.ds18b20_t != null) {
+    document.getElementById('valDs18').textContent = data.ds18b20_t.toFixed(4);
+  }
+}
+
+// ==================== Initial data load ====================
+async function loadInitialData() {
+  try {
+    // Load recent sensor data
+    const resp = await fetch('/api/sensors/recent?limit=60');
+    if (resp.ok) {
+      const rows = await resp.json();
+      for (const r of rows) {
+        timeLabels.push(r.ts);
+        if(timeLabels.length>MAX_POINTS)timeLabels.shift();
+        tempData.push(r.dht11_t); if(tempData.length>MAX_POINTS)tempData.shift();
+        humiData.push(r.dht11_h); if(humiData.length>MAX_POINTS)humiData.shift();
+        gasData.push(r.mq135_v);  if(gasData.length>MAX_POINTS)gasData.shift();
+        ds18Data.push(r.ds18b20_t); if(ds18Data.length>MAX_POINTS)ds18Data.shift();
+        lightData.push(r.light_v); if(lightData.length>MAX_POINTS)lightData.shift();
+      }
+      if (rows.length > 0) {
+        const last = rows[rows.length-1];
+        handleSensorData(last, last.ts);
+        updateChartsAll();
+      }
+    }
+
+    // Load inventory
+    const invResp = await fetch('/api/inventory');
+    if (invResp.ok) {
+      const items = await invResp.json();
+      renderInventory(items);
+    }
+
+    // Load status
+    const stResp = await fetch('/api/status');
+    if (stResp.ok) {
+      const st = await stResp.json();
+      if (st.last_update) {
+        updateAlert(st.level || 0, st.reason || '');
+        document.getElementById('valDhtT').textContent = st.dht11_t != null ? st.dht11_t.toFixed(1) : '--';
+        document.getElementById('valDhtH').textContent = st.dht11_h != null ? st.dht11_h.toFixed(1) : '--';
+        document.getElementById('valMq135').textContent = st.mq135_v != null ? st.mq135_v.toFixed(3) : '--';
+        if (st.ds18b20_t != null) document.getElementById('valDs18').textContent = st.ds18b20_t.toFixed(4);
+        document.getElementById('lastUpdate').textContent = st.last_update || '--';
+      }
+    }
+  } catch(e) { console.warn('Initial load error:', e); }
+}
+
+function updateChartsAll() {
+  chartTemp.data.datasets[0].data = tempData;
+  chartTemp.data.labels = timeLabels;
+  chartTemp.update();
+
+  chartHumi.data.datasets[0].data = humiData;
+  chartHumi.data.labels = timeLabels;
+  chartHumi.update();
+
+  chartGas.data.datasets[0].data = gasData;
+  chartGas.data.labels = timeLabels;
+  chartGas.update();
+
+  chartLight.data.datasets[0].data = ds18Data;
+  chartLight.data.datasets[1].data = lightData;
+  chartLight.data.labels = timeLabels;
+  chartLight.update();
+}
+
+// ==================== Inventory table renderer ====================
+function renderInventory(items) {
+  const container = document.getElementById('inventoryTable');
+  if (!items || items.length === 0) {
+    container.innerHTML = '<div class="empty-state">暂无库存数据</div>';
+    return;
+  }
+  const statusClass = s => s==='在库'?'status-in':'status-out';
+  let html = `<table><thead><tr>
+    <th>编号</th><th>名称</th><th>类别</th><th>批号</th>
+    <th>规格</th><th>生产日期</th><th>有效期</th>
+    <th>入库时间</th><th>入库温度</th><th>入库湿度</th><th>状态</th>
+  </tr></thead><tbody>`;
+  for (const item of items) {
+    html += `<tr>
+      <td>${item.id}</td>
+      <td>${item.name}</td>
+      <td>${item.category||'-'}</td>
+      <td>${item.batch||'-'}</td>
+      <td>${item.spec||'-'}</td>
+      <td>${item.mfg_date||'-'}</td>
+      <td>${item.exp_date||'-'}</td>
+      <td>${item.checkin_time||'-'}</td>
+      <td>${item.checkin_temp?.toFixed(1)||'-'}°C</td>
+      <td>${item.checkin_humi?.toFixed(1)||'-'}%</td>
+      <td><span class="status-badge ${statusClass(item.status)}">${item.status}</span></td>
+    </tr>`;
+  }
+  html += '</tbody></table>';
+  container.innerHTML = html;
+}
+
+// ==================== Periodic inventory refresh ====================
+setInterval(async () => {
+  try {
+    const resp = await fetch('/api/inventory');
+    if (resp.ok) renderInventory(await resp.json());
+  } catch(e) {}
+}, 10000);
+
+// ==================== Startup ====================
+loadInitialData();
+</script>
+</body>
+</html>

@@ -34,8 +34,10 @@ Thumbs.db
 # Runtime output
 sensor_log.csv
 warehouse.db
+docker/data/
 
 # Generated files
 qr_labels/
 
 开发文档
+汇报PPT/

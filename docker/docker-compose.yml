@@ -1,0 +1,9 @@
+services:
+  dashboard:
+    build: .
+    container_name: smart-monitor-dashboard
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped

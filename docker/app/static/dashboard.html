@@ -6,487 +6,625 @@
 <title>SmartMonitor 仪表盘</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <style>
+@import url('https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css');
+
 :root {
-  --bg: #0f1923;
-  --card: #1a2733;
-  --text: #e0e8f0;
-  --text-dim: #8899aa;
-  --border: #2a3a4a;
+  --bg: #0f1923; --card: #1a2733;
+  --text: #e0e8f0; --text-dim: #8899aa;
+  --border: #2a3a4a; --border-light: #334455;
   --accent: #00bcd4;
-  --green: #4caf50;
-  --yellow: #ffc107;
-  --orange: #ff9800;
-  --red: #f44336;
+  --green: #4caf50; --yellow: #ffc107; --orange: #ff9800; --red: #f44336;
 }
 * { margin:0; padding:0; box-sizing:border-box; }
-body {
-  font-family: 'Segoe UI', system-ui, sans-serif;
-  background: var(--bg);
-  color: var(--text);
-  min-height: 100vh;
-  transition: background 0.6s;
-}
-body.l3-flash { animation: flash-bg 0.8s infinite; }
-@keyframes flash-bg {
-  0%,100% { background: var(--bg); }
-  50% { background: #3a1010; }
-}
+body { font-family:'Segoe UI',system-ui,sans-serif; background:var(--bg); color:var(--text); min-height:100vh; }
+body.l3-flash{animation:flash-bg .8s infinite}
+@keyframes flash-bg{0%,100%{background:var(--bg)} 50%{background:#3a1010}}
 
-/* Header */
-header {
-  background: var(--card);
-  border-bottom: 1px solid var(--border);
-  padding: 16px 32px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  position: sticky; top:0; z-index:100;
+header{
+  background:linear-gradient(135deg,var(card) 0%,#162230 100%);
+  border-bottom:1px solid var(--border); padding:16px 32px;
+  display:flex; align-items:center; justify-content:space-between;
+  position:sticky; top:0; z-index:100; box-shadow:0 2px 12px rgba(0,0,0,.3);
 }
-header h1 { font-size: 1.4rem; font-weight: 600; }
-header h1 span { color: var(--accent); }
+header h1{font-size:1.35rem;font-weight:600} header h1 span{color:var(--accent)}
 
-/* Alert badge */
-.alert-badge {
-  display: flex; align-items: center; gap: 10px;
-  padding: 8px 18px; border-radius: 24px;
-  font-weight: 700; font-size: 0.95rem;
-  background: var(--border); color: var(--text-dim);
-  transition: all 0.3s;
+.alert-badge{
+  display:flex;align-items:center;gap:10px;padding:8px 18px;border-radius:24px;
+  font-weight:700;font-size:.95rem;background:var(--border);color:var(--text-dim);
+  transition:all .3s ease;border:1px solid transparent
 }
-.alert-badge.level-0 { background: #1b3a1b; color: var(--green); }
-.alert-badge.level-1 { background: #3a3510; color: var(--yellow); }
-.alert-badge.level-2 { background: #3a2810; color: var(--orange); }
-.alert-badge.level-3 { background: #3a1010; color: var(--red); animation: pulse 0.6s infinite; }
-@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.5} }
-.alert-reason { font-size: 0.8rem; color: var(--text-dim); }
+.alert-badge.level-0{background:rgba(76,175,80,.15);color:var(--green);border-color:rgba(76,175,80,.3)}
+.alert-badge.level-1{background:rgba(255,193,7,.15);color:var(--yellow);border-color:rgba(255,193,7,.3)}
+.alert-badge.level-2{background:rgba(255,152,0,.15);color:var(--orange);border-color:rgba(255,152,0,.3)}
+.alert-badge.level-3{background:rgba(244,67,54,.2);color:var(--red);border-color:rgba(244,67,54,.4);animation:pulse-badge .6s infinite}
+@keyframes pulse-badge{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.7;transform:scale(1.02)}}
+.alert-reason{font-size:.82rem;color:var(--text-dim)}
 
-/* Main layout */
-main { padding: 24px 32px; display: grid; gap: 20px; }
-.grid-cols-4 { display: grid; grid-template-columns: repeat(4,1fr); gap: 16px; }
-.grid-cols-2 { display: grid; grid-template-columns: repeat(2,1fr); gap: 16px; }
+main{padding:24px 32px;display:grid;gap:20px}
+.g4{display:grid;grid-template-columns:repeat(4,1fr);gap:16px}
+.g2{display:grid;grid-template-columns:repeat(2,1fr);gap:16px}
 
-/* Cards */
-.card {
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 20px;
+.card{
+  background:linear-gradient(145deg,var(card) 0%,rgba(26,39,51,.8)100%);
+  border:1px solid var(--border);border-radius:12px;padding:20px;
+  transition:border-color .25s,box-shadow .25s;position:relative;overflow:hidden
 }
-.card h3 {
-  font-size: 0.85rem; color: var(--text-dim);
-  text-transform: uppercase; letter-spacing: 0.5px;
-  margin-bottom: 12px;
+.card::before{
+  content:'';position:absolute;top:0;left:0;right:0;height:2px;
+  background:linear-gradient(90deg,transparent,var(--accent),transparent);opacity:0;transition:opacity .3s
 }
+.card:hover{border-color:var(--border-light)} card:hover::before{opacity:1}
+.card h3{font-size:.85rem;color:var(--text-dim);text-transform:uppercase;letter-spacing:.8px;margin-bottom:14px;display:flex;align-items:center;gap:8px}
 
-/* Sensor value cards */
-.sensor-card {
-  text-align: center;
-  padding: 18px 12px;
+.sensor-card{text-align:center;padding:18px 12px;position:relative;overflow:hidden}
+.sensor-card .value{font-size:2rem;font-weight:700;font-variant-numeric:tabular-nums;line-height:1.2}
+.sensor-card .unit{font-size:.85rem;color:var(--text-dim);margin-left:2px}
+.sensor-card .label{font-size:.78rem;color:var(--text-dim);margin-top:8px;text-transform:uppercase;letter-spacing:.5px}
+.do-tag{display:inline-block;font-size:.65rem;font-weight:700;padding:1px 8px;border-radius:4px;margin-left:6px;vertical-align:middle;position:relative;top:-2px;transition:all .25s}
+.do-tag.do-ok{background:rgba(76,175,80,.2);color:var(--green);border:1px solid rgba(76,175,80,.3)}
+.do-tag.do-alarm{background:rgba(244,67,54,.2);color:var(--red);border:1px solid rgba(244,67,54,.3);animation:do-blink .8s infinite}
+.do-tag.do-unknown{background:rgba(42,58,74,.4);color:var(--text-dim);border:1px solid var(--border)}
+@keyframes do-blink{0%,100%{opacity:1}50%{opacity:.5}}
+
+/* Camera + Warehouse Row */
+.cam-wh-row{display:grid;grid-template-columns:55% 45%;gap:16px}
+
+.cam-panel{position:relative;min-height:340px;display:flex;flex-direction:column;padding:16px}
+.cam-viewport{flex:1;background:#000;border-radius:10px;overflow:hidden;position:relative;min-height:280px;border:1px solid var(--border)}
+.cam-viewport img{width:100%;height:100%;object-fit:contain;display:block}
+
+.cam-overlay-info{position:absolute;top:10px;left:10px;display:flex;gap:8px;z-index:5}
+.cam-chip{
+  backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
+  background:rgba(0,0,0,.65);color:#ccc;font-size:.72rem;padding:4px 10px;
+  border-radius:6px;font-family:'Courier New',monospace;border:1px solid rgba(255,255,255,.1)
 }
-.sensor-card .value {
-  font-size: 2rem; font-weight: 700;
-  font-variant-numeric: tabular-nums;
+.cam-chip.online-dot::before{content:'';display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--green);margin-right:5px;vertical-align:middle;animation:dot-pulse 1.5s infinite}
+.cam-chip.offline-dot::before{content:'';display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--red);margin-right:5px;vertical-align:middle}
+@keyframes dot-pulse{0%,100%{opacity:1}50%{opacity:.3}}
+
+.cam-mode-tag{position:absolute;bottom:10px;right:10px;z-index:5;padding:5px 14px;border-radius:6px;font-size:.75rem;font-weight:600;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);border:1px solid rgba(255,255,255,.12);letter-spacing:.5px;transition:all .3s}
+.mode-tag-inbound{background:rgba(211,47,47,.75);color:#ffcdd2}
+.mode-tag-outbound{background:rgba(56,142,60,.75);color:#c8e6c9}
+.mode-tag-idle{background:rgba(0,0,0,.55);color:var(--text-dim)}
+
+.cam-status-bar{display:flex;align-items:center;justify-content:space-between;padding:8px 4px 0;font-size:.77rem;color:var(--text-dim)}
+
+.wh-panel{display:flex;flex-direction:column;gap:12px}
+.wh-mode-group{display:flex;gap:10px;margin-bottom:4px}
+.wh-mode-btn{
+  flex:1;padding:13px 16px;border:none;border-radius:10px;font-size:.95rem;font-weight:700;
+  cursor:pointer;transition:all .25s cubic-bezier(.4,0,.2,1);display:flex;align-items:center;justify-content:center;gap:8px;
+  position:relative;overflow:hidden;font-family:inherit
 }
-.sensor-card .unit { font-size: 0.85rem; color: var(--text-dim); margin-left: 2px; }
-.sensor-card .label { font-size: 0.8rem; color: var(--text-dim); margin-top: 6px; }
+.wh-mode-btn::after{content:'';position:absolute;inset:0;background:linear-gradient(180deg,rgba(255,255,255,.08) 0%,transparent 60%);opacity:0;transition:opacity .25s}
+.wh-mode-btn:hover::after{opacity:1}
+.btn-checkin{background:linear-gradient(135deg,#c62828,#b71c1c);color:#fff;box-shadow:0 3px 12px rgba(183,28,28,.35)}
+.btn-checkin.active{transform:translateY(-1px);box-shadow:0 5px 20px rgba(183,28,28,.5),inset 0 1px 0 rgba(255,255,255,.15);background:linear-gradient(135deg,#d32f2f,#c62828)}
+.btn-checkout{background:linear-gradient(135deg,#2e7d32,#1b5e20);color:#fff;box-shadow:0 3px 12px rgba(27,94,32,.35)}
+.btn-checkout.active{transform:translateY(-1px);box-shadow:0 5px 20px rgba(27,94,32,.5),inset 0 1px 0 rgba(255,255,255,.15);background:linear-gradient(135deg,#388e3c,#2e7d32)}
+.btn-idle{background:rgba(58,58,83,.6);color:var(--text-dim);border:1px dashed var(--border);box-shadow:none}
 
-/* Charts */
-.chart-wrap { position:relative; height:240px; }
-.chart-wrap canvas { width:100%!important; height:100%!important; }
-
-/* Table */
-table { width:100%; border-collapse:collapse; font-size:0.85rem; }
-th,td { padding:10px 14px; text-align:left; border-bottom:1px solid var(--border); }
-th { color:var(--text-dim); font-weight:600; white-space:nowrap; }
-.status-badge {
-  padding:2px 10px; border-radius:10px; font-size:0.75rem; font-weight:600;
+.scan-btn-row{display:flex;gap:10px}
+.btn-scan{
+  flex:1;padding:11px;border:1px solid var(--accent);border-radius:10px;
+  background:rgba(0,188,212,.08);color:var(--accent);font-size:.88rem;font-weight:600;
+  cursor:pointer;transition:all .25s;font-family:inherit;display:flex;align-items:center;justify-content:center;gap:8px
 }
-.status-in { background:#1b3a1b; color:var(--green); }
-.status-out { background:#3a1515; color:var(--red); }
+.btn-scan:hover:not(:disabled){background:rgba(0,188,212,.18);box-shadow:0 0 16px rgba(0,188,212,.15)}
+.btn-scan:disabled{opacity:.4;cursor:not-allowed;border-color:var(--border);color:var(--text-dim)}
+.btn-scan .spinner{display:inline-block;width:14px;height:14px;border:2px solid transparent;border-top-color:currentColor;border-radius:50%;animation:spin .7s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
 
-/* Status bar */
-.status-bar {
-  display:flex; align-items:center; gap:16px;
-  padding:10px 16px; font-size:0.8rem; color:var(--text-dim);
-  border-top:1px solid var(--border); margin-top:20px;
+.scan-result-card{background:rgba(0,0,0,.25);border:1px solid var(--border);border-radius:10px;padding:14px 16px;min-height:140px}
+.scan-result-card .scan-empty{display:flex;align-items:center;justify-content:center;height:110px;color:var(--text-dim);font-size:.85rem}
+.scan-result-card table{width:100%;font-size:.82rem;border-collapse:collapse}
+.scan-result-card td{padding:5px 8px;border-bottom:1px solid rgba(42,58,74,.5)}
+.scan-result-card td:first-child{color:var(--text-dim);white-space:nowrap;width:80px;font-weight:500}
+.scan-result-card td:last-child{color:var(--text);font-weight:600;font-variant-numeric:tabular-nums}
+
+.env-snapshot-bar{
+  display:flex;gap:12px;background:rgba(0,188,212,.06);border:1px solid rgba(0,188,212,.12);
+  border-radius:8px;padding:8px 14px;font-size:.78rem
 }
-.status-dot { width:8px; height:8px; border-radius:50%; display:inline-block; }
-.status-dot.online { background:var(--green); }
-.status-dot.offline { background:var(--red); }
+.env-item{display:flex;align-items:center;gap:4px}
+.env-item .env-val{color:var(--accent);font-weight:600;font-family:'Courier New',monospace}
 
-.empty-state { text-align:center; padding:40px; color:var(--text-dim); }
+.wh-log-area{flex:1;min-height:110px;max-height:150px;overflow-y:auto;background:rgba(0,0,0,.2);border:1px solid var(--border);border-radius:8px;padding:10px 12px;scrollbar-width:thin;scrollbar-color:var(--border) transparent}
+.wh-log-area::-webkit-scrollbar{width:4px} .wh-log-area::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
+.log-entry{display:flex;align-items:center;gap:8px;padding:4px 0;font-size:.78rem;border-bottom:1px solid rgba(42,58,74,.3);animation:log-slide-in .3s ease-out}
+.log-entry:last-child{border-bottom:none}
+@keyframes log-slide-in{from{opacity:0;transform:translateX(-8px)} to{opacity:1;transform:none}}
+.log-time{color:var(--text-dim);font-family:'Courier New',monospace;font-size:.72rem;white-space:nowrap}
+.log-action{font-weight:600;padding:1px 7px;border-radius:4px;font-size:.72rem}
+.log-action-in{background:rgba(211,47,47,.2);color:#ef5350}
+.log-action-out{background:rgba(56,142,60,.2);color:#66bb6a}
+.log-msg{color:var(--text);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
-@media(max-width:900px) {
-  .grid-cols-4 { grid-template-columns: repeat(2,1fr); }
-  .grid-cols-2 { grid-template-columns: 1fr; }
-  main { padding:16px; }
-}
+.chart-wrap{position:relative;height:240px}
+.chart-wrap canvas{width:100%!important;height:100%!important}
+
+table{width:100%;border-collapse:collapse;font-size:.85rem}
+th,td{padding:10px 14px;text-align:left;border-bottom:1px solid var(--border)}
+th{color:var(--text-dim);font-weight:600;white-space:nowrap}
+.status-badge{padding:2px 10px;border-radius:10px;font-size:.75rem;font-weight:600}
+.status-in{background:#1b3a1b;color:var(--green)} .status-out{background:#3a1515;color:var(--red)}
+
+.status-bar{display:flex;align-items:center;gap:16px;padding:10px 16px;font-size:.8rem;color:var(--text-dim);border-top:1px solid var(--border);margin-top:20px}
+.status-dot{width:8px;height:8px;border-radius:50%;display:inline-block}
+.status-dot.online{background:var(--green);box-shadow:0 0 6px rgba(76,175,80,.5)}
+.status-dot.offline{background:var(--red)}
+.empty-state{text-align:center;padding:40px;color:var(--text-dim)}
+
+.toast-container{position:fixed;top:80px;right:24px;z-index:9999;display:flex;flex-direction:column;gap:8px}
+.toast{padding:12px 20px;border-radius:10px;font-size:.85rem;font-weight:500;color:#fff;min-width:260px;animation:toast-in .3s ease-out;box-shadow:0 4px 20px rgba(0,0,0,.4)}
+.toast-success{background:linear-gradient(135deg,#2e7d32,#1b5e20)}
+.toast-error{background:linear-gradient(135deg,#c62828,#b71c1c)}
+.toast-warn{background:linear-gradient(135deg,#ef6c00,#e65100)}
+@keyframes toast-in{from{opacity:0;transform:translateX(40px)} to{opacity:1;transform:none}}
+.toast-exit{animation:toast-out .25s ease-in forwards}
+@keyframes toast-out{to{opacity:0;transform:translateX(40px)}}
+
+@media(max-width:900px){.g4{grid-template-columns:repeat(2,1fr)}.g2{grid-template-columns:1fr}.cam-wh-row{grid-template-columns:1fr}main{padding:16px}}
 </style>
 </head>
-<body>
 
-<!-- Header -->
+<body>
+<div class="toast-container" id="toastContainer"></div>
+
 <header>
   <h1>📡 Smart<span>Monitor</span> 仪表盘</h1>
   <div style="display:flex;align-items:center;gap:16px;">
     <span class="alert-badge" id="alertBadge">L0 正常</span>
     <span id="reasonLabel" class="alert-reason"></span>
+    <button id="btnRawData" onclick="toggleRawPanel()" title="显示/隐藏原始传感器数据"
+      style="background:var(--border);border:1px solid var(--border-light);color:var(--text-dim);cursor:pointer;padding:6px 14px;border-radius:8px;font-size:.8rem;font-family:inherit;transition:all .2s;"
+      onmouseover="this.style.borderColor='var(--accent)';this.style.color='var(--accent)'"
+      onmouseout="this.style.borderColor='var(--border-light)';this.style.color='var(--text-dim)'">📋 原始数据</button>
   </div>
 </header>
 
 <main>
-  <!-- Sensor real-time values -->
-  <div class="grid-cols-4">
-    <div class="card sensor-card">
-      <div class="value" id="valDhtT">--</div>
-      <span class="unit">°C</span>
-      <div class="label">DHT11 温度</div>
+  <!-- Sensor Cards -->
+  <div class="g4">
+    <div class="card sensor-card"><div class="value" id="valDs18Temp">--</div><span class="unit">°C</span><div class="label">DS18B20 温度</div></div>
+    <div class="card sensor-card"><div class="value" id="valDhtH">--</div><span class="unit">%RH</span><div class="label">DHT11 湿度</div></div>
+    <div class="card sensor-card"><div class="value" id="valLight">--</div><span class="unit">V</span><span class="do-tag" id="doPhotoTag">DO--</span><div class="label">光敏电压</div></div>
+    <div class="card sensor-card"><div class="value" id="valMq135">--</div><span class="unit">V</span><span class="do-tag" id="doMq135Tag">DO--</span><div class="label">MQ-135 电压</div></div>
+  </div>
+
+  <!-- Camera + Warehouse Row -->
+  <div class="cam-wh-row">
+    <!-- Camera Panel -->
+    <div class="card cam-panel">
+      <h3>🎥 摄像头实时画面</h3>
+      <div class="cam-viewport">
+        <img id="camImg" src="" alt="Camera"
+             onerror="this.style.display='none';document.getElementById('camPlaceholder').style.display='flex'"
+             onload="this.style.display='block';document.getElementById('camPlaceholder').style.display='none'">
+        <div id="camPlaceholder" style="display:none;position:absolute;inset:0;background:#0a0f14;align-items:center;justify-content:center;color:var(--text-dim);font-size:.85rem;gap:8px;">📷 摄像头离线 / 未连接</div>
+        <div class="cam-overlay-info">
+          <span class="cam-chip offline-dot" id="camChipStatus">OFFLINE</span>
+          <span class="cam-chip" id="camChipFps">FPS: 0.0</span>
+        </div>
+        <div class="cam-mode-tag mode-tag-idle" id="camModeTag">待机模式</div>
+      </div>
+      <div class="cam-status-bar">
+        <span>帧数: <strong id="camFrameCount">0</strong></span>
+        <span style="margin-left:auto;">连接: <strong id="camConnText">未连接</strong></span>
+      </div>
     </div>
-    <div class="card sensor-card">
-      <div class="value" id="valDhtH">--</div>
-      <span class="unit">%RH</span>
-      <div class="label">DHT11 湿度</div>
-    </div>
-    <div class="card sensor-card">
-      <div class="value" id="valDs18">--</div>
-      <span class="unit">°C</span>
-      <div class="label">DS18B20 温度</div>
-    </div>
-    <div class="card sensor-card">
-      <div class="value" id="valMq135">--</div>
-      <span class="unit">V</span>
-      <div class="label">MQ-135 电压</div>
+
+    <!-- Warehouse Panel -->
+    <div class="card wh-panel">
+      <h3>📦 出入库管理</h3>
+      <div class="wh-mode-group">
+        <button class="wh-mode-btn btn-checkin btn-idle" id="btnInbound" onclick="setMode('inbound')">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12l7-7 7 7"/></svg> 入 库
+        </button>
+        <button class="wh-mode-btn btn-checkout btn-idle" id="btnOutbound" onclick="setMode('outbound')">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 19V5M5 12l7 7 7-7"/></svg> 出 库
+        </button>
+      </div>
+      <div class="scan-btn-row">
+        <button class="btn-scan" id="btnScan" onclick="doScan()" disabled> 🔍 点击扫码识别二维码 </button>
+      </div>
+      <div class="scan-result-card" id="scanResultCard">
+        <div class="scan-empty" id="scanEmptyText">请先选择模式，再对准摄像头点击扫码</div>
+        <table id="scanResultTable" style="display:none;">
+          <tr><td>物料编号</td><td id="srId">-</td></tr>
+          <tr><td>品名</td><td id="srName">-</td></tr>
+          <tr><td>类别</td><td id="srCategory">-</td></tr>
+          <tr><td>批次号</td><td id="srBatch">-</td></tr>
+          <tr><td>规格</td><td id="srSpec">-</td></tr>
+          <tr><td>生产日期</td><td id="srMfgDate">-</td></tr>
+          <tr><td>有效期至</td><td id="srExpDate">-</td></tr>
+        </table>
+      </div>
+      <div class="env-snapshot-bar" id="envSnapshotBar">
+        <span class="env-item">🌡️ 温度: <span class="env-val" id="envTemp">--</span>°C</span>
+        <span class="env-item">💧 湿度: <span class="env-val" id="envHumi">--</span>%</span>
+        <span class="env-item">⚠️ 报警级别: <span class="env-val" id="envLevel">L0</span></span>
+        <span class="env-item">🔌 MQ135 DO: <span class="env-val" id="envMq135Do">--</span></span>
+        <span class="env-item">🔌 光敏 DO: <span class="env-val" id="envPhotoDo">--</span></span>
+      </div>
+      <div class="wh-log-area" id="whLogArea">
+        <div class="log-entry"><span class="log-time">--:--:--</span><span class="log-msg" style="color:var(--text-dim)">等待操作...</span></div>
+      </div>
     </div>
   </div>
 
-  <!-- Charts row 1: Temperature & Humidity -->
-  <div class="grid-cols-2">
-    <div class="card">
-      <h3>📈 温度趋势（最近 60 条）</h3>
-      <div class="chart-wrap"><canvas id="chartTemp"></canvas></div>
-    </div>
-    <div class="card">
-      <h3>💧 湿度趋势</h3>
-      <div class="chart-wrap"><canvas id="chartHumi"></canvas></div>
-    </div>
+  <!-- Charts -->
+  <div class="g2">
+    <div class="card"><h3>📈 温度趋势（最近 60 条）</h3><div class="chart-wrap"><canvas id="chartTemp"></canvas></div></div>
+    <div class="card"><h3>💧 湿度趋势</h3><div class="chart-wrap"><canvas id="chartHumi"></canvas></div></div>
+  </div>
+  <div class="g2">
+    <div class="card"><h3>⚠️ MQ-135 气体传感器电压</h3><div class="chart-wrap"><canvas id="chartGas"></canvas></div></div>
+    <div class="card"><h3>💡 光照传感器电压</h3><div class="chart-wrap"><canvas id="chartLight"></canvas></div></div>
   </div>
 
-  <!-- Charts row 2: MQ135 & Light -->
-  <div class="grid-cols-2">
-    <div class="card">
-      <h3>⚠️ MQ-135 气体传感器电压</h3>
-      <div class="chart-wrap"><canvas id="chartGas"></canvas></div>
-    </div>
-    <div class="card">
-      <h3>💡 光照传感器电压</h3>
-      <div class="chart-wrap"><canvas id="chartLight"></canvas></div>
-    </div>
-  </div>
+  <!-- Inventory Table -->
+  <div class="card"><h3>📦 库存清单</h3><div id="inventoryTable"><div class="empty-state">加载中...</div></div></div>
 
-  <!-- Inventory table -->
-  <div class="card">
-    <h3>📦 库存清单</h3>
-    <div id="inventoryTable"><div class="empty-state">加载中...</div></div>
-  </div>
-
-  <!-- Status bar -->
+  <!-- Status Bar -->
   <div class="status-bar" style="margin-top:0;">
     <span class="status-dot online" id="wsDot"></span>
     <span id="wsStatus">WebSocket 连接中...</span>
     <span style="margin-left:auto;">最后更新: <span id="lastUpdate">--</span></span>
   </div>
+  <div id="jsErr" style="display:none;background:#c62828;color:#fff;padding:8px 16px;font-size:13px;margin:0;"></div>
 </main>
 
+<!-- ====== Block 1: 核心数据层 ====== 最先执行，不依赖 Chart.js -->
 <script>
-// ==================== Chart.js 初始化 ====================
-const MAX_POINTS = 60;
-const chartColors = { temp:'#ff7043', humi:'#42a5f5', gas:'#ab47bc', light:'#ffca28' };
+// 全局JS错误捕获
+window.onerror=function(msg,src,line,col,err){
+  var el=document.getElementById('jsErr');
+  el.style.display='block';
+  el.textContent='JS ERROR: '+(err||msg)+' | '+src+' line '+line+':'+col;
+  return false;
+};
+console.log('[SmartMonitor] Block1 开始执行...');
 
-function makeChart(canvasId, label, color, yLabel) {
-  const ctx = document.getElementById(canvasId).getContext('2d');
-  return new Chart(ctx, {
-    type: 'line',
-    data: {
-      labels: [],
-      datasets: [{
-        label, data: [],
-        borderColor: color, backgroundColor: color + '22',
-        borderWidth: 2, pointRadius: 0, tension: 0.3,
-        fill: true
-      }]
-    },
-    options: {
-      responsive: true, maintainAspectRatio: false,
-      animation: { duration: 300 },
-      scales: {
-        x: { display: false },
-        y: {
-          title: { display: true, text: yLabel, color: '#8899aa' },
-          ticks: { color: '#8899aa', font: { size: 10 } },
-          grid: { color: '#2a3a4a33' }
-        }
-      },
-      plugins: {
-        legend: { labels: { color: '#8899aa', font: { size: 10 } } }
-      }
-    }
-  });
+// 常量 & 数据数组
+var MAX_POINTS=60;
+var TL=[],TDh=[],TG=[],TDS=[],TLi=[];
+
+// Chart 更新函数 — 先定义为空操作，Block2 加载 Chart.js 后会重新定义
+var aDP=function(c,d,v){};
+var updAll=function(){};
+
+// 报警级别更新（纯 DOM，无 Chart 依赖）
+function updateAlert(lvl,reason){
+  var b=document.getElementById('alertBadge'),rEl=document.getElementById('reasonLabel');
+  var L={0:'L0 正常',1:'L1 预警',2:'L2 严重',3:'L3 紧急'};
+  b.textContent=L[lvl]||'L?';b.className='alert-badge level-'+lvl;rEl.textContent=reason||'';
+  if(lvl>=3)document.body.classList.add('l3-flash');else document.body.classList.remove('l3-flash');
+  document.getElementById('envLevel').textContent=L[lvl]||'L?';
 }
 
-const chartTemp = makeChart('chartTemp', 'DHT11 温度', chartColors.temp, '°C');
-const chartHumi = makeChart('chartHumi', 'DHT11 湿度', chartColors.humi, '%RH');
-const chartGas = makeChart('chartGas', 'MQ-135 电压', chartColors.gas, 'V');
-
-// Light chart - also show DS18B20
-const ctxLight = document.getElementById('chartLight').getContext('2d');
-const chartLight = new Chart(ctxLight, {
-  type: 'line',
-  data: {
-    labels: [],
-    datasets: [
-      { label:'DS18B20 温度', data:[], borderColor:'#26c6da', backgroundColor:'#26c6da22', borderWidth:2, pointRadius:0, tension:0.3, fill:true },
-      { label:'光敏电压', data:[], borderColor:chartColors.light, backgroundColor:'#ffca2822', borderWidth:2, pointRadius:0, tension:0.3, fill:true, yAxisID:'y1' }
-    ]
-  },
-  options: {
-    responsive: true, maintainAspectRatio: false,
-    animation: { duration: 300 },
-    scales: {
-      x: { display: false },
-      y: {
-        title: { display: true, text: '°C', color: '#8899aa' },
-        ticks: { color: '#8899aa', font:{size:10} },
-        grid: { color:'#2a3a4a33' }
-      },
-      y1: {
-        position: 'right',
-        title: { display: true, text: 'V', color: '#8899aa' },
-        ticks: { color: '#8899aa', font:{size:10} },
-        grid: { display: false }
-      }
-    },
-    plugins: {
-      legend: { labels: { color: '#8899aa', font:{size:10} } }
+// DO 数字输出状态更新
+function updateDoTags(mq135Do,photoDo){
+  function setDoTag(el,envEl,val){
+    var tag=document.getElementById(el),env=document.getElementById(envEl);
+    if(val==null||val===undefined||val<0){
+      tag.textContent='DO--';tag.className='do-tag do-unknown';if(env)env.textContent='--';if(env)env.style.color='var(--text-dim)';
+    }else if(val===1){
+      tag.textContent='DO正常';tag.className='do-tag do-ok';if(env){env.textContent='正常';env.style.color='var(--green)'}
+    }else if(val===0){
+      tag.textContent='DO报警';tag.className='do-tag do-alarm';if(env){env.textContent='报警';env.style.color='var(--red)'}
     }
   }
-});
-
-// ==================== Data management ====================
-const timeLabels = [];
-function addDataPoint(chart, dataArr, value, label) {
-  if (value == null) return;
-  dataArr.push(value);
-  if (dataArr.length > MAX_POINTS) dataArr.shift();
-  chart.data.datasets[0].data = dataArr;
-  chart.data.labels = timeLabels;
-  chart.update();
-}
-function addDataPointDual(chart, dataArr0, v0, dataArr1, v1) {
-  if (v0 != null) { dataArr0.push(v0); if(dataArr0.length>MAX_POINTS)dataArr0.shift(); }
-  if (v1 != null) { dataArr1.push(v1); if(dataArr1.length>MAX_POINTS)dataArr1.shift(); }
-  chart.data.datasets[0].data = dataArr0;
-  chart.data.datasets[1].data = dataArr1;
-  chart.data.labels = timeLabels;
-  chart.update();
+  setDoTag('doMq135Tag','envMq135Do',mq135Do);
+  setDoTag('doPhotoTag','envPhotoDo',photoDo);
 }
 
-const tempData=[], humiData=[], gasData=[], ds18Data=[], lightData=[];
-
-// ==================== Alert level display ====================
-function updateAlert(level, reason) {
-  const badge = document.getElementById('alertBadge');
-  const reasonEl = document.getElementById('reasonLabel');
-  const labels = {0:'L0 正常', 1:'L1 预警', 2:'L2 严重', 3:'L3 紧急'};
-  badge.textContent = labels[level] || 'L? 未知';
-  badge.className = 'alert-badge level-' + level;
-  reasonEl.textContent = reason || '';
-
-  // L3 页面红色闪烁
-  if (level >= 3) document.body.classList.add('l3-flash');
-  else document.body.classList.remove('l3-flash');
-}
-
-// ==================== WebSocket ====================
-let ws = null;
-function connectWS() {
-  // 关闭旧连接，防止重复实例
-  if (ws) {
-    try { ws.close(); } catch(e) {}
-    if (ws._heartbeat) { clearInterval(ws._heartbeat); ws._heartbeat = null; }
-  }
-  const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const wsUrl = protocol + '//' + location.host + '/ws';
-  ws = new WebSocket(wsUrl);
-
-  ws.onopen = () => {
-    document.getElementById('wsDot').className = 'status-dot online';
-    document.getElementById('wsStatus').textContent = 'WebSocket 已连接';
-    // 每 25 秒发送一次心跳，防止空闲断开
-    ws._heartbeat = setInterval(() => {
-      if (ws.readyState === WebSocket.OPEN) {
-        try { ws.send(JSON.stringify({type:'ping'})); } catch(e) {}
-      }
-    }, 25000);
-  };
-
-  ws.onmessage = (evt) => {
-    try {
-      const msg = JSON.parse(evt.data);
-      if (msg.type === 'sensor_update') {
-        handleSensorData(msg.data, msg.timestamp);
-      }
-      // 忽略 ping/pong 心跳响应
-    } catch(e) { console.warn('WS parse error:', e); }
-  };
-
-  ws.onclose = () => {
-    if (ws._heartbeat) { clearInterval(ws._heartbeat); ws._heartbeat = null; }
-    document.getElementById('wsDot').className = 'status-dot offline';
-    document.getElementById('wsStatus').textContent = 'WebSocket 断开，3秒后重连...';
-    setTimeout(connectWS, 3000);
-  };
-
-  ws.onerror = (err) => { console.error('WS error:', err); ws.close(); };
-}
-connectWS();
-
-// ==================== Sensor data handling ====================
-function handleSensorData(data, timestamp) {
-  // Update real-time values
-  document.getElementById('valDhtT').textContent = data.dht11_t != null ? data.dht11_t.toFixed(1) : '--';
-  document.getElementById('valDhtH').textContent = data.dht11_h != null ? data.dht11_h.toFixed(1) : '--';
-  document.getElementById('valMq135').textContent = data.mq135_v != null ? data.mq135_v.toFixed(3) : '--';
-
-  // Update alert
-  updateAlert(data.level || 0, data.reason || '');
-
-  // Update last update time
-  const timeStr = timestamp || new Date().toLocaleTimeString();
-  document.getElementById('lastUpdate').textContent = timeStr;
-
-  // Add time label
-  timeLabels.push(timeStr);
-  if (timeLabels.length > MAX_POINTS) timeLabels.shift();
-
-  // Update charts
-  addDataPoint(chartTemp, tempData, data.dht11_t);
-  addDataPoint(chartHumi, humiData, data.dht11_h);
-  addDataPoint(chartGas, gasData, data.mq135_v);
-  addDataPointDual(chartLight, ds18Data, data.ds18b20_t, lightData, data.light_v);
-
-  // Update value cards that might have changed
-  if (data.ds18b20_t != null) {
-    document.getElementById('valDs18').textContent = data.ds18b20_t.toFixed(4);
-  }
-}
-
-// ==================== Initial data load ====================
-async function loadInitialData() {
-  try {
-    // Load recent sensor data
-    const resp = await fetch('/api/sensors/recent?limit=60');
-    if (resp.ok) {
-      const rows = await resp.json();
-      for (const r of rows) {
-        timeLabels.push(r.ts);
-        if(timeLabels.length>MAX_POINTS)timeLabels.shift();
-        tempData.push(r.dht11_t); if(tempData.length>MAX_POINTS)tempData.shift();
-        humiData.push(r.dht11_h); if(humiData.length>MAX_POINTS)humiData.shift();
-        gasData.push(r.mq135_v);  if(gasData.length>MAX_POINTS)gasData.shift();
-        ds18Data.push(r.ds18b20_t); if(ds18Data.length>MAX_POINTS)ds18Data.shift();
-        lightData.push(r.light_v); if(lightData.length>MAX_POINTS)lightData.shift();
-      }
-      if (rows.length > 0) {
-        const last = rows[rows.length-1];
-        handleSensorData(last, last.ts);
-        updateChartsAll();
-      }
-    }
-
-    // Load inventory
-    const invResp = await fetch('/api/inventory');
-    if (invResp.ok) {
-      const items = await invResp.json();
-      renderInventory(items);
-    }
-
-    // Load status
-    const stResp = await fetch('/api/status');
-    if (stResp.ok) {
-      const st = await stResp.json();
-      if (st.last_update) {
-        updateAlert(st.level || 0, st.reason || '');
-        document.getElementById('valDhtT').textContent = st.dht11_t != null ? st.dht11_t.toFixed(1) : '--';
-        document.getElementById('valDhtH').textContent = st.dht11_h != null ? st.dht11_h.toFixed(1) : '--';
-        document.getElementById('valMq135').textContent = st.mq135_v != null ? st.mq135_v.toFixed(3) : '--';
-        if (st.ds18b20_t != null) document.getElementById('valDs18').textContent = st.ds18b20_t.toFixed(4);
-        document.getElementById('lastUpdate').textContent = st.last_update || '--';
-      }
-    }
-  } catch(e) { console.warn('Initial load error:', e); }
-}
-
-function updateChartsAll() {
-  chartTemp.data.datasets[0].data = tempData;
-  chartTemp.data.labels = timeLabels;
-  chartTemp.update();
-
-  chartHumi.data.datasets[0].data = humiData;
-  chartHumi.data.labels = timeLabels;
-  chartHumi.update();
-
-  chartGas.data.datasets[0].data = gasData;
-  chartGas.data.labels = timeLabels;
-  chartGas.update();
-
-  chartLight.data.datasets[0].data = ds18Data;
-  chartLight.data.datasets[1].data = lightData;
-  chartLight.data.labels = timeLabels;
-  chartLight.update();
-}
-
-// ==================== Inventory table renderer ====================
-function renderInventory(items) {
-  const container = document.getElementById('inventoryTable');
-  if (!items || items.length === 0) {
-    container.innerHTML = '<div class="empty-state">暂无库存数据</div>';
+// ===== WebSocket + HTTP 轮询降级 =====
+var ws=null,_pollTimer=null,_wsTimeout=null;
+function connectWS(){
+  if(ws){try{ws.close()}catch(e){}if(ws._heartbeat){clearInterval(ws._heartbeat);ws._heartbeat=null}}
+  var p=location.protocol==='https:'?'wss:':'ws:',u=p+'//'+location.host+'/ws';
+  console.log('[SmartMonitor] 尝试连接 WebSocket: '+u);
+  try{
+    ws=new WebSocket(u);
+  }catch(e){
+    console.error('[SmartMonitor] WebSocket 构造失败: '+e.message);
+    startPolling();
     return;
   }
-  const statusClass = s => s==='在库'?'status-in':'status-out';
-  let html = `<table><thead><tr>
-    <th>编号</th><th>名称</th><th>类别</th><th>批号</th>
-    <th>规格</th><th>生产日期</th><th>有效期</th>
-    <th>入库时间</th><th>入库温度</th><th>入库湿度</th><th>状态</th>
-  </tr></thead><tbody>`;
-  for (const item of items) {
-    html += `<tr>
-      <td>${item.id}</td>
-      <td>${item.name}</td>
-      <td>${item.category||'-'}</td>
-      <td>${item.batch||'-'}</td>
-      <td>${item.spec||'-'}</td>
-      <td>${item.mfg_date||'-'}</td>
-      <td>${item.exp_date||'-'}</td>
-      <td>${item.checkin_time||'-'}</td>
-      <td>${item.checkin_temp?.toFixed(1)||'-'}°C</td>
-      <td>${item.checkin_humi?.toFixed(1)||'-'}%</td>
-      <td><span class="status-badge ${statusClass(item.status)}">${item.status}</span></td>
-    </tr>`;
-  }
-  html += '</tbody></table>';
-  container.innerHTML = html;
+  _wsTimeout=setTimeout(function(){
+    console.warn('[SmartMonitor] WS 3秒超时，切换到 HTTP 轮询');
+    if(!ws||ws.readyState!==WebSocket.OPEN)startPolling();
+  },3000);
+  ws.onopen=function(){
+    clearTimeout(_wsTimeout);stopPolling();
+    console.log('[SmartMonitor] WebSocket 已连接');
+    document.getElementById('wsDot').className='status-dot online';
+    document.getElementById('wsStatus').textContent='WebSocket 已连接';
+    ws._heartbeat=setInterval(function(){if(ws.readyState===WebSocket.OPEN){try{ws.send(JSON.stringify({type:'ping'}))}catch(e){}}},25000);
+  };
+  ws.onmessage=function(evt){
+    try{var m=JSON.parse(evt.data);if(m.type==='sensor_update')handleSensorData(m.data,m.timestamp,m.id,m.timestamp)}catch(e){console.warn('WS msg err:',e)}
+  };
+  ws.onclose=function(){
+    if(ws._heartbeat){clearInterval(ws._heartbeat);ws._heartbeat=null}
+    console.log('[SmartMonitor] WS 断开，启动轮询并5秒后重连');
+    document.getElementById('wsDot').className='status-dot offline';
+    document.getElementById('wsStatus').textContent='WS 断开，3秒后重连(轮询中)...';
+    startPolling();setTimeout(connectWS,5000);
+  };
+  ws.onerror=function(e){
+    console.warn('[SmartMonitor] WS onerror 触发');
+    try{ws.close()}catch(_){}
+  };
+}
+function startPolling(){
+  if(_pollTimer)return;
+  console.log('[SmartMonitor] 启动 HTTP 轮询 (2s间隔)');
+  document.getElementById('wsStatus').textContent='HTTP 轮询中...';
+  _pollTimer=setInterval(pollLatest,2000);
+  pollLatest(); // 立即拉一次
+}
+function stopPolling(){if(_pollTimer){clearInterval(_pollTimer);_pollTimer=null}}
+async function pollLatest(){
+  try{
+    var r=await fetch('/api/sensors/recent?limit=1');
+    if(r.ok){var rows=await r.json();if(rows.length>0)handleSensorData(rows[0],rows[0].ts)}
+  }catch(e){}
+}
+// 立即启动 WebSocket 连接
+connectWS();
+
+// ===== 传感器数据处理 =====
+function handleSensorData(data,ts){
+  document.getElementById('valDs18Temp').textContent=data.ds18b20_t!=null?data.ds18b20_t.toFixed(4):'--';
+  document.getElementById('valDhtH').textContent=data.dht11_h!=null?data.dht11_h.toFixed(1):'--';
+  document.getElementById('valLight').textContent=data.light_v!=null?data.light_v.toFixed(3):'--';
+  document.getElementById('valMq135').textContent=data.mq135_v!=null?data.mq135_v.toFixed(3):'--';
+  updateAlert(data.level||0,data.reason||'');
+  var t=ts||new Date().toLocaleTimeString();document.getElementById('lastUpdate').textContent=t;
+  document.getElementById('envTemp').textContent=data.ds18b20_t!=null?data.ds18b20_t.toFixed(2):'--';
+  document.getElementById('envHumi').textContent=data.dht11_h!=null?data.dht11_h.toFixed(1):'--';
+  updateDoTags(data.mq135_do,data.photo_do);
+  TL.push(t);if(TL.length>MAX_POINTS)TL.shift();
+  // Chart 更新（如果 Block2 已加载，这些函数就有实际逻辑；否则是空操作）
+  aDP(window.cT,TDS,data.ds18b20_t);aDP(window.cH,TDh,data.dht11_h);aDP(window.cG,TG,data.mq135_v);
+  aDP(window.cL,TLi,data.light_v);
 }
 
-// ==================== Periodic inventory refresh ====================
-setInterval(async () => {
-  try {
-    const resp = await fetch('/api/inventory');
-    if (resp.ok) renderInventory(await resp.json());
-  } catch(e) {}
-}, 10000);
-
-// ==================== Startup ====================
+// ===== 初始数据加载 =====
+async function loadInitialData(){
+  try{
+    var r=await fetch('/api/sensors/recent?limit=60');if(r.ok){
+      var rows=await r.json();
+      for(var i=0;i<rows.length;i++){var R=rows[i];TL.push(R.ts);if(TL.length>MAX_POINTS)TL.shift();TDS.push(R.ds18b20_t);if(TDS.length>MAX_POINTS)TDS.shift();TDh.push(R.dht11_h);if(TDh.length>MAX_POINTS)TDh.shift();TG.push(R.mq135_v);if(TG.length>MAX_POINTS)TG.shift();TLi.push(R.light_v);if(TLi.length>MAX_POINTS)TLi.shift()}
+      if(rows.length>0){var last=rows[rows.length-1];handleSensorData(last,last.ts);updAll()}
+    }
+    var ir=await fetch('/api/inventory');if(ir.ok)renderInventory(await ir.json());
+    var sr=await fetch('/api/status');if(sr.ok){
+      var s=await sr.json();
+      if(s.last_update){updateAlert(s.level||0,s.reason||'');document.getElementById('valDs18Temp').textContent=s.ds18b20_t!=null?s.ds18b20_t.toFixed(4):'--';document.getElementById('valDhtH').textContent=s.dht11_h!=null?s.dht11_h.toFixed(1):'--';document.getElementById('valLight').textContent=s.light_v!=null?s.light_v.toFixed(3):'--';document.getElementById('valMq135').textContent=s.mq135_v!=null?s.mq135_v.toFixed(3):'--';document.getElementById('lastUpdate').textContent=s.last_update||'--';document.getElementById('envTemp').textContent=s.ds18b20_t!=null?s.ds18b20_t.toFixed(2):'--';document.getElementById('envHumi').textContent=s.dht11_h!=null?s.dht11_h.toFixed(1):'--';updateDoTags(s.mq135_do,s.photo_do)}
+    }
+    await loadCheckLog();
+  }catch(e){console.warn('Load err:',e)}
+}
+console.log('[SmartMonitor] Block1 执行完毕，启动初始数据加载');
 loadInitialData();
 </script>
+
+<!-- ====== Block 2: Chart.js 图表层 ====== 仅在 Chart 加载成功时生效 -->
+<script>
+(function(){
+  if(typeof Chart==='undefined'){
+    console.warn('[SmartMonitor] Chart.js 未加载（CDN不可达），图表将不可用。传感器卡片不受影响。');
+    // 在图表区域显示友好提示
+    var wraps=document.querySelectorAll('.chart-wrap');
+    for(var i=0;i<wraps.length;i++){
+      wraps[i].innerHTML='<div style="display:flex;align-items:center;justify-content:center;height:100%;color:#8899aa;font-size:14px;">📊 图表模块不可用 (CDN 加载失败)</div>';
+    }
+    return;
+  }
+  console.log('[SmartMonitor] Block2: Chart.js 已加载，初始化图表...');
+
+  var CC={temp:'#ff7043',humi:'#42a5f5',gas:'#ab47bc',light:'#ffca28'};
+  function mkChart(id,lbl,c,yl,ymin,ymax){
+    var ctx=document.getElementById(id).getContext('2d');
+    return new Chart(ctx,{type:'line',data:{labels:[],datasets:[{label:lbl,data:[],borderColor:c,backgroundColor:c+'22',borderWidth:2,pointRadius:0,tension:.3,fill:true}]},options:{responsive:true,maintainAspectRatio:false,animation:{duration:300},scales:{x:{display:false},y:{title:{display:true,text:yl,color:'#8899aa'},ticks:{color:'#8899aa',font:{size:10}},grid:{color:'#2a3a4a33'},min:ymin, max:ymax}},plugins:{legend:{labels:{color:'#8899aa',font:{size:10}}}}}});
+  }
+  window.cT=mkChart('chartTemp','DS18B20 温度',CC.temp,'°C',0,50);
+  window.cH=mkChart('chartHumi','DHT11 湿度',CC.humi,'%RH',0,100);
+  window.cG=mkChart('chartGas','MQ-135 电压',CC.gas,'V',0,3.3);
+  window.cL=mkChart('chartLight','光敏电压',CC.light,'V',0,3.3);
+
+  // 重新定义 Chart 更新函数（覆盖 Block1 的空操作）
+  aDP=function(c,d,v){
+    if(!c||v==null)return;d.push(v);if(d.length>MAX_POINTS)d.shift();
+    c.data.datasets[0].data=d;c.data.labels=TL;c.update();
+  };
+  updAll=function(){
+    if(window.cT){window.cT.data.datasets[0].data=TDS;window.cT.data.labels=TL;window.cT.update()}
+    if(window.cH){window.cH.data.datasets[0].data=TDh;window.cH.data.labels=TL;window.cH.update()}
+    if(window.cG){window.cG.data.datasets[0].data=TG;window.cG.data.labels=TL;window.cG.update()}
+    if(window.cL){window.cL.data.datasets[0].data=TLi;window.cL.data.labels=TL;window.cL.update()}
+  };
+  console.log('[SmartMonitor] Block2: 图表初始化完成');
+})();
+</script>
+
+<!-- ====== Block 3: 业务模块 ====== 库存/摄像头/出入库/Toast -->
+<script>
+console.log('[SmartMonitor] Block3: 业务模块初始化...');
+
+function renderInventory(items){
+  var c=document.getElementById('inventoryTable');
+  if(!items||!items.length){c.innerHTML='<div class="empty-state">暂无库存数据</div>';return}
+  var sc=function(s){return s==='在库'?'status-in':'status-out'};
+  var h='<table><thead><tr><th>编号</th><th>名称</th><th>类别</th><th>批号</th><th>规格</th><th>生产日期</th><th>有效期</th><th>入库时间</th><th>入库温度</th><th>入库湿度</th><th>状态</th></tr></thead><tbody>';
+  for(var i=0;i<items.length;i++){var it=items[i];h+='<tr><td>'+it.id+'</td><td>'+it.name+'</td><td>'+(it.category||'-')+'</td><td>'+(it.batch||'-')+'</td><td>'+(it.spec||'-')+'</td><td>'+(it.mfg_date||'-')+'</td><td>'+(it.exp_date||'-')+'</td><td>'+(it.checkin_time||'-')+'</td><td>'+(it.checkin_temp!=null?it.checkin_temp.toFixed(1):'-')+'°C</td><td>'+(it.checkin_humi!=null?it.checkin_humi.toFixed(1):'-')+'%</td><td><span class="status-badge '+sc(it.status)+'">'+it.status+'</span></td></tr>';}
+  h+='</tbody></table>';c.innerHTML=h;
+}
+setInterval(async function(){try{var r=await fetch('/api/inventory');if(r.ok)renderInventory(await r.json())}catch(e){}},10000);
+
+// ===== 摄像头模块 =====
+function startCam(){
+  var img=document.getElementById('camImg');img.src='/api/camera/mjpeg?'+Date.now();
+  pollCam();setInterval(pollCam,3000);
+}
+async function pollCam(){
+  try{
+    var r=await fetch('/api/camera/status');if(!r.ok)return;
+    var s=await r.json();
+    var ch=document.getElementById('camChipStatus');
+    ch.textContent=s.online?'ONLINE':'STANDBY';ch.className=s.online?'cam-chip online-dot':'cam-chip offline-dot';
+    document.getElementById('camChipFps').textContent='FPS: '+s.fps;
+    document.getElementById('camFrameCount').textContent=s.total_frames||0;
+    document.getElementById('camConnText').textContent=s.running?'运行中':'已停止';
+    document.getElementById('btnScan').disabled=!(s.online&&whMode!==null);
+  }catch(e){}
+}
+startCam();
+
+// ===== 出入库管理 =====
+var whMode=null,lastScanItem=null;
+
+function setMode(m){
+  if(whMode===m){whMode=null;
+    ['Inbound','Outbound'].forEach(function(k){var b=document.getElementById('btn'+k);b.classList.remove('active');b.classList.add('btn-idle')});
+    document.getElementById('camModeTag').className='cam-mode-tag mode-tag-idle';document.getElementById('camModeTag').textContent='待机模式';document.getElementById('btnScan').disabled=true;return}
+  whMode=m;
+  var bI=document.getElementById('btnInbound'),bO=document.getElementById('btnOutbound');
+  bI.classList.remove('active','btn-idle');bO.classList.remove('active','btn-idle');
+  if(m==='inbound'){bI.classList.add('active');bO.classList.add('btn-idle');document.getElementById('camModeTag').className='cam-mode-tag mode-tag-inbound';document.getElementById('camModeTag').textContent='入库模式'}
+  else{bO.classList.add('active');bI.classList.add('btn-idle');document.getElementById('camModeTag').className='cam-mode-tag mode-tag-outbound';document.getElementById('camModeTag').textContent='出库模式'}
+  document.getElementById('btnScan').disabled=!document.getElementById('camChipStatus').classList.contains('online-dot')
+}
+
+async function doScan(){
+  var btn=document.getElementById('btnScan');btn.disabled=true;btn.innerHTML='<span class="spinner"></span> 正在扫码...';
+  try{
+    var r=await fetch('/api/camera/scan',{method:'POST'});
+    var res=await r.json();
+    if(res.success){lastScanItem=res.item;showSR(res.item);showToast('success','识别到: '+res.item.id+' — '+(res.item.name||''));await execWH()}
+    else{showToast('warn',res.message||'扫码失败');clearSR()}
+  }catch(e){showToast('error','扫码请求失败: '+e.message)}
+  btn.disabled=false;btn.innerHTML='🔍 点击扫码识别二维码';
+}
+function showSR(i){
+  document.getElementById('scanEmptyText').style.display='none';
+  document.getElementById('scanResultTable').style.display='table';
+  document.getElementById('srId').textContent=i.id||'-';
+  document.getElementById('srName').textContent=i.name||'-';
+  document.getElementById('srCategory').textContent=i.category||'-';
+  document.getElementById('srBatch').textContent=i.batch||'-';
+  document.getElementById('srSpec').textContent=i.spec||'-';
+  document.getElementById('srMfgDate').textContent=i.mfg_date||'-';
+  document.getElementById('srExpDate').textContent=i.exp_date||'-';
+}
+function clearSR(){document.getElementById('scanEmptyText').style.display='flex';document.getElementById('scanResultTable').style.display='none';lastScanItem=null}
+
+async function execWH(){
+  if(!lastScanItem||!whMode)return;
+  var env={temp:0,humi:0,level:0};
+  try{var er=await fetch('/api/env-snapshot');if(er.ok)env=await er.json()}catch(e){}
+  if(whMode==='inbound'){
+    var p={item_id:lastScanItem.id,name:lastScanItem.name||'',category:lastScanItem.category||'',batch:lastScanItem.batch||'',spec:lastScanItem.spec||'',mfg_date:lastScanItem.mfg_date||'',exp_date:lastScanItem.exp_date||'',env_temp:env.temp||0,env_humi:env.humi||0,env_level:env.level||0};
+    var r=await fetch('/api/warehouse/checkin',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(p)});
+    var rs=await r.json();addWL(rs.ok?'in':'warn',rs.message);showToast(rs.ok?'success':'error',rs.message);if(rs.ok)refreshWH()
+  }else if(whMode==='outbound'){
+    var p2={item_id:lastScanItem.id,env_temp:env.temp||0,env_humi:env.humi||0,env_level:env.level||0};
+    var r2=await fetch('/api/warehouse/checkout',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(p2)});
+    var rs2=await r2.json();addWL(rs2.ok?'out':'warn',rs2.message);showToast(rs2.ok?'success':'error',rs2.message);if(rs2.ok)refreshWH()
+  }
+}
+async function refreshWH(){try{var r=await fetch('/api/inventory');if(r.ok)renderInventory(await r.json())}catch(e){}await loadCheckLog()}
+
+function addWL(t,msg){
+  var a=document.getElementById('whLogArea');
+  var now=new Date().toLocaleTimeString('zh-CN',{hour12:false});
+  var ac='',at='';
+  if(t==='in'){ac='log-action-in';at='入库'}else if(t==='out'){ac='log-action-out';at='出库'}else{at='提示'}
+  var e=document.createElement('div');e.className='log-entry';
+  e.innerHTML='<span class="log-time">'+now+'</span>'+(at?'<span class="log-action '+ac+'">'+at+'</span>':'')+'<span class="log-msg">'+msg+'</span>';
+  var ph=a.querySelector('.log-entry:last-child');
+  if(ph&&ph.querySelector('.log-msg')&&ph.querySelector('.log-msg').textContent.indexOf('等待操作')>=0)ph.remove();
+  a.insertBefore(e,a.firstChild);
+  while(a.children.length>30)a.removeChild(a.lastChild)
+}
+async function loadCheckLog(){
+  try{var r=await fetch('/api/warehouse/log?limit=10');if(r.ok){var logs=await r.json();var a=document.getElementById('whLogArea');a.innerHTML='';for(var i=0;i<logs.length;i++){var l=logs[i];addWL(l.action==='入库'?'in':(l.action==='出库'?'out':'info'),l.item_id+' | '+l.action+(l.timestamp?' @ '+l.timestamp:''))}}}catch(e){}
+}
+
+// Toast 通知
+function showToast(type,msg,dur){
+  if(!dur)dur=3500;
+  var c=document.getElementById('toastContainer');
+  var t=document.createElement('div');t.className='toast toast-'+type;t.textContent=msg;c.appendChild(t);
+  setTimeout(function(){t.classList.add('toast-exit');setTimeout(function(){t.remove()},280)},dur)
+}
+
+console.log('[SmartMonitor] Block3: 业务模块初始化完成');
+</script>
+
+<!-- ====== Raw Sensor Data Floating Panel ====== -->
+<div id="rawDataPanel" style="display:none;position:fixed;bottom:16px;right:16px;width:420px;max-height:480px;z-index:200;
+  background:linear-gradient(145deg,#1a2733 0%,rgba(15,25,35,.97)100%);
+  border:1px solid var(--border-light);border-radius:12px;padding:16px;
+  box-shadow:0 8px 36px rgba(0,0,0,.6);overflow:hidden;backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+    <h3 style="margin:0;font-size:.85rem;display:flex;align-items:center;gap:6px;">📋 原始传感器数据</h3>
+    <div style="display:flex;gap:6px;">
+      <span id="rawDataCounter" style="font-size:.7rem;color:var(--text-dim);padding:2px 8px;background:rgba(0,0,0,.3);border-radius:4px;">#0</span>
+      <button onclick="toggleRawPanel()" style="background:var(--border);border:1px solid var(--border-light);color:var(--text-dim);
+        cursor:pointer;width:28px;height:28px;border-radius:6px;font-size:.85rem;line-height:1;display:flex;align-items:center;justify-content:center;transition:all .2s;"
+        onmouseover="this.style.borderColor='var(--red)';this.style.color='var(--red)'"
+        onmouseout="this.style.borderColor='var(--border-light)';this.style.color='var(--text-dim)'">✕</button>
+    </div>
+  </div>
+  <pre id="rawDataContent" style="font-family:'Courier New',Consolas,monospace;font-size:.75rem;color:#00bcd4;
+    white-space:pre-wrap;word-break:break-all;
+    max-height:340px;overflow-y:auto;
+    background:rgba(0,0,0,.35);padding:12px;border-radius:8px;border:1px solid rgba(0,188,212,.12);
+    margin:0;scrollbar-width:thin;scrollbar-color:var(--border) transparent;">等待数据...</pre>
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-top:8px;font-size:.72rem;color:var(--text-dim);">
+    <span>接收时间: <span id="rawDataTime" style="color:var(--accent);">--</span></span>
+    <span>记录ID: <span id="rawDataId" style="color:var(--accent);">--</span></span>
+  </div>
+</div>
+
+<!-- Raw data toggle & counter JS -->
+<script>
+var _rawCount=0;
+function toggleRawPanel(){
+  var p=document.getElementById('rawDataPanel');
+  var b=document.getElementById('btnRawData');
+  var show=p.style.display==='none';
+  p.style.display=show?'block':'none';
+  b.style.borderColor=show?'var(--accent)':'var(--border-light)';
+  b.style.color=show?'var(--accent)':'var(--text-dim)';
+}
+// Hook into existing handleSensorData — wrap it to also update raw panel
+(function(){
+  var _orig=handleSensorData;
+  handleSensorData=function(data,ts,rawId,rawTs){
+    _orig(data,ts);
+    var pre=document.getElementById('rawDataContent');
+    if(pre){
+      var obj={};
+      for(var k in data){
+        if(data.hasOwnProperty(k))obj[k]=data[k];
+      }
+      if(rawId)obj._record_id=rawId;
+      obj._receive_time=rawTs||ts||new Date().toLocaleTimeString('zh-CN',{hour12:false});
+      _rawCount++;
+      document.getElementById('rawDataCounter').textContent='#'+_rawCount;
+      document.getElementById('rawDataTime').textContent=obj._receive_time;
+      document.getElementById('rawDataId').textContent=rawId||'--';
+      pre.textContent=JSON.stringify(obj,null,2);
+    }
+  };
+})();
+</script>
+
 </body>
 </html>

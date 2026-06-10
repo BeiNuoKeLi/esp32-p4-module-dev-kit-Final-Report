@@ -4,6 +4,8 @@ services:
     container_name: smart-monitor-dashboard
     ports:
       - "8000:8000"
+      - "8082:8082/udp"
     volumes:
       - ./data:/app/data
+      - ./app/static:/app/app/static:ro   # 实时同步前端文件（容器内路径为 /app/app/static）
     restart: unless-stopped

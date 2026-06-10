@@ -157,16 +157,18 @@ void udp_sender_task(void *arg)
         int err = local.dht11_err | local.ds18b20_err
                 | local.mq135_err  | local.photo_err;
 
-        /* ---- 4.3 构建 JSON 报文（v2.0: 新增 type + level 字段）---- */
+        /* ---- 4.3 构建 JSON 报文（v3.0: 新增 mq135_do + photo_do）---- */
         int written = snprintf(buf, sizeof(buf),
             "{\"type\":\"data\",\"level\":%d,"
             "\"ts\":%lu,\"dht11_t\":%.1f,\"dht11_h\":%.1f,"
             "\"ds18b20_t\":%.4f,\"mq135_v\":%.2f,\"light_v\":%.2f,"
+            "\"mq135_do\":%d,\"photo_do\":%d,"
             "\"alert\":%d,\"err\":%d,\"reason\":\"%s\"}",
             (int)local.alarm_level,
             ts,
             (float)local.dht11_temp, (float)local.dht11_humi,
             local.ds18b20_temp, mq135_v, light_v,
+            (int)local.mq135_do, (int)local.photo_do,
             alert, err, reason);
 
         /* 检查是否超出缓冲区（REQUIREMENT.md 6.1: < 512 字节） */

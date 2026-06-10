@@ -219,8 +219,13 @@ static void dht11_task(void *arg)
             vTaskDelay(pdMS_TO_TICKS(2000));
             continue;
         }
-        /* ---- 真实传感器读取 ---- */
-        dht11_read(&data);
+        /* ---- 真实传感器读取 (带重试) ---- */
+        data.err = 1;
+        for (int retry = 0; retry < 3 && data.err != 0; retry++) {
+            dht11_read(&data);
+            if (data.err == 0) break;
+            vTaskDelay(pdMS_TO_TICKS(100));  /* 让总线恢复, 避让 WiFi 突发 */
+        }
 
         if (xSemaphoreTake(g_sensor_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
             g_sensor_data.dht11_temp = data.temp;
@@ -230,7 +235,7 @@ static void dht11_task(void *arg)
         }
 
         if (data.err) {
-            ESP_LOGW(TAG, "DHT11: 读取失败, err=0x%02X", data.err);
+            ESP_LOGW(TAG, "DHT11: 读取失败(重试3次均失败), err=0x%02X", data.err);
         } else {
             ESP_LOGI(TAG, "DHT11: 温度=%d°C | 湿度=%d%%RH", data.temp, data.humi);
         }

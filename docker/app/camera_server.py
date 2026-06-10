@@ -1,11 +1,19 @@
 """
 摄像头服务 — UDP 8082 接收 + JPEG 分片重组 + MJPEG HTTP 流
 
-复用 camera_protocol 协议头解析，在独立线程中持续接收 ESP32-CAM 推送的
-JPEG 分片帧。提供两个接口:
+实际摄像头数据流:
+  ESP32-CAM (AI-Thinker, CameraWebServer.ino)
+    → HTTP GET http://10.16.234.23/capture (QVGA JPEG, quality=10)
+    → ESP32-P4 (camera_http_fetch.c, FreeRTOS Task, 3 fps)
+    → UDP :8082 (0xAA55 协议分片, 每包 4096B payload)
+    → Docker camera_server.py 后台线程直收（不经过 udp_to_web.py）
 
-  1. GET /api/camera/mjpeg  — multipart/x-mixed-replace 实时视频流
-  2. GET /api/camera/snapshot — 返回最新一帧 JPEG bytes (用于扫码)
+已弃用方案（camera_capture_sender.py / camera_display_receiver.py）:
+  PC USB UVC 摄像头 → wasm_camera_capture_sender.py → UDP :8082
+
+提供接口:
+  1. GET /api/camera/mjpeg   — multipart/x-mixed-replace 实时视频流（支持 stream_enabled 开关）
+  2. GET /api/camera/snapshot — 返回最新一帧 JPEG bytes (用于扫码 / 报警拍照)
 
 降级策略:
   - 若容器内无 OpenCV → 自动进入 offline 模式，MJPEG 返回黑色占位图
@@ -24,8 +32,8 @@ from . import camera_protocol as proto
 CAMERA_PORT = 8082
 CAMERA_BUF_SIZE = 65536
 SOCK_TIMEOUT = 0.002       # socket recv 超时 (ms)
-FRAME_TIMEOUT = 0.3        # 帧重组超时 (s)
-MAX_FRAME_CACHE = 3        # 最大缓存帧数
+FRAME_TIMEOUT = 5.0        # 帧重组超时 (s)，P4 HTTP 拉图最高 3.9s
+MAX_FRAME_CACHE = 6        # 最大缓存帧数（需 > 并发帧数，3fps×1s超时≈3帧，留余量）
 MJPEG_FPS_LIMIT = 10       # MJPEG 生成器最大 FPS
 JPEG_QUALITY = 85          # 编码质量 (仅占位图使用)
 
@@ -58,6 +66,9 @@ class CameraServer:
         # 统计
         self.total_frames = 0
         self.fps_history: list[float] = []
+        self.chunk_count = 0          # 收到的 UDP 分片总数
+        self.timeout_count = 0        # 超时丢弃的帧数
+        self._last_debug_ts = 0.0
 
         # 可用性标记
         self.cv2_ok = False
@@ -65,6 +76,11 @@ class CameraServer:
 
         # 占位 JPEG (黑色 320x240)
         self.placeholder_jpeg = self._make_placeholder()
+
+        # 视频流开关（默认开启）
+        self.stream_enabled = True
+        # UDP 接收暂停标志（关闭视频流时暂停接收，节省带宽/CPU）
+        self.paused = False
 
     @property
     def online(self) -> bool:
@@ -184,6 +200,16 @@ class CameraServer:
         self.frame_cache.clear()
         print("[Camera] 已停止")
 
+    def pause(self):
+        """暂停 UDP 接收（关闭视频流时节省带宽和 CPU）"""
+        self.paused = True
+        print("[Camera] ⏸️ UDP 接收已暂停")
+
+    def resume(self):
+        """恢复 UDP 接收"""
+        self.paused = False
+        print("[Camera] ▶️ UDP 接收已恢复")
+
     # ─── UDP 接收主循环 (后台线程) ─────────────────────────
 
     def _recv_loop(self):
@@ -200,6 +226,11 @@ class CameraServer:
             return
 
         while self.running:
+            # 暂停状态：不接收 UDP 数据，低开销轮询
+            if self.paused:
+                time.sleep(0.1)
+                continue
+
             try:
                 data, _ = self.sock.recvfrom(CAMERA_BUF_SIZE)
             except socket.timeout:
@@ -216,11 +247,22 @@ class CameraServer:
 
             frame_id, chunk_idx, total_chunks = result
             jpeg_chunk = data[proto.HEADER_SIZE:]
+            self.chunk_count += 1
 
             # 放入帧缓存
             if frame_id not in self.frame_cache:
                 if len(self.frame_cache) >= MAX_FRAME_CACHE:
-                    self.frame_cache.popitem(last=False)
+                    # 优先驱逐不完整的帧，避免丢失可用帧
+                    to_evict = None
+                    for fid in self.frame_cache:
+                        fc = self.frame_cache[fid]
+                        if len(fc["received"]) < fc["total"]:
+                            to_evict = fid
+                            break
+                    if to_evict is None:
+                        self.frame_cache.popitem(last=False)
+                    else:
+                        del self.frame_cache[to_evict]
                 self.frame_cache[frame_id] = {
                     "chunks": [b""] * total_chunks,
                     "total": total_chunks,
@@ -263,7 +305,17 @@ class CameraServer:
                 if tnow - fc["start_time"] > FRAME_TIMEOUT
             ]
             for fid in stale:
-                del self.frame_cache[fid]
+                c = self.frame_cache.pop(fid)
+                self.timeout_count += 1
+                print(f"[Camera] ⚠️ 帧 {fid} 超时丢弃 | 已收 {len(c['received'])}/{c['total']} 分片")
+
+            # 周期输出诊断信息（每 15 秒）
+            if tnow - self._last_debug_ts > 15:
+                rate = self.fps
+                print(f"[Camera] 📊 诊断 | fps={rate:.1f} | 完成帧={self.total_frames} | "
+                      f"收到分片={self.chunk_count} | 超时丢弃={self.timeout_count} | "
+                      f"缓存帧={len(self.frame_cache)}")
+                self._last_debug_ts = tnow
 
         # 退出清理
         if self.sock:
@@ -290,13 +342,17 @@ class CameraServer:
         """
         FastAPI StreamingResponse 用的生成器。
         产出 multipart/x-mixed-replace 格式数据块。
+        当 stream_enabled=False 时只输出占位图。
         """
         boundary = "--frameboundary"
         interval = 1.0 / MJPEG_FPS_LIMIT
 
         while self.running:
             t0 = time.time()
-            jpeg_data = self.latest_jpeg or self.placeholder_jpeg
+            if self.stream_enabled:
+                jpeg_data = self.latest_jpeg or self.placeholder_jpeg
+            else:
+                jpeg_data = self.placeholder_jpeg
             yield (
                 f"{boundary}\r\n"
                 f"Content-Type: image/jpeg\r\n"

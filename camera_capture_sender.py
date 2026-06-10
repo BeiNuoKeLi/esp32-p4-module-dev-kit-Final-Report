@@ -1,5 +1,19 @@
 #!/usr/bin/env python3
 """
+⚠️ 已弃用 (DEPRECATED) — 请勿使用 ⚠️
+
+本模块原先通过 USB UVC 摄像头采集图像，现已由 ESP32-CAM + ESP32-P4 方案替代。
+
+当前摄像头数据流:
+  ESP32-CAM (CameraWebServer) → HTTP GET /capture → ESP32-P4 (camera_http_fetch.c)
+  → UDP 8082 (0xAA55 分片) → Docker camera_server.py 直收
+
+本文件仅保留作为历史参考，不再参与系统运行。
+"""
+
+# ====== 以下为原始代码（已弃用） ======
+"""
+原始文档:
 摄像头图像采集 + UDP 分包发送端
 
 功能：

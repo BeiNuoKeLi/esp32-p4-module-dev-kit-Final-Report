@@ -166,6 +166,53 @@ th{color:var(--text-dim);font-weight:600;white-space:nowrap}
 @keyframes toast-out{to{opacity:0;transform:translateX(40px)}}
 
 @media(max-width:900px){.g4{grid-template-columns:repeat(2,1fr)}.g2{grid-template-columns:1fr}.cam-wh-row{grid-template-columns:1fr}main{padding:16px}}
+
+/* Toggle switch */
+.toggle-switch{position:relative;display:inline-block;width:44px;height:24px}
+.toggle-switch input{opacity:0;width:0;height:0}
+.toggle-slider{position:absolute;cursor:pointer;top:0;left:0;right:0;bottom:0;background:var(--border);border-radius:24px;transition:.3s}
+.toggle-slider:before{position:absolute;content:"";height:18px;width:18px;left:3px;bottom:3px;background:#666;border-radius:50%;transition:.3s}
+.toggle-switch input:checked+.toggle-slider{background:var(--accent)}
+.toggle-switch input:checked+.toggle-slider:before{transform:translateX(20px);background:#fff}
+
+/* Alarm panel */
+.alarm-panel{max-height:420px;overflow-y:auto;scrollbar-width:thin;scrollbar-color:var(--border) transparent}
+.alarm-panel::-webkit-scrollbar{width:4px}
+.alarm-panel::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
+.alarm-toolbar{display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap}
+.alarm-toolbar select,.alarm-toolbar button{background:var(--border);border:1px solid var(--border-light);color:var(--text);padding:6px 12px;border-radius:6px;font-size:.8rem;cursor:pointer;font-family:inherit;transition:all .2s}
+.alarm-toolbar select:hover,.alarm-toolbar button:hover{border-color:var(--accent)}
+.alarm-toolbar button.btn-sm{font-size:.75rem;padding:4px 10px}
+.alarm-table{width:100%;border-collapse:collapse;font-size:.8rem}
+.alarm-table th,.alarm-table td{padding:8px 10px;border-bottom:1px solid var(--border);text-align:left}
+.alarm-table th{color:var(--text-dim);font-weight:600;white-space:nowrap}
+.alarm-table tbody tr{cursor:pointer;transition:background .2s}
+.alarm-table tbody tr:hover{background:rgba(0,188,212,.06)}
+.alarm-table tbody tr.unack{background:rgba(244,67,54,.06)}
+.alarm-lv{display:inline-block;padding:2px 8px;border-radius:4px;font-size:.7rem;font-weight:700}
+.lv-1{background:rgba(255,193,7,.15);color:var(--yellow)}
+.lv-2{background:rgba(255,152,0,.15);color:var(--orange)}
+.lv-3{background:rgba(244,67,54,.2);color:var(--red)}
+.alarm-pager{display:flex;align-items:center;justify-content:center;gap:8px;margin-top:10px;font-size:.78rem}
+.alarm-pager button{background:var(--border);border:1px solid var(--border-light);color:var(--text);padding:4px 12px;border-radius:6px;cursor:pointer;font-family:inherit;transition:all .2s}
+.alarm-pager button:hover:not(:disabled){border-color:var(--accent)}
+.alarm-pager button:disabled{opacity:.4;cursor:not-allowed}
+
+/* Modal */
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:300;display:flex;align-items:center;justify-content:center;animation:fade-in .2s}
+@keyframes fade-in{from{opacity:0}}
+.modal-box{background:var(--card);border:1px solid var(--border-light);border-radius:12px;padding:24px;max-width:600px;width:90%;max-height:80vh;overflow-y:auto;box-shadow:0 8px 40px rgba(0,0,0,.5)}
+.modal-box h3{font-size:1rem;margin-bottom:16px;display:flex;align-items:center;gap:8px}
+.modal-box table{width:100%;font-size:.82rem;margin-bottom:16px}
+.modal-box table td{padding:5px 8px;border-bottom:1px solid var(--border)}
+.modal-box table td:first-child{color:var(--text-dim);width:90px;font-weight:500}
+.modal-box img{border-radius:8px;border:1px solid var(--border);max-width:100%}
+.modal-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:16px}
+.btn-ack{background:var(--green);border:none;color:#fff;padding:8px 20px;border-radius:8px;cursor:pointer;font-weight:600;font-family:inherit;transition:all .2s}
+.btn-ack:hover{background:#43a047}
+.btn-ack:disabled{opacity:.4;cursor:not-allowed}
+.btn-close-modal{background:var(--border);border:1px solid var(--border-light);color:var(--text-dim);padding:8px 20px;border-radius:8px;cursor:pointer;font-family:inherit;transition:all .2s}
+.btn-close-modal:hover{border-color:var(--accent);color:var(--text)}
 </style>
 </head>
 
@@ -211,7 +258,12 @@ th{color:var(--text-dim);font-weight:600;white-space:nowrap}
       </div>
       <div class="cam-status-bar">
         <span>帧数: <strong id="camFrameCount">0</strong></span>
-        <span style="margin-left:auto;">连接: <strong id="camConnText">未连接</strong></span>
+        <label class="toggle-switch" title="视频流开关" style="margin-left:auto;margin-right:8px;">
+          <input type="checkbox" id="camToggle" checked onchange="toggleCameraStream()">
+          <span class="toggle-slider"></span>
+        </label>
+        <span style="font-size:.75rem;" id="camToggleLabel">视频流</span>
+        <span style="margin-left:12px;">连接: <strong id="camConnText">未连接</strong></span>
       </div>
     </div>
 
@@ -266,6 +318,25 @@ th{color:var(--text-dim);font-weight:600;white-space:nowrap}
 
   <!-- Inventory Table -->
   <div class="card"><h3>📦 库存清单</h3><div id="inventoryTable"><div class="empty-state">加载中...</div></div></div>
+
+  <!-- Alarm History Panel -->
+  <div class="card">
+    <h3>🚨 报警历史记录</h3>
+    <div class="alarm-toolbar">
+      <select id="alarmLevelFilter" onchange="loadAlarmList(1)">
+        <option value="0">全部级别</option>
+        <option value="1">L1 预警</option>
+        <option value="2">L2 严重</option>
+        <option value="3">L3 紧急</option>
+      </select>
+      <button onclick="loadAlarmList(1)" class="btn-sm">🔄 刷新</button>
+      <span style="font-size:.75rem;color:var(--text-dim);margin-left:auto;" id="alarmSummary">共 0 条，未确认 0</span>
+    </div>
+    <div class="alarm-panel" id="alarmTableBody">
+      <div class="empty-state">加载中...</div>
+    </div>
+    <div class="alarm-pager" id="alarmPager"></div>
+  </div>
 
   <!-- Status Bar -->
   <div class="status-bar" style="margin-top:0;">
@@ -562,6 +633,114 @@ function showToast(type,msg,dur){
   var t=document.createElement('div');t.className='toast toast-'+type;t.textContent=msg;c.appendChild(t);
   setTimeout(function(){t.classList.add('toast-exit');setTimeout(function(){t.remove()},280)},dur)
 }
+
+// ===== 摄像头视频流开关 =====
+async function toggleCameraStream(){
+  try{
+    var r=await fetch('/api/camera/stream',{method:'POST'});
+    var s=await r.json();
+    document.getElementById('camToggle').checked=s.enabled;
+    document.getElementById('camToggleLabel').textContent=s.enabled?'视频流':'已暂停';
+    showToast('success',s.enabled?'视频流已开启':'视频流已关闭');
+  }catch(e){showToast('error','切换失败: '+e.message);}
+}
+
+// ===== 报警历史面板 =====
+var _alarmPage=1,_alarmPageSize=20;
+
+async function loadAlarmSummary(){
+  try{
+    var r=await fetch('/api/alarms/summary');
+    if(r.ok){
+      var s=await r.json();
+      document.getElementById('alarmSummary').textContent='共 '+s.total_count+' 条，未确认 '+s.unacknowledged+' | 最新: L'+s.latest_level+' '+(s.latest_reason||'');
+    }
+  }catch(e){}
+}
+
+async function loadAlarmList(page){
+  if(!page)page=_alarmPage;_alarmPage=page;
+  var lv=document.getElementById('alarmLevelFilter').value;
+  try{
+    var r=await fetch('/api/alarms?page='+page+'&page_size='+_alarmPageSize+'&level='+lv);
+    if(!r.ok)return;
+    var res=await r.json();
+    var tbody=document.getElementById('alarmTableBody');
+    if(!res.items||!res.items.length){tbody.innerHTML='<div class="empty-state">暂无报警记录</div>';document.getElementById('alarmPager').innerHTML='';return}
+    var h='<table class="alarm-table"><thead><tr><th>时间</th><th>级别</th><th>原因</th><th>温度</th><th>湿度</th><th>MQ135</th><th>快照</th><th>确认</th></tr></thead><tbody>';
+    for(var i=0;i<res.items.length;i++){
+      var it=res.items[i];
+      h+='<tr class="'+(it.acknowledged?'':'unack')+'" onclick="openAlarmDetail('+it.id+')">';
+      h+='<td style="white-space:nowrap">'+(it.ts||'')+'</td>';
+      h+='<td><span class="alarm-lv lv-'+it.level+'">L'+it.level+'</span></td>';
+      h+='<td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(it.reason||'-')+'</td>';
+      h+='<td>'+(it.ds18b20_t!=null?it.ds18b20_t.toFixed(1)+'°C':'-')+'</td>';
+      h+='<td>'+(it.dht11_h!=null?it.dht11_h.toFixed(1)+'%':'-')+'</td>';
+      h+='<td>'+(it.mq135_v!=null?it.mq135_v.toFixed(2)+'V':'-')+'</td>';
+      h+='<td>'+(it.has_snapshot?'📸':'-')+'</td>';
+      h+='<td>'+(it.acknowledged?'✅':'<button class="btn-sm" onclick="event.stopPropagation();ackAlarm('+it.id+')" style="font-size:.65rem">确认</button>')+'</td>';
+      h+='</tr>';
+    }
+    h+='</tbody></table>';tbody.innerHTML=h;
+    // 分页器
+    var totalPages=Math.ceil(res.total/_alarmPageSize);
+    var pager='<button '+(page<=1?'disabled':'')+' onclick="loadAlarmList('+(page-1)+')">◀ 上一页</button>';
+    pager+='<span>第 '+page+'/'+totalPages+' 页 (共 '+res.total+' 条)</span>';
+    pager+='<button '+(page>=totalPages?'disabled':'')+' onclick="loadAlarmList('+(page+1)+')">下一页 ▶</button>';
+    document.getElementById('alarmPager').innerHTML=pager;
+  }catch(e){console.warn('Alarm load err:',e)}
+}
+
+async function openAlarmDetail(id){
+  try{
+    var r=await fetch('/api/alarms/'+id);if(!r.ok)return;
+    var d=await r.json();if(!d.event)return;
+    var e=d.event;
+    var lvlMap={0:'正常',1:'预警',2:'严重',3:'紧急'};
+    var h='<div class="modal-overlay" id="alarmModal" onclick="if(event.target===this)closeAlarmModal()">';
+    h+='<div class="modal-box">';
+    h+='<h3><span class="alarm-lv lv-'+e.level+'">L'+e.level+' '+lvlMap[e.level]+'</span> 报警详情</h3>';
+    h+='<table>';
+    h+='<tr><td>时间</td><td>'+e.ts+'</td></tr>';
+    h+='<tr><td>原因</td><td>'+e.reason+'</td></tr>';
+    h+='<tr><td>DS18B20 温度</td><td>'+(e.ds18b20_t!=null?e.ds18b20_t.toFixed(2)+'°C':'-')+'</td></tr>';
+    h+='<tr><td>DHT11 湿度</td><td>'+(e.dht11_h!=null?e.dht11_h.toFixed(1)+'%':'-')+'</td></tr>';
+    h+='<tr><td>MQ-135 电压</td><td>'+(e.mq135_v!=null?e.mq135_v.toFixed(3)+'V':'-')+'</td></tr>';
+    h+='<tr><td>MQ-135 DO</td><td>'+(e.mq135_do!=null?(e.mq135_do===1?'正常':'报警'):'-')+'</td></tr>';
+    h+='<tr><td>光敏电压</td><td>'+(e.light_v!=null?e.light_v.toFixed(3)+'V':'-')+'</td></tr>';
+    h+='<tr><td>光敏 DO</td><td>'+(e.photo_do!=null?(e.photo_do===1?'正常':'报警'):'-')+'</td></tr>';
+    h+='<tr><td>确认状态</td><td>'+(e.acknowledged?'✅ 已确认':'⚠️ 未确认')+'</td></tr>';
+    h+='</table>';
+    if(d.snapshot_b64){
+      h+='<h3 style="font-size:.85rem;margin-bottom:8px;">📸 现场快照</h3>';
+      h+='<img src="data:image/jpeg;base64,'+d.snapshot_b64+'" alt="报警现场快照">';
+    }else{
+      h+='<p style="color:var(--text-dim);font-size:.85rem;">📷 无现场快照（摄像头可能未连接）</p>';
+    }
+    h+='<div class="modal-actions">';
+    if(!e.acknowledged)h+='<button class="btn-ack" onclick="ackAlarm('+e.id+')">✅ 确认此报警</button>';
+    h+='<button class="btn-close-modal" onclick="closeAlarmModal()">关闭</button>';
+    h+='</div></div></div>';
+    document.body.insertAdjacentHTML('beforeend',h);
+  }catch(e2){console.warn('Alarm detail err:',e2)}
+}
+
+function closeAlarmModal(){
+  var m=document.getElementById('alarmModal');if(m)m.remove();
+}
+
+async function ackAlarm(id){
+  try{
+    var r=await fetch('/api/alarms/'+id+'/ack',{method:'POST'});
+    var res=await r.json();
+    if(res.ok){showToast('success','报警已确认');loadAlarmList();loadAlarmSummary()}
+    else showToast('error','确认失败')
+  }catch(e){showToast('error','确认失败: '+e.message)}
+}
+
+// 初始加载报警数据
+loadAlarmSummary();loadAlarmList(1);
+setInterval(function(){loadAlarmSummary()},10000);
 
 console.log('[SmartMonitor] Block3: 业务模块初始化完成');
 </script>

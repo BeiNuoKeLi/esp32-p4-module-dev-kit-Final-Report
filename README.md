@@ -87,13 +87,15 @@ ESP32-CAM ─HTTP:/capture─→ camera_http_fetch.c ─UDP:8082─→ Docker (c
 - **`sensors.c/h`**：DHT11 / DS18B20 / MQ-135 / 光敏 / 蜂鸣器 / LED / 继电器 驱动
 - **`oled_ssd1306.c/h`**：SSD1306 I2C 驱动，Page Addressing 逐页刷新
 - **`udp_sender.c/h`**：JSON 组包 + UDP Socket 发送 (snprintf, lwip/sockets.h)，带 ENOMEM 退避重试
-- **`camera_http_fetch.c/h`**：HTTP 拉取 ESP32-CAM JPEG → 0xAA55 协议 UDP 分包转发
+- **`camera_http_fetch.c/h`**：HTTP 拉取 ESP32-CAM JPEG → 0xAA55 协议 UDP 分包转发（已修复 HTTP 超时/EOF 边界错误）
 - **`smart_monitor_main.c`**：主入口，Wi-Fi STA + 8 个 FreeRTOS 任务创建（LED/继电器集成在 buzzer 任务中）
 - **`pc_receiver.py`**：Windows 上位机 UDP 接收脚本 (监听 8080, CSV 日志)
-- **`camera_display_receiver.py`**：摄像头图像流 UDP 接收 + JPEG 解码 + OpenCV 显示
+- **`camera_display_receiver.py`**：~~摄像头图像流 UDP 接收 + JPEG 解码 + OpenCV 显示~~ **已弃用**，由 Docker `camera_server.py` 替代
+- **`camera_capture_sender.py`**：~~USB 摄像头采集 + UDP 发送~~ **已弃用**，由 `CameraWebServer/` (ESP32-CAM) + `camera_http_fetch.c` 替代
 - **`smart_monitor_sim_gui.py`**：综合工具体 v3.0 — 仿真控制 (Tab 1) + 仓储管理 (Tab 2)，摄像头预览以独立 Toplevel 窗口显示
 - **`warehouse_db.py`**：SQLite 数据库模块 (inventory 库存表 + check_log 操作日志)
 - **`generate_qr_labels.py`**：二维码标签批量生成工具 (8 种与传感器匹配的危化品)
+- **`CameraWebServer/`**：ESP32-CAM Arduino 相机服务端源码（OV2640 QVGA JPEG 采集）
 
 ## 通信
 
@@ -116,10 +118,11 @@ docker-compose up -d
 **Web 仪表盘功能**：
 - 实时传感器数据卡片（温湿度、MQ-135、光敏）
 - 分级报警状态徽章（L0~L3），L3 紧急时页面红色闪烁
+- **报警历史系统**：事件列表/详情/统计/确认，去重窗口 30s，级别变化即时触发
 - 历史数据折线图（温度/湿度趋势）
-- 摄像头 MJPEG 实时流预览
+- 摄像头 MJPEG 实时流预览 + **视频流开关**（暂停/恢复 UDP 接收）
 - 仓储管理（二维码扫码入库/出库）
-- SQLite 数据持久化
+- SQLite 数据持久化（aiosqlite 异步引擎）
 
 ### 传感器数据 (ESP32 → PC)
 
@@ -140,7 +143,8 @@ D:\Anaconda3\envs\ForAgents\python.exe pc_receiver.py
 
 | 参数 | 值 |
 |------|-----|
-| 摄像头模块 | ESP32-CAM (Arduino CameraWebServer) |
+| 摄像头模块 | ESP32-CAM (OV2640, QVGA 320×240, quality=10) |
+| CAM 源码 | `CameraWebServer/` (Arduino 工程) |
 | 采集方式 | ESP32-P4 通过 HTTP GET `/capture` 拉取 JPEG |
 | 转发协议 | UDP 分包 (Magic 0xAA55, 4096 字节/包) |
 | 端口 | 8082 UDP |
@@ -152,9 +156,9 @@ D:\Anaconda3\envs\ForAgents\python.exe pc_receiver.py
 D:\Anaconda3\envs\ForAgents\python.exe f:/CodeProject/iiot_Experiment_2/code/SmartMonitor/camera_display_receiver.py
 ```
 
-> ESP32-CAM 端需先烧录 Arduino CameraWebServer 示例，P4 侧通过 Kconfig 配置其 IP。
+> ESP32-CAM 端需先烧录 `CameraWebServer/` Arduino 工程，P4 侧通过 Kconfig 配置其 IP。
 >
-> **备选方案**：也可用本地 USB 摄像头 (KYT-U400) + `camera_capture_sender.py` 直连 PC，详见 `CAMERA_DEBUG_LOG.md`。
+> **备选方案**：也可用本地 USB 摄像头 (KYT-U400) + `camera_capture_sender.py` 直连 PC，详见 `CAMERA_DEBUG_LOG.md`（此方案已弃用，推荐 Docker `camera_server.py` 统一接收）。
 
 ### 仓储管理 (二维码扫码)
 

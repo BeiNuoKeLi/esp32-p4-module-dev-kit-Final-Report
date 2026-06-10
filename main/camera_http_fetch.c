@@ -132,7 +132,7 @@ void camera_http_fetch_task(void *arg)
     esp_http_client_config_t http_cfg = {
         .url      = CAM_URL,
         .method   = HTTP_METHOD_GET,
-        .timeout_ms = 5000,
+        .timeout_ms = 10000,
     };
 
     uint16_t frame_id = 0;
@@ -160,7 +160,7 @@ void camera_http_fetch_task(void *arg)
         int content_length = esp_http_client_fetch_headers(client);
         int status = esp_http_client_get_status_code(client);
 
-        if (status != 200) {
+        if (status != 200 || content_length <= 0) {
             ESP_LOGW(TAG, "HTTP %d, Content-Length=%d", status, content_length);
             esp_http_client_close(client);
             esp_http_client_cleanup(client);
@@ -181,6 +181,8 @@ void camera_http_fetch_task(void *arg)
 
         if (read_len < 0) {
             ESP_LOGW(TAG, "HTTP read 错误: errno=%d (已读 %d 字节)", errno, total_read);
+        } else if (read_len == 0 && total_read > 0) {
+            ESP_LOGI(TAG, "HTTP read 完成 (%d 字节)", total_read);
         }
 
         esp_http_client_close(client);

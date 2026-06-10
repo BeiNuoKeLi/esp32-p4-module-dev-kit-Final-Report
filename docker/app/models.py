@@ -4,7 +4,7 @@
 参考: pc_receiver.py JSON 报文格式 v2.0
 """
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List
 
 
 class SensorData(BaseModel):
@@ -120,3 +120,50 @@ class CheckLogRecord(BaseModel):
     env_temp: float = 0
     env_humi: float = 0
     env_level: int = 0
+
+
+# ─── 报警事件模型 ──────────────────────────────────────────
+
+class AlarmEvent(BaseModel):
+    """单条报警事件记录"""
+    id: int
+    ts: str
+    level: int                      # 1=预警, 2=严重, 3=紧急
+    reason: str = ""
+    dht11_t: Optional[float] = None
+    dht11_h: Optional[float] = None
+    ds18b20_t: Optional[float] = None
+    mq135_v: Optional[float] = None
+    mq135_do: Optional[int] = None
+    light_v: Optional[float] = None
+    photo_do: Optional[int] = None
+    has_snapshot: bool = False      # 是否有现场照片
+    acknowledged: int = 0           # 0=未确认, 1=已确认
+
+
+class AlarmListResponse(BaseModel):
+    """报警历史分页响应"""
+    total: int
+    page: int
+    page_size: int
+    items: list[AlarmEvent]
+
+
+class AlarmDetailResponse(BaseModel):
+    """报警详情（含快照 JPEG）"""
+    event: AlarmEvent
+    snapshot_b64: Optional[str] = None   # base64 编码的 JPEG
+
+
+class AlarmSummary(BaseModel):
+    """报警概要（用于仪表盘角标）"""
+    total_count: int = 0
+    unacknowledged: int = 0
+    latest_level: int = 0
+    latest_reason: str = ""
+
+
+class StreamStatus(BaseModel):
+    """摄像头流控状态"""
+    enabled: bool
+    online: bool

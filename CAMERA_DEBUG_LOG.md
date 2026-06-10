@@ -1,8 +1,20 @@
 # 摄像头调试记忆 & 当前状态
 
-> 最后更新: 2026-06-07 19:50
+> 最后更新: 2026-06-10
 > 硬件: KYT-U400 工业 USB UVC 摄像头 / ESP32-CAM (OV2640)
 > 操作系统: Windows 11, Python 3.x (D:\Anaconda3\envs\ForAgents)
+
+---
+
+## ⚠️ 架构变更通知 (2026-06-10)
+
+> **`camera_capture_sender.py` 和 `camera_display_receiver.py` 已被 Docker `camera_server.py` 替代，标记为弃用。**
+> 
+> 当前推荐架构：
+> ```
+> ESP32-CAM (CameraWebServer/) → HTTP → ESP32-P4 (camera_http_fetch.c) → UDP → Docker camera_server.py → MJPEG / Scan API
+> ```
+> 旧架构（PC USB 摄像头直连）仅供调试参考，详见下方历史记录。
 
 ---
 

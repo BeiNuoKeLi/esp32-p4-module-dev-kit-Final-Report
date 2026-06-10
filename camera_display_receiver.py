@@ -1,5 +1,17 @@
 #!/usr/bin/env python3
 """
+⚠️ 已弃用 (DEPRECATED) — 请勿使用 ⚠️
+
+本模块原先用于配合 camera_capture_sender.py 在 PC 端接收并显示摄像头画面。
+当前视频流已改为浏览器端 MJPEG 直接显示（GET /api/camera/mjpeg），
+不再需要本模块。
+
+本文件仅保留作为历史参考，不再参与系统运行。
+"""
+
+# ====== 以下为原始代码（已弃用） ======
+"""
+原始文档:
 UDP 图片接收 + OpenCV 实时显示端
 
 功能：

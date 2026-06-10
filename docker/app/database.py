@@ -72,6 +72,34 @@ async def init_db():
                 env_level INTEGER DEFAULT 0
             )
         """)
+        # 报警事件表（含快照 JPEG BLOB）
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS alarm_events (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts           TEXT NOT NULL,
+                level        INTEGER NOT NULL,
+                reason       TEXT DEFAULT '',
+                dht11_t      REAL,
+                dht11_h      REAL,
+                ds18b20_t    REAL,
+                mq135_v      REAL,
+                mq135_do     INTEGER DEFAULT -1,
+                light_v      REAL,
+                photo_do     INTEGER DEFAULT -1,
+                snapshot     BLOB DEFAULT NULL,
+                acknowledged INTEGER DEFAULT 0
+            )
+        """)
+        # ── 数据库迁移：为旧 alarm_events 表补充缺失列 ──
+        for col, col_def in [
+            ("ts", "TEXT NOT NULL DEFAULT ''"),
+            ("snapshot", "BLOB DEFAULT NULL"),
+            ("acknowledged", "INTEGER DEFAULT 0"),
+        ]:
+            try:
+                await db.execute(f"ALTER TABLE alarm_events ADD COLUMN {col} {col_def}")
+            except Exception:
+                pass  # 列已存在
         await db.commit()
 
 
@@ -279,3 +307,124 @@ async def get_latest_env_snapshot() -> dict | None:
             "humi": r.get("dht11_h"),
             "level": r.get("level", 0),
         }
+
+
+# ==================== 报警事件操作 ====================
+
+async def insert_alarm_event(
+    level: int, reason: str = "",
+    dht11_t: float | None = None, dht11_h: float | None = None,
+    ds18b20_t: float | None = None, mq135_v: float | None = None,
+    mq135_do: int | None = None, light_v: float | None = None,
+    photo_do: int | None = None, snapshot: bytes | None = None
+) -> int:
+    """插入一条报警事件记录（含快照），返回 id"""
+    _ensure_dir()
+    now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute("""
+            INSERT INTO alarm_events (ts, level, reason, dht11_t, dht11_h, ds18b20_t,
+                                       mq135_v, mq135_do, light_v, photo_do, snapshot)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (now, level, reason, dht11_t, dht11_h, ds18b20_t,
+              mq135_v, mq135_do, light_v, photo_do, snapshot))
+        await db.commit()
+        return cursor.lastrowid
+
+
+async def get_alarm_events(page: int = 1, page_size: int = 20,
+                           level_filter: int | None = None) -> tuple[list[dict], int]:
+    """分页查询报警事件，可选按 level 筛选。返回 (items, total)"""
+    _ensure_dir()
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+
+        if level_filter is not None and level_filter > 0:
+            count_cursor = await db.execute(
+                "SELECT COUNT(*) as cnt FROM alarm_events WHERE level = ?",
+                (level_filter,)
+            )
+            total = (await count_cursor.fetchone())["cnt"]
+            offset = (page - 1) * page_size
+            cursor = await db.execute(
+                "SELECT id, ts, level, reason, dht11_t, dht11_h, ds18b20_t, "
+                "mq135_v, mq135_do, light_v, photo_do, "
+                "CASE WHEN snapshot IS NOT NULL THEN 1 ELSE 0 END as has_snapshot, "
+                "acknowledged "
+                "FROM alarm_events WHERE level = ? "
+                "ORDER BY id DESC LIMIT ? OFFSET ?",
+                (level_filter, page_size, offset)
+            )
+        else:
+            count_cursor = await db.execute("SELECT COUNT(*) as cnt FROM alarm_events")
+            total = (await count_cursor.fetchone())["cnt"]
+            offset = (page - 1) * page_size
+            cursor = await db.execute(
+                "SELECT id, ts, level, reason, dht11_t, dht11_h, ds18b20_t, "
+                "mq135_v, mq135_do, light_v, photo_do, "
+                "CASE WHEN snapshot IS NOT NULL THEN 1 ELSE 0 END as has_snapshot, "
+                "acknowledged "
+                "FROM alarm_events ORDER BY id DESC LIMIT ? OFFSET ?",
+                (page_size, offset)
+            )
+        rows = await cursor.fetchall()
+        return [dict(r) for r in rows], total
+
+
+async def get_alarm_event_detail(alarm_id: int) -> dict | None:
+    """获取单条报警事件详情（含快照 JPEG）"""
+    _ensure_dir()
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            "SELECT * FROM alarm_events WHERE id = ?", (alarm_id,)
+        )
+        row = await cursor.fetchone()
+        if row is None:
+            return None
+        r = dict(row)
+        # 将 snapshot BLOB 转为 base64
+        import base64
+        if r.get("snapshot"):
+            r["snapshot_b64"] = base64.b64encode(r["snapshot"]).decode("ascii")
+        else:
+            r["snapshot_b64"] = None
+        r.pop("snapshot", None)
+        r["has_snapshot"] = bool(r.get("snapshot_b64"))
+        return r
+
+
+async def get_alarm_summary() -> dict:
+    """获取报警概要：总数、未确认数、最新级别"""
+    _ensure_dir()
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute("SELECT COUNT(*) as cnt FROM alarm_events")
+        total = (await cursor.fetchone())["cnt"]
+        cursor = await db.execute(
+            "SELECT COUNT(*) as cnt FROM alarm_events WHERE acknowledged = 0"
+        )
+        unack = (await cursor.fetchone())["cnt"]
+        cursor = await db.execute(
+            "SELECT level, reason, ts FROM alarm_events ORDER BY id DESC LIMIT 1"
+        )
+        latest = await cursor.fetchone()
+        return {
+            "total_count": total,
+            "unacknowledged": unack,
+            "latest_level": latest["level"] if latest else 0,
+            "latest_reason": latest["reason"] if latest else "",
+        }
+
+
+async def acknowledge_alarm(alarm_id: int) -> bool:
+    """确认一条报警"""
+    _ensure_dir()
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            "UPDATE alarm_events SET acknowledged = 1 WHERE id = ?", (alarm_id,)
+        )
+        await db.commit()
+        return cursor.rowcount > 0

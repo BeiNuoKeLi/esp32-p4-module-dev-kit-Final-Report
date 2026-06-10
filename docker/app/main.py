@@ -11,12 +11,19 @@ SmartMonitor Web 仪表盘 — FastAPI 入口
   GET   /api/warehouse/log        出入库流水
   GET   /api/camera/mjpeg         摄像头 MJPEG 实时流
   GET   /api/camera/snapshot      摄像头最新帧 JPEG
+  GET   /api/camera/stream        查询视频流开关状态
+  POST  /api/camera/stream        切换视频流开关
   POST  /api/camera/scan          摄像头帧二维码扫码
+  GET   /api/alarms               报警历史分页列表
+  GET   /api/alarms/summary       报警概要统计
+  GET   /api/alarms/{id}          报警详情（含快照）
+  POST  /api/alarms/{id}/ack      确认报警
   WS    /ws                       WebSocket 实时推送
   GET   /                         仪表盘 HTML 页面
 """
 import json
 import asyncio
+import time as _time
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query
 from fastapi.staticfiles import StaticFiles
@@ -31,7 +38,45 @@ from .models import (
     SensorData, SensorRecord, StatusResponse, InventoryItem,
     CheckinRequest, CheckoutRequest, ScanResult,
     WarehouseResponse, CheckLogRecord,
+    AlarmEvent, AlarmListResponse, AlarmDetailResponse, AlarmSummary, StreamStatus,
 )
+
+
+# ==================== 报警去重状态 ====================
+_last_alarm_level: int = 0          # 上次触发的报警级别
+_last_alarm_time: float = 0.0       # 上次触发的时间戳
+DEDUP_WINDOW: float = 30.0          # 去重窗口（秒）
+
+
+async def _maybe_record_alarm(record: dict):
+    """
+    检查去重规则，决定是否写入 alarm_events。
+    规则:
+      - level > 0 且 (级别变化 或 距上次同级别超过 30s) → 写入
+      - level = 0 → 不写入
+    """
+    global _last_alarm_level, _last_alarm_time
+    level = record.get("level", 0)
+    now = _time.time()
+
+    if level > 0 and (level != _last_alarm_level or now - _last_alarm_time > DEDUP_WINDOW):
+        # 获取当前摄像头帧作为现场快照
+        snapshot = cam.latest_jpeg or cam.placeholder_jpeg
+        await database.insert_alarm_event(
+            level=level,
+            reason=record.get("reason", ""),
+            dht11_t=record.get("dht11_t"),
+            dht11_h=record.get("dht11_h"),
+            ds18b20_t=record.get("ds18b20_t"),
+            mq135_v=record.get("mq135_v"),
+            mq135_do=record.get("mq135_do"),
+            light_v=record.get("light_v"),
+            photo_do=record.get("photo_do"),
+            snapshot=snapshot,
+        )
+        _last_alarm_level = level
+        _last_alarm_time = now
+        print(f"[Alarm] 报警事件已记录 | level={level} | reason={record.get('reason', '')[:60]}")
 
 
 # ==================== 全局实例 ====================
@@ -122,6 +167,9 @@ async def post_sensors(data: SensorData):
 
     # ── Step 2: 写入数据库 ──
     row_id = await database.insert_sensor_data(record)
+
+    # ── Step 2.5: 报警去重检测 ──
+    asyncio.create_task(_maybe_record_alarm(record))
 
     # ── Step 3: 构造广播消息 ──
     import datetime
@@ -311,7 +359,70 @@ async def camera_status():
         "fps": round(cam.fps, 1),
         "total_frames": cam.total_frames,
         "running": cam.running,
+        "stream_enabled": cam.stream_enabled,
+        "chunks_received": cam.chunk_count,
+        "frames_timeout": cam.timeout_count,
     }
+
+
+@app.get("/api/camera/stream", response_model=StreamStatus)
+async def camera_stream_get():
+    """查询视频流开关状态"""
+    return StreamStatus(enabled=cam.stream_enabled, online=cam.online)
+
+
+@app.post("/api/camera/stream", response_model=StreamStatus)
+async def camera_stream_toggle():
+    """切换视频流开关（同时暂停/恢复 UDP 接收以节省流量）"""
+    cam.stream_enabled = not cam.stream_enabled
+    if cam.stream_enabled:
+        cam.resume()
+    else:
+        cam.pause()
+    print(f"[Camera] 视频流已{'开启' if cam.stream_enabled else '关闭'}")
+    return StreamStatus(enabled=cam.stream_enabled, online=cam.online)
+
+
+# ==================== HTTP API — 报警历史 ====================
+
+@app.get("/api/alarms/summary", response_model=AlarmSummary)
+async def alarm_summary():
+    """获取报警概要统计"""
+    s = await database.get_alarm_summary()
+    return AlarmSummary(**s)
+
+
+@app.get("/api/alarms", response_model=AlarmListResponse)
+async def alarm_list(page: int = Query(default=1, ge=1),
+                     page_size: int = Query(default=20, ge=1, le=100),
+                     level: int = Query(default=0, ge=0, le=3)):
+    """分页查询报警历史，可选按 level 筛选（0=全部）"""
+    filter_lv = level if level > 0 else None
+    items_raw, total = await database.get_alarm_events(page, page_size, filter_lv)
+    return AlarmListResponse(
+        total=total, page=page, page_size=page_size,
+        items=[AlarmEvent(**it) for it in items_raw]
+    )
+
+
+@app.get("/api/alarms/{alarm_id}", response_model=AlarmDetailResponse)
+async def alarm_detail(alarm_id: int):
+    """获取单条报警详情（含 base64 编码的现场快照）"""
+    detail = await database.get_alarm_event_detail(alarm_id)
+    if detail is None:
+        return AlarmDetailResponse(event=None, snapshot_b64=None)
+    # 分离快照和事件字段
+    snapshot_b64 = detail.pop("snapshot_b64", None)
+    has = detail.pop("has_snapshot", False)
+    event = AlarmEvent(**detail)
+    return AlarmDetailResponse(event=event, snapshot_b64=snapshot_b64)
+
+
+@app.post("/api/alarms/{alarm_id}/ack")
+async def alarm_ack(alarm_id: int):
+    """确认一条报警"""
+    ok = await database.acknowledge_alarm(alarm_id)
+    return {"ok": ok, "id": alarm_id}
 
 
 # ==================== WebSocket ====================

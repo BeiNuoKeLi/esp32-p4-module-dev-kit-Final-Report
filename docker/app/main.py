@@ -301,6 +301,12 @@ async def camera_mjpeg():
     return StreamingResponse(
         cam.mjpeg_stream(),
         media_type="multipart/x-mixed-replace; boundary=--frameboundary",
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+            "Expires": "0",
+            "X-Accel-Buffering": "no",       # 禁用 nginx 缓冲
+        },
     )
 
 
@@ -308,7 +314,15 @@ async def camera_mjpeg():
 async def camera_snapshot():
     """返回最新一帧 JPEG bytes 或占位图"""
     jpeg_data = cam.latest_jpeg or cam.placeholder_jpeg
-    return Response(content=jpeg_data, media_type="image/jpeg")
+    return Response(
+        content=jpeg_data,
+        media_type="image/jpeg",
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+            "Expires": "0",
+        },
+    )
 
 
 @app.post("/api/camera/scan", response_model=ScanResult)
@@ -328,6 +342,9 @@ async def camera_scan():
         from pyzbar.pyzbar import decode as pyzbar_decode
         import cv2
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        # ★ CLAHE 局部直方图均衡 → 增强二维码边缘对比度，抵消 JPEG 压缩模糊
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+        gray = clahe.apply(gray)
         results = pyzbar_decode(gray)
 
         for r in results:
@@ -354,6 +371,9 @@ async def camera_scan():
 async def camera_status():
     """返回摄像头连接状态信息"""
     return {
+        "mode": cam_module.CAMERA_MODE,
+        "stream_url": cam_module.ESP32_CAM_STREAM_URL if cam_module.CAMERA_MODE == "http" else None,
+        "capture_url": cam_module.ESP32_CAM_URL if cam_module.CAMERA_MODE == "http" else None,
         "online": cam.online,
         "cv2_ok": cam.cv2_ok,
         "fps": round(cam.fps, 1),

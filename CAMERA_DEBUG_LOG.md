@@ -1,20 +1,26 @@
 # 摄像头调试记忆 & 当前状态
 
-> 最后更新: 2026-06-10
+> 最后更新: 2026-06-11
 > 硬件: KYT-U400 工业 USB UVC 摄像头 / ESP32-CAM (OV2640)
 > 操作系统: Windows 11, Python 3.x (D:\Anaconda3\envs\ForAgents)
 
 ---
 
-## ⚠️ 架构变更通知 (2026-06-10)
+## ⚠️ 架构变更通知 (2026-06-11)
 
 > **`camera_capture_sender.py` 和 `camera_display_receiver.py` 已被 Docker `camera_server.py` 替代，标记为弃用。**
 > 
-> 当前推荐架构：
+> **当前推荐架构 (v3.2, Docker 直连模式)**：
 > ```
-> ESP32-CAM (CameraWebServer/) → HTTP → ESP32-P4 (camera_http_fetch.c) → UDP → Docker camera_server.py → MJPEG / Scan API
+> ESP32-CAM (HVGA 480×320, CameraWebServer) → HTTP/TCP → Docker camera_server.py → MJPEG / Canvas / Scan API
+>                       ↑ TCP 零丢包，无分片，延迟更低
 > ```
-> 旧架构（PC USB 摄像头直连）仅供调试参考，详见下方历史记录。
+> 
+> **旧架构 (P4 UDP 中继，已弃用，默认关闭)**：
+> ```
+> ESP32-CAM → HTTP → ESP32-P4 (camera_http_fetch.c) → UDP → Docker camera_server.py
+> ```
+> 通过 `CONFIG_CAMERA_HTTP_ENABLED=y` 在 Kconfig 中恢复。
 
 ---
 
@@ -196,7 +202,10 @@ D:\Anaconda3\envs\ForAgents\python.exe f:/CodeProject/iiot_Experiment_2/code/Sma
 
 ---
 
-## ESP32-P4 中继模式 (2026-06-07)
+## ESP32-P4 中继模式 (已弃用, 保留历史参考)
+
+> ⚠️ **此模式已弃用**。当前推荐 Docker 直连 ESP32-CAM (`CAMERA_MODE=http`)，TCP 协议保证帧完整性。
+> 如需恢复旧方案，在 `idf.py menuconfig` → `Example Configuration` 中设置 `CONFIG_CAMERA_HTTP_ENABLED=y`。
 
 当 PC USB 摄像头不可用或需要远程监控时，ESP32-P4 可通过 HTTP 从局域网内的 **ESP32-CAM** 拉取 JPEG 并 UDP 转发到 PC：
 
@@ -210,15 +219,17 @@ ESP32-CAM (OV2640) ──HTTP GET /capture──→ ESP32-P4 ──UDP :8082─�
 
 | 配置项 | 默认值 | 说明 |
 |--------|--------|------|
-| `CAMERA_HTTP_ENABLED` | y | 启用/禁用中继任务 |
+| `CAMERA_HTTP_ENABLED` | **n (默认关闭)** | 启用/禁用中继任务 (当前架构下不再需要) |
 | `CAMERA_HTTP_ESP32CAM_URL` | `http://10.16.234.23/capture` | ESP32-CAM 地址 |
 | `CAMERA_HTTP_UDP_IP` | `10.16.234.215` | PC 端 IP |
-| `CAMERA_HTTP_FPS` | 3 | 拉图帧率 (1-10) |
+| `CAMERA_HTTP_FPS` | **10** | 拉图帧率 (1-10) |
 
 ### 实现文件
 
-- `main/camera_http_fetch.c/h` — FreeRTOS 任务: HTTP GET → JPEG 缓冲 → 0xAA55 分包 → sendto
-- 协议与 `camera_protocol.py` 完全兼容, PC 端用同一个 `camera_display_receiver.py` 即可
+- `main/camera_http_fetch.c/h` — FreeRTOS 任务: HTTP GET → JPEG 缓冲 → 0xAA55 分包 → sendto (已优化 keep-alive 长连接、客户端复用、优雅重连)
+- 协议与 `camera_protocol.py` 完全兼容, PC 端用同一个接收器即可
+
+> **架构升级** (2026-06-11)：已实现 Docker 直连模式 (`CAMERA_MODE=http`, 环境变量 `ESP32_CAM_URL`)，无需经过 P4 UDP 中继，TCP 协议保证零丢包。
 
 ### 已验证结果
 

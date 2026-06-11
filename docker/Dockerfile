@@ -19,7 +19,9 @@ WORKDIR /app
 COPY requirements.txt .
 
 # 3. 为 pip install 添加清华大学镜像源（-i 参数），让第三方 Python 库下载变快
-RUN pip install --no-cache-dir -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
+#    opencv-python-headless 约 60MB，需增加超时防止下载断开
+RUN pip install --no-cache-dir --default-timeout=120 --retries 3 \
+    -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 
 COPY app/ ./app/
 

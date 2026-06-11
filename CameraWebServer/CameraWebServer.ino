@@ -18,7 +18,7 @@ void setupLedFlash();
 
 void setup() {
   Serial.begin(115200);
-  Serial.setDebugOutput(true);
+  Serial.setDebugOutput(false);  // 关闭WiFi调试输出，节省CPU
   Serial.println();
 
   camera_config_t config;
@@ -41,32 +41,26 @@ void setup() {
   config.pin_pwdn = PWDN_GPIO_NUM;
   config.pin_reset = RESET_GPIO_NUM;
   config.xclk_freq_hz = 20000000;
-  config.frame_size = FRAMESIZE_UXGA;
   config.pixel_format = PIXFORMAT_JPEG;  // for streaming
   //config.pixel_format = PIXFORMAT_RGB565; // for face detection/recognition
-  config.grab_mode = CAMERA_GRAB_WHEN_EMPTY;
   config.fb_location = CAMERA_FB_IN_PSRAM;
-  config.jpeg_quality = 12;
-  config.fb_count = 1;
 
-  // if PSRAM IC present, init with UXGA resolution and higher JPEG quality
-  //                      for larger pre-allocated frame buffer.
-  if (config.pixel_format == PIXFORMAT_JPEG) {
-    if (psramFound()) {
-      config.jpeg_quality = 10;
-      config.fb_count = 2;
-      config.grab_mode = CAMERA_GRAB_LATEST;
-    } else {
-      // Limit the frame size when PSRAM is not available
-      config.frame_size = FRAMESIZE_SVGA;
-      config.fb_location = CAMERA_FB_IN_DRAM;
-    }
+  // ★ QVGA 320x240: 延迟最低, 够二维码/条码识别
+  // ★ fb_count=2: 连续 I2S DMA 模式，esp_camera_fb_get() 直接从队列取帧
+  // ★ jpeg_quality=12: ESP32-CAM 默认画质，二维码/条码识别必需清晰边界
+  //    (QVGA@q12 ≈ 15-25KB, WiFi 传输 <50ms; q35 虽小但块状伪影导致识别失败)
+  if (psramFound()) {
+    config.frame_size = FRAMESIZE_HVGA;    // 320x240 → 延迟最低
+    config.jpeg_quality = 12;              // 默认画质，识别更可靠
+    config.fb_count = 2;                   // ★ 双缓冲: 连续DMA，帧立即可取
+    config.grab_mode = CAMERA_GRAB_LATEST; // 始终取最新帧
   } else {
-    // Best option for face detection/recognition
-    config.frame_size = FRAMESIZE_240X240;
-#if CONFIG_IDF_TARGET_ESP32S3
-    config.fb_count = 2;
-#endif
+    // 无 PSRAM 时降至最低分辨率 + 单缓冲
+    config.frame_size = FRAMESIZE_QQVGA;
+    config.jpeg_quality = 40;
+    config.fb_count = 1;
+    config.grab_mode = CAMERA_GRAB_WHEN_EMPTY;
+    config.fb_location = CAMERA_FB_IN_DRAM;
   }
 
 #if defined(CAMERA_MODEL_ESP_EYE)
@@ -82,15 +76,11 @@ void setup() {
   }
 
   sensor_t *s = esp_camera_sensor_get();
-  // initial sensors are flipped vertically and colors are a bit saturated
+  // OV3660 传感器特殊处理
   if (s->id.PID == OV3660_PID) {
     s->set_vflip(s, 1);        // flip it back
     s->set_brightness(s, 1);   // up the brightness just a bit
     s->set_saturation(s, -2);  // lower the saturation
-  }
-  // drop down frame size for higher initial frame rate
-  if (config.pixel_format == PIXFORMAT_JPEG) {
-    s->set_framesize(s, FRAMESIZE_QVGA);
   }
 
 #if defined(CAMERA_MODEL_M5STACK_WIDE) || defined(CAMERA_MODEL_M5STACK_ESP32CAM)
@@ -102,7 +92,6 @@ void setup() {
   s->set_vflip(s, 1);
 #endif
 
-// Setup LED FLash if LED pin is defined in camera_pins.h
 #if defined(LED_GPIO_NUM)
   setupLedFlash();
 #endif

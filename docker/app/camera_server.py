@@ -1,41 +1,52 @@
 """
-摄像头服务 — UDP 8082 接收 + JPEG 分片重组 + MJPEG HTTP 流
+摄像头服务 — MJPEG HTTP 流输出
 
-实际摄像头数据流:
-  ESP32-CAM (AI-Thinker, CameraWebServer.ino)
-    → HTTP GET http://10.16.234.23/capture (QVGA JPEG, quality=10)
-    → ESP32-P4 (camera_http_fetch.c, FreeRTOS Task, 3 fps)
-    → UDP :8082 (0xAA55 协议分片, 每包 4096B payload)
-    → Docker camera_server.py 后台线程直收（不经过 udp_to_web.py）
+支持两种数据源模式 (环境变量 CAMERA_MODE):
+  http (默认, 推荐): Docker 直接 HTTP GET ESP32-CAM /capture → 零丢包
+      ESP32-CAM ──HTTP/TCP──► Docker camera_server.py
+      绕过 P4 UDP 中继，TCP 保证完整送达，无分片/丢包问题
 
-已弃用方案（camera_capture_sender.py / camera_display_receiver.py）:
-  PC USB UVC 摄像头 → wasm_camera_capture_sender.py → UDP :8082
+  udp (备选): ESP32-P4 UDP 中继转发 (旧方案)
+      ESP32-CAM → ESP32-P4 → UDP :8082 → Docker camera_server.py
+
+环境变量:
+  CAMERA_MODE         = http | udp (默认 http)
+  ESP32_CAM_URL       = http://10.16.234.23/capture (HTTP 模式)
+  CAMERA_HTTP_FPS     = 5  (HTTP 拉流帧率, 默认 5)
 
 提供接口:
-  1. GET /api/camera/mjpeg   — multipart/x-mixed-replace 实时视频流（支持 stream_enabled 开关）
-  2. GET /api/camera/snapshot — 返回最新一帧 JPEG bytes (用于扫码 / 报警拍照)
+  1. GET /api/camera/mjpeg   — multipart/x-mixed-replace 实时视频流
+  2. GET /api/camera/snapshot — 最新一帧 JPEG bytes
 
 降级策略:
   - 若容器内无 OpenCV → 自动进入 offline 模式，MJPEG 返回黑色占位图
-  - UDP 无数据到达时 → MJPEG 保持最后一帧，snapshot 返回空
+  - 无数据到达时 → MJPEG 保持最后一帧，snapshot 返回空
 """
 import os
 import socket
 import threading
 import time
+import urllib.request
 from collections import OrderedDict
 from typing import Optional
+
+CAMERA_MODE = os.getenv("CAMERA_MODE", "http")
+ESP32_CAM_URL = os.getenv("ESP32_CAM_URL", "http://10.16.234.23/capture")
+# MJPEG 流地址: CameraWebServer 在 port 81 提供 /stream 端点
+ESP32_CAM_STREAM_URL = os.getenv("ESP32_CAM_STREAM_URL", "http://10.16.234.23:81/stream")
+CAMERA_HTTP_FPS_LIMIT = int(os.getenv("CAMERA_HTTP_FPS", "3"))  # 仅 /capture 轮询模式使用
 
 # 项目内协议模块 (camera_protocol.py 在 docker/app/ 同目录)
 from . import camera_protocol as proto
 
 CAMERA_PORT = 8082
 CAMERA_BUF_SIZE = 65536
-SOCK_TIMEOUT = 0.002       # socket recv 超时 (ms)
-FRAME_TIMEOUT = 5.0        # 帧重组超时 (s)，P4 HTTP 拉图最高 3.9s
-MAX_FRAME_CACHE = 6        # 最大缓存帧数（需 > 并发帧数，3fps×1s超时≈3帧，留余量）
-MJPEG_FPS_LIMIT = 10       # MJPEG 生成器最大 FPS
-JPEG_QUALITY = 85          # 编码质量 (仅占位图使用)
+SOCK_TIMEOUT = 0.002
+FRAME_TIMEOUT = 3.0
+FRAME_STALE_MS = 0.35
+MAX_FRAME_CACHE = 5
+MJPEG_FPS_LIMIT = 10
+JPEG_QUALITY = 85
 
 
 class CameraServer:
@@ -62,6 +73,10 @@ class CameraServer:
         self._latest_jpeg: Optional[bytes] = None
         self._latest_frame = None          # numpy BGR array (需要 cv2)
         self._frame_lock = threading.Lock()
+
+        # MJPEG 输出帧同步 — 解决浏览器缓冲导致 7s 延迟
+        self._mjpeg_new_frame = threading.Event()
+        self._mjpeg_frame_seq = 0
 
         # 统计
         self.total_frames = 0
@@ -177,14 +192,45 @@ class CameraServer:
 
     # ─── 生命周期 ──────────────────────────────────────────
 
+    def _try_set_jpeg(self, jpeg_data: bytes) -> bool:
+        """尝试设置 JPEG 帧。成功返回 True，失败时仍保存原始字节供浏览器尝试渲染。"""
+        ok = False
+        if self.cv2_ok:
+            import numpy as np
+            arr = np.frombuffer(jpeg_data, dtype=np.uint8)
+            frame = self._cv2.imdecode(arr, self._cv2.IMREAD_COLOR)
+            if frame is not None:
+                self.latest_frame = frame
+                self.latest_jpeg = jpeg_data
+                ok = True
+            else:
+                # OpenCV 解码失败（残缺JPEG），但仍保存原始字节
+                self.latest_jpeg = jpeg_data
+        else:
+            # 无 cv2 时直接信任 JPEG bytes
+            self.latest_jpeg = jpeg_data
+            ok = True
+
+        # ★ 关键修复: 只要收到了新的 JPEG 数据就通知，不再依赖 OpenCV 解码结果
+        # 旧逻辑 (if ok or self.latest_frame is None) 在 OpenCV 解码失败时不会触发 Event，
+        # 导致 MJPEG 输出端收不到通知 → 帧丢失 → 浏览器显示全黑
+        self._mjpeg_frame_seq += 1
+        self._mjpeg_new_frame.set()
+        return ok
+
     def start(self):
-        """启动后台 UDP 接收线程"""
+        """启动后台接收线程（根据 CAMERA_MODE 选择 MJPEG流 / UDP 中继）"""
         if self.running:
             return
         self.running = True
-        self.thread = threading.Thread(target=self._recv_loop, daemon=True, name="CameraUDP")
-        self.thread.start()
-        print(f"[Camera] ✅ UDP 监听线程已启动 :{CAMERA_PORT}")
+        if CAMERA_MODE == "udp":
+            self.thread = threading.Thread(target=self._recv_loop, daemon=True, name="CameraUDP")
+            self.thread.start()
+            print(f"[Camera] ✅ UDP 中继模式 监听 :{CAMERA_PORT}")
+        else:
+            self.thread = threading.Thread(target=self._mjpeg_stream_loop, daemon=True, name="CameraMJPEG")
+            self.thread.start()
+            print(f"[Camera] ✅ MJPEG 流模式 → {ESP32_CAM_STREAM_URL}")
 
     def stop(self):
         """停止接收线程并释放资源"""
@@ -201,14 +247,256 @@ class CameraServer:
         print("[Camera] 已停止")
 
     def pause(self):
-        """暂停 UDP 接收（关闭视频流时节省带宽和 CPU）"""
+        """暂停接收（关闭视频流时节省带宽和 CPU）"""
         self.paused = True
-        print("[Camera] ⏸️ UDP 接收已暂停")
+        print("[Camera] ⏸️ 接收已暂停")
 
     def resume(self):
-        """恢复 UDP 接收"""
+        """恢复接收"""
         self.paused = False
-        print("[Camera] ▶️ UDP 接收已恢复")
+        print("[Camera] ▶️ 接收已恢复")
+
+    # ─── MJPEG 流拉取 (后台线程, 推荐) ──────────────────────
+
+    def _mjpeg_stream_loop(self):
+        """连接 ESP32-CAM /stream 端点，持续解析 MJPEG 帧
+
+        数据流:
+          ESP32-CAM :81/stream → multipart/x-mixed-replace → 提取 JPEG → frame_cache
+
+        CameraWebServer 的 /stream 端口是 HTTP + 1 = 81 (见 app_httpd.cpp)
+        边界分隔符固定: --123456789000000000000987654321
+        """
+        import http.client
+
+        # 解析 stream URL 的 host 和路径
+        stream_url = ESP32_CAM_STREAM_URL
+        # e.g. http://10.16.234.23:81/stream → host="10.16.234.23:81"
+        if stream_url.startswith("http://"):
+            url_no_scheme = stream_url[7:]
+        elif stream_url.startswith("https://"):
+            url_no_scheme = stream_url[8:]
+        else:
+            url_no_scheme = stream_url
+        if "/" in url_no_scheme:
+            host, path = url_no_scheme.split("/", 1)
+            path = "/" + path
+        else:
+            host, path = url_no_scheme, "/"
+
+        reconnect_delay = 1.0  # 初始重连间隔
+
+        while self.running:
+            if self.paused:
+                time.sleep(0.5)
+                continue
+
+            conn = None
+            try:
+                print(f"[Camera] 🔌 连接 MJPEG 流 → {stream_url}")
+                t_connect = time.time()
+
+                if ":" in host:
+                    h, p = host.split(":", 1)
+                    conn = http.client.HTTPConnection(h, int(p), timeout=10)
+                else:
+                    conn = http.client.HTTPConnection(host, 80, timeout=10)
+
+                conn.request("GET", path, headers={
+                    "User-Agent": "SmartMonitor/3.0",
+                    "Accept": "multipart/x-mixed-replace",
+                })
+                # ★ 关闭 Nagle 算法：MJPEG 流场景下不让 TCP 等待凑满 MSS 再发送，
+                #    每个 JPEG 帧产出后立即 push 到网络，减少数十 ms 的累积延迟
+                try:
+                    conn.sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+                except Exception:
+                    pass
+                resp = conn.getresponse()
+
+                if resp.status != 200:
+                    body = resp.read(512)
+                    print(f"[Camera] ❌ MJPEG 流 {resp.status}: {body[:200]}")
+                    conn.close()
+                    time.sleep(reconnect_delay)
+                    reconnect_delay = min(reconnect_delay * 1.5, 15)
+                    continue
+
+                # 解析 Content-Type 获取 boundary
+                content_type = resp.getheader("Content-Type", "")
+                boundary = None
+                if "boundary=" in content_type:
+                    boundary = content_type.split("boundary=")[1].strip()
+                    # 去引号
+                    if boundary.startswith('"') and boundary.endswith('"'):
+                        boundary = boundary[1:-1]
+                if not boundary:
+                    # CameraWebServer 固定边界值
+                    boundary = "123456789000000000000987654321"
+
+                boundary_bytes = f"--{boundary}".encode()
+                boundary_end_bytes = f"--{boundary}--".encode()
+
+                print(f"[Camera] ✅ MJPEG 流已连接 | boundary={boundary} | 耗时{time.time()-t_connect:.1f}s")
+                reconnect_delay = 1.0  # 连接成功重置退避
+
+                # 读取流式数据并解析帧
+                buffer = b""
+                while self.running and not self.paused:
+                    chunk = resp.read(8192)
+                    if not chunk:
+                        print("[Camera] ⚠️ MJPEG 流断开 (EOF)")
+                        break
+                    buffer += chunk
+
+                    # 在 buffer 中查找完整的帧 (两个 boundary 之间)
+                    while True:
+                        # 找下一个 boundary
+                        idx = buffer.find(boundary_bytes)
+                        if idx < 0:
+                            break
+
+                        # 找 boundary 后面的 \r\n (跳过 header)
+                        header_start = idx + len(boundary_bytes)
+                        if header_start + 2 > len(buffer):
+                            break  # 数据不完整, 等下个 chunk
+
+                        # 检查是否是结束 boundary (--boundary--)
+                        if buffer[idx:idx + len(boundary_end_bytes)] == boundary_end_bytes:
+                            buffer = buffer[idx + len(boundary_end_bytes):]
+                            print("[Camera] ⚠️ MJPEG 流结束 (收到结束标记)")
+                            break
+
+                        # body 在 \r\n\r\n 之后
+                        body_start = buffer.find(b"\r\n\r\n", header_start)
+                        if body_start < 0:
+                            # 缓冲区不够看完整 header
+                            if len(buffer) > 131072:  # >128KB 还没找到 header 结束, 丢弃
+                                print("[Camera] ⚠️ 缓冲区溢出, 丢弃")
+                                buffer = b""
+                            break
+
+                        body_start += 4  # 跳过 \r\n\r\n
+
+                        # 找下一个 boundary 确定 body 结束位置
+                        next_boundary = buffer.find(boundary_bytes, body_start)
+                        if next_boundary < 0:
+                            # 还没收到下一个 boundary, 等下个 chunk
+                            if len(buffer) > 524288:  # >512KB 还没下个帧, 丢弃
+                                print("[Camera] ⚠️ 超大缓冲区, 丢弃")
+                                buffer = b""
+                            break
+
+                        # 提取 JPEG 帧
+                        jpeg_data = buffer[body_start:next_boundary]
+                        # 去除末尾可能的 \r\n
+                        jpeg_data = jpeg_data.rstrip(b"\r\n")
+
+                        if jpeg_data and len(jpeg_data) > 500:
+                            t0 = time.time()
+                            self._try_set_jpeg(jpeg_data)
+                            self.total_frames += 1
+                            self.fps_history.append(t0)
+                            if len(self.fps_history) > 30:
+                                self.fps_history.pop(0)
+
+                        # 移动 buffer 指针到下一个 boundary
+                        buffer = buffer[next_boundary:]
+
+                    # 周期诊断
+                    tnow = time.time()
+                    if tnow - self._last_debug_ts > 15:
+                        rate = self.fps
+                        print(f"[Camera] 📊 MJPEG流 | fps={rate:.1f} | 总帧={self.total_frames}")
+                        self._last_debug_ts = tnow
+
+            except (http.client.HTTPException, ConnectionError,
+                    TimeoutError, OSError) as e:
+                print(f"[Camera] ❌ MJPEG 连接异常: {e}")
+            except Exception as e:
+                print(f"[Camera] ❌ MJPEG 未知异常: {e}")
+            finally:
+                if conn:
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
+
+            if self.running:
+                print(f"[Camera] 🔄 {reconnect_delay:.0f}s 后重连...")
+                time.sleep(reconnect_delay)
+                reconnect_delay = min(reconnect_delay * 1.5, 15)
+
+    # ─── HTTP 逐帧拉流 (旧方案, 保留) ───────────────────────
+
+    def _http_fetch_loop(self):
+        """[旧] HTTP GET /capture 逐帧轮询 (已被 MJPEG 流替代)"""
+        import urllib.error
+        interval = 1.0 / CAMERA_HTTP_FPS_LIMIT
+        self._consecutive_errors = 0
+
+        while self.running:
+            if self.paused:
+                time.sleep(0.1)
+                continue
+
+            t0 = time.time()
+            if self._consecutive_errors > 3:
+                backoff = min(self._consecutive_errors * 0.5, 5.0)
+                time.sleep(backoff)
+                t0 = time.time()
+
+            jpeg_data = None
+            resp = None
+            try:
+                req = urllib.request.Request(ESP32_CAM_URL)
+                req.add_header("User-Agent", "SmartMonitor/3.0")
+                req.add_header("Connection", "close")
+                resp = urllib.request.urlopen(req, timeout=8)
+                status = resp.getcode()
+
+                if status == 200:
+                    jpeg_data = resp.read()
+                    if jpeg_data and len(jpeg_data) > 500:
+                        self._try_set_jpeg(jpeg_data)
+                        self.total_frames += 1
+                        self.fps_history.append(t0)
+                        if len(self.fps_history) > 30:
+                            self.fps_history.pop(0)
+                        self._consecutive_errors = 0
+                    else:
+                        self._consecutive_errors += 1
+                elif status == 418:
+                    self._consecutive_errors += 1
+                else:
+                    print(f"[Camera] HTTP ⚠️ 状态码 {status}")
+                    self._consecutive_errors += 1
+            except urllib.error.URLError as e:
+                print(f"[Camera] HTTP ❌ 连接失败: {e.reason}")
+                self._consecutive_errors += 1
+            except (TimeoutError, OSError) as e:
+                print(f"[Camera] HTTP ❌ 超时/IO: {e}")
+                self._consecutive_errors += 1
+            except Exception as e:
+                print(f"[Camera] HTTP ❌ 异常: {e}")
+                self._consecutive_errors += 1
+            finally:
+                if resp is not None:
+                    try:
+                        resp.close()
+                    except Exception:
+                        pass
+
+            elapsed = time.time() - t0
+            sleep_for = interval - elapsed
+            if sleep_for > 0:
+                time.sleep(sleep_for)
+
+            tnow = time.time()
+            if tnow - self._last_debug_ts > 15:
+                rate = self.fps
+                print(f"[Camera] 📊 HTTP逐帧 | fps={rate:.1f} | 总帧={self.total_frames}")
+                self._last_debug_ts = tnow
 
     # ─── UDP 接收主循环 (后台线程) ─────────────────────────
 
@@ -268,11 +556,13 @@ class CameraServer:
                     "total": total_chunks,
                     "received": set(),
                     "start_time": time.time(),
+                    "last_chunk_time": time.time(),
                 }
             cache = self.frame_cache[frame_id]
             if chunk_idx not in cache["received"]:
                 cache["chunks"][chunk_idx] = jpeg_chunk
                 cache["received"].add(chunk_idx)
+                cache["last_chunk_time"] = time.time()
 
             # 收集完整帧
             completed_fids = [
@@ -282,21 +572,12 @@ class CameraServer:
             for fid in completed_fids:
                 cache_entry = self.frame_cache.pop(fid)
                 jpeg_data = b"".join(cache_entry["chunks"])
-                self.latest_jpeg = jpeg_data
-
-                # 解码为 numpy array (需要 cv2)
-                if self.cv2_ok:
-                    import numpy as np
-                    arr = np.frombuffer(jpeg_data, dtype=np.uint8)
-                    frame = self._cv2.imdecode(arr, self._cv2.IMREAD_COLOR)
-                    if frame is not None:
-                        self.latest_frame = frame
-
-                self.total_frames += 1
-                now = time.time()
-                self.fps_history.append(now)
-                if len(self.fps_history) > 30:
-                    self.fps_history.pop(0)
+                if self._try_set_jpeg(jpeg_data):
+                    self.total_frames += 1
+                    now = time.time()
+                    self.fps_history.append(now)
+                    if len(self.fps_history) > 30:
+                        self.fps_history.pop(0)
 
             # 清理超时未完成的帧
             tnow = time.time()
@@ -306,8 +587,38 @@ class CameraServer:
             ]
             for fid in stale:
                 c = self.frame_cache.pop(fid)
-                self.timeout_count += 1
-                print(f"[Camera] ⚠️ 帧 {fid} 超时丢弃 | 已收 {len(c['received'])}/{c['total']} 分片")
+                received = len(c["received"])
+                total = c["total"]
+                # 收到 >= 半数分片时尝试残缺解码
+                if received > total // 2:
+                    partial = b"".join(c["chunks"])
+                    ok = self._try_set_jpeg(partial)
+                    self.total_frames += 1
+                    self.fps_history.append(tnow)
+                    if len(self.fps_history) > 30:
+                        self.fps_history.pop(0)
+                    print(f"[Camera] 🔧 帧 {fid} 超时渲染 | 已收 {received}/{total} 分片 | {'✅完整' if ok else '⚠️残缺→浏览器容错'}")
+                else:
+                    self.timeout_count += 1
+                    print(f"[Camera] ⚠️ 帧 {fid} 超时丢弃 | 已收 {received}/{total} 分片")
+
+            # 提前渲染：无新分片超过 FRAME_STALE_MS 且收到足够的包
+            early_render = [
+                fid for fid, fc in self.frame_cache.items()
+                if tnow - fc["last_chunk_time"] > FRAME_STALE_MS
+                and len(fc["received"]) > fc["total"] // 2
+            ]
+            for fid in early_render:
+                c = self.frame_cache.pop(fid)
+                received = len(c["received"])
+                total = c["total"]
+                partial = b"".join(c["chunks"])
+                ok = self._try_set_jpeg(partial)
+                self.total_frames += 1
+                self.fps_history.append(tnow)
+                if len(self.fps_history) > 30:
+                    self.fps_history.pop(0)
+                print(f"[Camera] ⚡ 帧 {fid} 提前渲染 | 已收 {received}/{total} 分片 | {'✅完整' if ok else '⚠️残缺→浏览器容错'}")
 
             # 周期输出诊断信息（每 15 秒）
             if tnow - self._last_debug_ts > 15:
@@ -342,29 +653,40 @@ class CameraServer:
         """
         FastAPI StreamingResponse 用的生成器。
         产出 multipart/x-mixed-replace 格式数据块。
-        当 stream_enabled=False 时只输出占位图。
+
+        关键优化: 使用 Event 驱动，只在有新帧到达时才发送，
+        避免重复帧堆积在浏览器缓冲区造成 7s+ 延迟。
+        若超过 15 秒无新帧则发送最后一帧保活连接（不再发送占位黑图）。
         """
         boundary = "--frameboundary"
-        interval = 1.0 / MJPEG_FPS_LIMIT
+        last_seq = -1
+        keepalive_interval = 2.0   # 无新帧时保活间隔（使用最后一帧），快速感知连接断开
 
         while self.running:
-            t0 = time.time()
+            # 等待新帧到达
+            self._mjpeg_new_frame.wait(timeout=keepalive_interval)
+            self._mjpeg_new_frame.clear()
+
+            current_seq = self._mjpeg_frame_seq
+
             if self.stream_enabled:
-                jpeg_data = self.latest_jpeg or self.placeholder_jpeg
+                if current_seq != last_seq:
+                    jpeg_data = self.latest_jpeg or self.placeholder_jpeg
+                    last_seq = current_seq
+                else:
+                    # 超时无新帧，重发最后一帧保活（非黑屏）
+                    jpeg_data = self.latest_jpeg or self.placeholder_jpeg
             else:
                 jpeg_data = self.placeholder_jpeg
+
             yield (
                 f"{boundary}\r\n"
                 f"Content-Type: image/jpeg\r\n"
                 f"Content-Length: {len(jpeg_data)}\r\n"
+                f"Cache-Control: no-store, no-cache, max-age=0\r\n"
+                f"Pragma: no-cache\r\n"
                 f"\r\n"
             ).encode("ascii") + jpeg_data + b"\r\n"
-
-            # 帧率限速
-            elapsed = time.time() - t0
-            sleep_time = interval - elapsed
-            if sleep_time > 0:
-                time.sleep(sleep_time)
 
 
 # ─── 模块级单例 ─────────────────────────────────────────────

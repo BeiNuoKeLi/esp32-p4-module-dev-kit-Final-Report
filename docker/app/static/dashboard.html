@@ -245,11 +245,9 @@ th{color:var(--text-dim);font-weight:600;white-space:nowrap}
     <!-- Camera Panel -->
     <div class="card cam-panel">
       <h3>🎥 摄像头实时画面</h3>
-      <div class="cam-viewport">
-        <img id="camImg" src="" alt="Camera"
-             onerror="this.style.display='none';document.getElementById('camPlaceholder').style.display='flex'"
-             onload="this.style.display='block';document.getElementById('camPlaceholder').style.display='none'">
-        <div id="camPlaceholder" style="display:none;position:absolute;inset:0;background:#0a0f14;align-items:center;justify-content:center;color:var(--text-dim);font-size:.85rem;gap:8px;">📷 摄像头离线 / 未连接</div>
+      <div class="cam-viewport" id="camViewport">
+        <canvas id="camCanvas" style="display:none;width:100%;height:100%"></canvas>
+        <div id="camPlaceholder" style="display:flex;position:absolute;inset:0;background:#0a0f14;align-items:center;justify-content:center;color:var(--text-dim);font-size:.85rem;gap:8px;">📷 摄像头连接中...</div>
         <div class="cam-overlay-info">
           <span class="cam-chip offline-dot" id="camChipStatus">OFFLINE</span>
           <span class="cam-chip" id="camChipFps">FPS: 0.0</span>
@@ -537,10 +535,45 @@ function renderInventory(items){
 }
 setInterval(async function(){try{var r=await fetch('/api/inventory');if(r.ok)renderInventory(await r.json())}catch(e){}},10000);
 
-// ===== 摄像头模块 =====
+// ===== 摄像头模块 (Canvas 快照轮询, 消除 Chrome MJPEG 缓冲延迟) =====
+var _camPollTimer=null,_camPollInterval=200,_camLastW=0,_camLastH=0,_camPolling=false;
 function startCam(){
-  var img=document.getElementById('camImg');img.src='/api/camera/mjpeg?'+Date.now();
+  if(_camPolling)return;_camPolling=true;  // 防止重复启动
+  updateCamSnapshot();
   pollCam();setInterval(pollCam,3000);
+}
+function updateCamSnapshot(){
+  fetch('/api/camera/snapshot?'+Date.now(),{cache:'no-store'})
+    .then(function(r){if(!r.ok)throw new Error('status '+r.status);return r.blob()})
+    .then(function(blob){
+      var canvas=document.getElementById('camCanvas');
+      var vp=document.getElementById('camViewport');
+      var ctx=canvas.getContext('2d');
+      var w=vp.clientWidth,h=vp.clientHeight;
+      if(w!==_camLastW||h!==_camLastH){canvas.width=w;canvas.height=h;_camLastW=w;_camLastH=h}
+      var img=new Image(),_objUrl=URL.createObjectURL(blob);
+      img.onload=function(){
+        URL.revokeObjectURL(_objUrl);  // ★ 释放 Blob URL 防止内存泄漏
+        ctx.fillStyle='#000';ctx.fillRect(0,0,canvas.width,canvas.height);
+        var scale=Math.min(canvas.width/img.width,canvas.height/img.height);
+        var dw=img.width*scale,dh=img.height*scale;
+        var dx=(canvas.width-dw)/2,dy=(canvas.height-dh)/2;
+        ctx.drawImage(img,dx,dy,dw,dh);
+        canvas.style.display='block';
+        document.getElementById('camPlaceholder').style.display='none';
+      };
+      img.onerror=function(){
+        URL.revokeObjectURL(_objUrl);  // ★ 错误时也要释放
+        throw new Error('decode');
+      };
+      img.src=_objUrl;
+    }).catch(function(e){
+      console.warn('[Cam] snapshot fail:',e.message||e);
+      document.getElementById('camCanvas').style.display='none';
+      document.getElementById('camPlaceholder').style.display='flex';
+    }).finally(function(){
+      if(_camPolling)_camPollTimer=setTimeout(updateCamSnapshot,_camPollInterval);
+    });
 }
 async function pollCam(){
   try{
@@ -551,6 +584,9 @@ async function pollCam(){
     document.getElementById('camChipFps').textContent='FPS: '+s.fps;
     document.getElementById('camFrameCount').textContent=s.total_frames||0;
     document.getElementById('camConnText').textContent=s.running?'运行中':'已停止';
+    // 同步视频流开关状态
+    document.getElementById('camToggle').checked=s.stream_enabled;
+    document.getElementById('camToggleLabel').textContent=s.stream_enabled?'视频流':'已暂停';
     document.getElementById('btnScan').disabled=!(s.online&&whMode!==null);
   }catch(e){}
 }

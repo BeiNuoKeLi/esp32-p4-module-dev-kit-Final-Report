@@ -15,11 +15,10 @@ menu "Example Configuration"
 
     config CAMERA_HTTP_ENABLED
         bool "Enable HTTP Camera Fetch (ESP32-CAM relay)"
-        default y
+        default n
         help
-            Fetch JPEG images from an ESP32-CAM via HTTP (/capture endpoint)
-            and forward them to the PC via UDP (port 8082).
-            Disable if no ESP32-CAM is available on the LAN.
+            [已弃用] 当前架构下 Docker 直连 ESP32-CAM HTTP 拉流，不再需要 P4 UDP 中继。
+            如需恢复旧方案 (P4 中继转发)，开启此项。
 
     config CAMERA_HTTP_ESP32CAM_URL
         string "ESP32-CAM HTTP Capture URL"
@@ -38,7 +37,7 @@ menu "Example Configuration"
     config CAMERA_HTTP_FPS
         int "Camera Fetch Rate (FPS)"
         range 1 10
-        default 3
+        default 10
         help
             Target frame fetch rate from ESP32-CAM.
             Lower values reduce bandwidth. ESP32-CAM typically 3-5 fps.

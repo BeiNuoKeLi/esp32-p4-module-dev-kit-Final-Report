@@ -39,37 +39,95 @@ idf.py build flash monitor
 
 ## 软件架构
 
-```
-4 × 传感器任务 (prio 3) ──→ sensor_shared_t ←── OLED 显示任务 (prio 2)
-                                  ↓                   Buzzer 报警任务 (prio 2)
-                            g_sensor_mutex            LED 控制 + 继电器控制 (集成在 Buzzer 任务)
-                                  ↓                   UDP 发送任务 (prio 2, Core 1)
-                         udp_sender.c → 10.16.234.215:8080
-                                  ↓
-                         pc_receiver.py (Windows 上位机)
+### 整体架构
 
-ESP32-CAM ──HTTP──→ camera_http_fetch.c ──UDP:8082──→ camera_display_receiver.py
-                           (prio 1)                    (Windows 上位机)
-
-smart_monitor_sim_gui.py (综合工具体 v3.0)
-    ├── Tab 1: 仿真测试 (UDP 8081 → ESP32)
-    └── Tab 2: 仓储管理 (UDP 8082 摄像头 → pyzbar 扫码 → SQLite 入库/出库)
-         ├── warehouse_db.py (SQLite CRUD)
-         └── generate_qr_labels.py (二维码标签生成)
 ```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                      ESP32-P4 边缘监测终端                              │
+│  ┌───────────────────────────────────────────────────────────────────┐  │
+│  │  DHT11  DS18B20  MQ-135  光敏  ──→  FreeRTOS 多任务               │  │
+│  │                                               ↓                   │  │
+│  │                                   ┌───────────────────────┐       │  │
+│  │                                   │   OLED 本地显示        │       │  │
+│  │                                   │   声光报警 (Buzzer/LED)│       │  │
+│  │                                   │   继电器控制           │       │  │
+│  │                                   └───────────┬───────────┘       │  │
+│  │                                               ↓                   │  │
+│  │              UDP:8080 ──→ Docker 内置监听器 (SensorUDPProtocol)    │  │
+│  └───────────────────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────────────────┐
+│                      Docker Web 仪表盘 (v3.4)                          │
+│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────────┐    │
+│  │   FastAPI       │  │   AIOSQLite     │  │   WebSocket         │    │
+│  │   REST API      │  │   数据持久化    │  │   实时推送          │    │
+│  └────────┬────────┘  └────────┬────────┘  └──────────┬──────────┘    │
+│           │                   │                      │                 │
+│           ↓                   ↓                      ↓                 │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │               Chart.js 前端仪表盘                               │   │
+│  │   传感器卡片 + 报警状态 + 历史曲线 + 摄像头流 + 仓储管理         │   │
+│  └─────────────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+### 摄像头数据流
+
+```
+ESP32-CAM ──HTTP/TCP──► Docker (camera_server.py)  ← 当前主模式 (零丢包)
+  │                                                    ↓
+  │   HVGA 480×320, JPEG quality=12             MJPEG 流 + Canvas 快照轮询
+  │   CameraWebServer.ino 提供 /capture + /stream      ↓
+  │                                              Web 仪表盘实时显示
+  └── [已弃用] ESP32-P4 UDP 中继 (camera_http_fetch.c)
+          ESP32-CAM → HTTP GET → P4 → UDP:8082 → Docker
+```
+
+### 模块说明
 
 - **`sensors.c/h`**：DHT11 / DS18B20 / MQ-135 / 光敏 / 蜂鸣器 / LED / 继电器 驱动
 - **`oled_ssd1306.c/h`**：SSD1306 I2C 驱动，Page Addressing 逐页刷新
 - **`udp_sender.c/h`**：JSON 组包 + UDP Socket 发送 (snprintf, lwip/sockets.h)，带 ENOMEM 退避重试
-- **`camera_http_fetch.c/h`**：HTTP 拉取 ESP32-CAM JPEG → 0xAA55 协议 UDP 分包转发
+- **`camera_http_fetch.c/h`**：[已弃用] HTTP 拉取 ESP32-CAM JPEG → 0xAA55 协议 UDP 分包转发（当前架构下 Docker 直连 ESP32-CAM，不再需要 P4 中继；默认关闭，通过 `CONFIG_CAMERA_HTTP_ENABLED` 恢复）
 - **`smart_monitor_main.c`**：主入口，Wi-Fi STA + 8 个 FreeRTOS 任务创建（LED/继电器集成在 buzzer 任务中）
 - **`pc_receiver.py`**：Windows 上位机 UDP 接收脚本 (监听 8080, CSV 日志)
-- **`camera_display_receiver.py`**：摄像头图像流 UDP 接收 + JPEG 解码 + OpenCV 显示
+- **`camera_display_receiver.py`**：~~摄像头图像流 UDP 接收 + JPEG 解码 + OpenCV 显示~~ **已弃用**，由 Docker `camera_server.py` 替代
+- **`camera_capture_sender.py`**：~~USB 摄像头采集 + UDP 发送~~ **已弃用**，由 `CameraWebServer/` (ESP32-CAM) + `camera_http_fetch.c` 替代
 - **`smart_monitor_sim_gui.py`**：综合工具体 v3.0 — 仿真控制 (Tab 1) + 仓储管理 (Tab 2)，摄像头预览以独立 Toplevel 窗口显示
 - **`warehouse_db.py`**：SQLite 数据库模块 (inventory 库存表 + check_log 操作日志)
-- **`generate_qr_labels.py`**：二维码标签批量生成工具 (8 种与传感器匹配的危化品)
+- **`generate_qr_labels.py`**：二维码标签批量生成工具 (6 种与传感器匹配的化肥)
+- **`CameraWebServer/`**：ESP32-CAM Arduino 相机服务端源码（OV2640 QVGA JPEG 采集）
 
 ## 通信
+
+### Web 仪表盘 (v3.4)
+
+项目已支持 **Docker 容器化部署**，提供 Web 可视化仪表盘：
+
+```bash
+# 启动方式
+cd docker
+docker-compose up -d
+```
+
+| 服务 | 地址 | 说明 |
+|------|------|------|
+| Web 仪表盘 | http://localhost:8000 | Chart.js 实时数据图表 |
+| API 文档 | http://localhost:8000/docs | FastAPI 交互式文档 |
+| WebSocket | ws://localhost:8000/ws | 实时数据推送 |
+
+**Web 仪表盘功能**：
+- 实时传感器数据卡片（温湿度、MQ-135、光敏）
+- 分级报警状态徽章（L0~L3），L3 紧急时页面红色闪烁
+- **报警历史系统**：事件列表/详情/统计/确认，去重窗口 30s，级别变化即时触发
+- 历史数据折线图（温度/湿度趋势）
+- 摄像头 MJPEG 实时流预览 + **视频流开关**（关闭即切黑屏节省带宽，开启恢复拉流）
+- 仓储管理（二维码扫码入库/出库 + 手动新增 + 库存分类统计 + 流水清空）
+- **仿真注入面板**：前端一键注入 L1/L2/L3 预设报警或自定义传感器数值
+- **报警管理**：一键清空全部报警记录（DELETE /api/alarms）
+- **内置 UDP 监听器**：Docker 服务直接监听 :8080，无需外部 udp_to_web.py 桥接脚本
+- SQLite 数据持久化（aiosqlite 异步引擎）
 
 ### 传感器数据 (ESP32 → PC)
 
@@ -79,32 +137,34 @@ smart_monitor_sim_gui.py (综合工具体 v3.0)
 | 上位机 IP | 10.16.234.215 |
 | 端口 | 8080 UDP |
 | 间隔 | 每 2 秒 |
-| 格式 | JSON (10 字段: ts, dht11_t/h, ds18b20_t, mq135_v, light_v, alert, err, reason, fan, led) |
+| 格式 | JSON (12 字段: ts, dht11_t/h, ds18b20_t, mq135_v, light_raw, mq135_do, photo_do, level, alert, err, reason) |
 
 ```bash
 # 启动上位机接收端
 D:\Anaconda3\envs\ForAgents\python.exe pc_receiver.py
 ```
 
-### 摄像头图像流 (ESP32-CAM → ESP32-P4 → PC)
+### 摄像头图像流
+
+#### 主模式：Docker 直连 ESP32-CAM (推荐)
 
 | 参数 | 值 |
 |------|-----|
-| 摄像头模块 | ESP32-CAM (Arduino CameraWebServer) |
-| 采集方式 | ESP32-P4 通过 HTTP GET `/capture` 拉取 JPEG |
+| 摄像头模块 | ESP32-CAM (OV2640, **HVGA 480×320**, quality=12) |
+| CAM 源码 | `CameraWebServer/` (Arduino 工程，提供 `/capture` + `/stream`) |
+| 采集方式 | Docker `camera_server.py` 直接 HTTP GET `/capture` 拉取 JPEG (TCP 零丢包) |
+| 环境变量 | `CAMERA_MODE=http`, `ESP32_CAM_URL`, `CAMERA_HTTP_FPS` |
+| 默认帧率 | 5 fps |
+| 前端显示 | Canvas 快照轮询 (替代 MJPEG `<img>`，消除 Chrome 缓冲延迟) |
+
+#### 备选模式：ESP32-P4 UDP 中继 (已弃用，默认关闭)
+
+| 参数 | 值 |
+|------|-----|
+| 采集方式 | ESP32-P4 通过 HTTP GET `/capture` 拉取 JPEG，UDP 分包转发到 Docker |
 | 转发协议 | UDP 分包 (Magic 0xAA55, 4096 字节/包) |
 | 端口 | 8082 UDP |
-| 帧率 | 3 fps (可配置 1-10) |
-| 配置项 | `CONFIG_CAMERA_HTTP_FPS` / `CONFIG_CAMERA_HTTP_ESP32CAM_URL` |
-
-```bash
-# 启动接收端 (先开)
-D:\Anaconda3\envs\ForAgents\python.exe f:/CodeProject/iiot_Experiment_2/code/SmartMonitor/camera_display_receiver.py
-```
-
-> ESP32-CAM 端需先烧录 Arduino CameraWebServer 示例，P4 侧通过 Kconfig 配置其 IP。
->
-> **备选方案**：也可用本地 USB 摄像头 (KYT-U400) + `camera_capture_sender.py` 直连 PC，详见 `CAMERA_DEBUG_LOG.md`。
+| 配置项 | `CONFIG_CAMERA_HTTP_ENABLED=y` / `CONFIG_CAMERA_HTTP_FPS` |
 
 ### 仓储管理 (二维码扫码)
 
@@ -119,7 +179,7 @@ D:\Anaconda3\envs\ForAgents\python.exe smart_monitor_sim_gui.py
 | 文件 | 说明 |
 |------|------|
 | `warehouse_db.py` | SQLite 数据库 (inventory + check_log 表) |
-| `generate_qr_labels.py` | 生成 8 种危化品二维码标签到 `qr_labels/` |
+| `generate_qr_labels.py` | 生成 6 种化肥二维码标签到 `qr_labels/` |
 | `smart_monitor_sim_gui.py` Tab 2 | 摄像头拉流 → pyzbar 扫码 → 入库/出库 → TreeView 表格
 | 摄像头预览 | 点击顶部「打开摄像头预览」按钮，独立窗口 640×480+ 展示画面
 
@@ -136,5 +196,6 @@ D:\Anaconda3\envs\ForAgents\python.exe smart_monitor_sim_gui.py
 - DS18B20 12 位精度 0.0625°C，转换时间 ≥ 750ms
 - OLED I2C 需 4.7KΩ 上拉电阻，已启用内部上拉
 - ESP-Hosted SDIO Wi-Fi 初始化需约 13s，任务启动后通过 `esp_netif_is_netif_up()` 轮询等待（最多 20s）
-- Camera HTTP 拉图与 Sensor UDP 共用 lwIP pbuf 池，已实现 ENOMEM(errno=12) 退避重试 + 每包 5ms 微延迟防止资源争抢
+- Camera HTTP 拉图与 Sensor UDP 共用 lwIP pbuf 池，已实现 ENOMEM(errno=12) 退避重试 + 1 tick 微延迟防止资源争抢
 - Camera UDP 端口 8082 与 Sensor 数据端口 8080 隔离
+- Docker 直连模式 (CAMERA_MODE=http) 绕过 P4 UDP 中继，TCP 协议保证帧完整性，无分片/丢包问题

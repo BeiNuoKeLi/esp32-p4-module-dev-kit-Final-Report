@@ -1,11 +1,11 @@
 /**
  * @file camera_http_fetch.h
- * @brief HTTP 拉取 ESP32-CAM JPEG → UDP 分包转发到 PC
+ * @brief [已弃用] HTTP 拉取 ESP32-CAM JPEG → UDP 分包转发到 PC
  *
- * 方案: ESP32-CAM (Arduino CameraWebServer) 已部署在局域网, 提供 HTTP /capture
- *       P4 通过 esp_http_client 拉取 JPEG, 再以 0xAA55 协议分包通过 UDP 发给 PC
+ * 当前架构: Docker 直连 ESP32-CAM HTTP 拉流 (零丢包, TCP 保证完整)
+ *   数据流: ESP32-CAM (/capture) ──HTTP/TCP──► Docker camera_server.py
  *
- * 数据流:
+ * 旧方案 (由 CONFIG_CAMERA_HTTP_ENABLED 控制, 默认关闭):
  *   ESP32-CAM (http://ip/capture) → HTTP GET → P4 → UDP(8082) → PC
  *
  * 协议: 复用 camera_protocol.py 的 0xAA55 分包协议

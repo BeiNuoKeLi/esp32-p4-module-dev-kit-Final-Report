@@ -1,0 +1,1390 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SmartMonitor 仪表盘</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+@import url('https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css');
+
+:root {
+  --bg: #0f1923; --card: #1a2733;
+  --text: #e0e8f0; --text-dim: #8899aa;
+  --border: #2a3a4a; --border-light: #334455;
+  --accent: #00bcd4;
+  --green: #4caf50; --yellow: #ffc107; --orange: #ff9800; --red: #f44336;
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+body { font-family:'Segoe UI',system-ui,sans-serif; background:var(--bg); color:var(--text); min-height:100vh; }
+body.l3-flash{animation:flash-bg .8s infinite}
+@keyframes flash-bg{0%,100%{background:var(--bg)} 50%{background:#3a1010}}
+
+header{
+  background:linear-gradient(135deg,var(card) 0%,#162230 100%);
+  border-bottom:1px solid var(--border); padding:16px 32px;
+  display:flex; align-items:center; justify-content:space-between;
+  position:sticky; top:0; z-index:100; box-shadow:0 2px 12px rgba(0,0,0,.3);
+}
+header h1{font-size:1.35rem;font-weight:600} header h1 span{color:var(--accent)}
+
+.alert-badge{
+  display:flex;align-items:center;gap:10px;padding:8px 18px;border-radius:24px;
+  font-weight:700;font-size:.95rem;background:var(--border);color:var(--text-dim);
+  transition:all .3s ease;border:1px solid transparent
+}
+.alert-badge.level-0{background:rgba(76,175,80,.15);color:var(--green);border-color:rgba(76,175,80,.3)}
+.alert-badge.level-1{background:rgba(255,193,7,.15);color:var(--yellow);border-color:rgba(255,193,7,.3)}
+.alert-badge.level-2{background:rgba(255,152,0,.15);color:var(--orange);border-color:rgba(255,152,0,.3)}
+.alert-badge.level-3{background:rgba(244,67,54,.2);color:var(--red);border-color:rgba(244,67,54,.4);animation:pulse-badge .6s infinite}
+@keyframes pulse-badge{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.7;transform:scale(1.02)}}
+.alert-reason{font-size:.82rem;color:var(--text-dim)}
+
+main{padding:24px 32px;display:grid;gap:20px}
+.g4{display:grid;grid-template-columns:repeat(4,1fr);gap:16px}
+.g2{display:grid;grid-template-columns:repeat(2,1fr);gap:16px}
+
+.card{
+  background:linear-gradient(145deg,var(card) 0%,rgba(26,39,51,.8)100%);
+  border:1px solid var(--border);border-radius:12px;padding:20px;
+  transition:border-color .25s,box-shadow .25s;position:relative;overflow:hidden
+}
+.card::before{
+  content:'';position:absolute;top:0;left:0;right:0;height:2px;
+  background:linear-gradient(90deg,transparent,var(--accent),transparent);opacity:0;transition:opacity .3s
+}
+.card:hover{border-color:var(--border-light)} card:hover::before{opacity:1}
+.card h3{font-size:.85rem;color:var(--text-dim);text-transform:uppercase;letter-spacing:.8px;margin-bottom:14px;display:flex;align-items:center;gap:8px}
+
+.sensor-card{text-align:center;padding:18px 12px;position:relative;overflow:hidden}
+.sensor-card .value{font-size:2rem;font-weight:700;font-variant-numeric:tabular-nums;line-height:1.2}
+.sensor-card .unit{font-size:.85rem;color:var(--text-dim);margin-left:2px}
+.sensor-card .label{font-size:.78rem;color:var(--text-dim);margin-top:8px;text-transform:uppercase;letter-spacing:.5px}
+.do-tag{display:inline-block;font-size:.65rem;font-weight:700;padding:1px 8px;border-radius:4px;margin-left:6px;vertical-align:middle;position:relative;top:-2px;transition:all .25s}
+.do-tag.do-ok{background:rgba(76,175,80,.2);color:var(--green);border:1px solid rgba(76,175,80,.3)}
+.do-tag.do-alarm{background:rgba(244,67,54,.2);color:var(--red);border:1px solid rgba(244,67,54,.3);animation:do-blink .8s infinite}
+.do-tag.do-unknown{background:rgba(42,58,74,.4);color:var(--text-dim);border:1px solid var(--border)}
+@keyframes do-blink{0%,100%{opacity:1}50%{opacity:.5}}
+
+/* Camera + Warehouse Row */
+.cam-wh-row{display:grid;grid-template-columns:55% 45%;gap:16px}
+
+.cam-panel{position:relative;min-height:340px;display:flex;flex-direction:column;padding:16px}
+.cam-viewport{flex:1;background:#000;border-radius:10px;overflow:hidden;position:relative;min-height:280px;border:1px solid var(--border)}
+.cam-viewport img{width:100%;height:100%;object-fit:contain;display:block}
+
+.cam-overlay-info{position:absolute;top:10px;left:10px;display:flex;gap:8px;z-index:5}
+.cam-chip{
+  backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
+  background:rgba(0,0,0,.65);color:#ccc;font-size:.72rem;padding:4px 10px;
+  border-radius:6px;font-family:'Courier New',monospace;border:1px solid rgba(255,255,255,.1)
+}
+.cam-chip.online-dot::before{content:'';display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--green);margin-right:5px;vertical-align:middle;animation:dot-pulse 1.5s infinite}
+.cam-chip.offline-dot::before{content:'';display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--red);margin-right:5px;vertical-align:middle}
+@keyframes dot-pulse{0%,100%{opacity:1}50%{opacity:.3}}
+
+.cam-mode-tag{position:absolute;bottom:10px;right:10px;z-index:5;padding:5px 14px;border-radius:6px;font-size:.75rem;font-weight:600;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);border:1px solid rgba(255,255,255,.12);letter-spacing:.5px;transition:all .3s}
+.mode-tag-inbound{background:rgba(211,47,47,.75);color:#ffcdd2}
+.mode-tag-outbound{background:rgba(56,142,60,.75);color:#c8e6c9}
+.mode-tag-idle{background:rgba(0,0,0,.55);color:var(--text-dim)}
+
+.cam-status-bar{display:flex;align-items:center;justify-content:space-between;padding:8px 4px 0;font-size:.77rem;color:var(--text-dim)}
+
+.wh-panel{display:flex;flex-direction:column;gap:12px}
+.wh-mode-group{display:flex;gap:10px;margin-bottom:4px}
+.wh-mode-btn{
+  flex:1;padding:13px 16px;border:none;border-radius:10px;font-size:.95rem;font-weight:700;
+  cursor:pointer;transition:all .25s cubic-bezier(.4,0,.2,1);display:flex;align-items:center;justify-content:center;gap:8px;
+  position:relative;overflow:hidden;font-family:inherit
+}
+.wh-mode-btn::after{content:'';position:absolute;inset:0;background:linear-gradient(180deg,rgba(255,255,255,.08) 0%,transparent 60%);opacity:0;transition:opacity .25s}
+.wh-mode-btn:hover::after{opacity:1}
+.btn-checkin{background:linear-gradient(135deg,#c62828,#b71c1c);color:#fff;box-shadow:0 3px 12px rgba(183,28,28,.35)}
+.btn-checkin.active{transform:translateY(-1px);box-shadow:0 5px 20px rgba(183,28,28,.5),inset 0 1px 0 rgba(255,255,255,.15);background:linear-gradient(135deg,#d32f2f,#c62828)}
+.btn-checkout{background:linear-gradient(135deg,#2e7d32,#1b5e20);color:#fff;box-shadow:0 3px 12px rgba(27,94,32,.35)}
+.btn-checkout.active{transform:translateY(-1px);box-shadow:0 5px 20px rgba(27,94,32,.5),inset 0 1px 0 rgba(255,255,255,.15);background:linear-gradient(135deg,#388e3c,#2e7d32)}
+.btn-idle{background:rgba(58,58,83,.6);color:var(--text-dim);border:1px dashed var(--border);box-shadow:none}
+
+.scan-btn-row{display:flex;gap:10px}
+.btn-scan{
+  flex:1;padding:11px;border:1px solid var(--accent);border-radius:10px;
+  background:rgba(0,188,212,.08);color:var(--accent);font-size:.88rem;font-weight:600;
+  cursor:pointer;transition:all .25s;font-family:inherit;display:flex;align-items:center;justify-content:center;gap:8px
+}
+.btn-scan:hover:not(:disabled){background:rgba(0,188,212,.18);box-shadow:0 0 16px rgba(0,188,212,.15)}
+.btn-scan:disabled{opacity:.4;cursor:not-allowed;border-color:var(--border);color:var(--text-dim)}
+.btn-scan .spinner{display:inline-block;width:14px;height:14px;border:2px solid transparent;border-top-color:currentColor;border-radius:50%;animation:spin .7s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+.scan-result-card{background:rgba(0,0,0,.25);border:1px solid var(--border);border-radius:10px;padding:14px 16px;min-height:140px}
+.scan-result-card .scan-empty{display:flex;align-items:center;justify-content:center;height:110px;color:var(--text-dim);font-size:.85rem}
+.scan-result-card table{width:100%;font-size:.82rem;border-collapse:collapse}
+.scan-result-card td{padding:5px 8px;border-bottom:1px solid rgba(42,58,74,.5)}
+.scan-result-card td:first-child{color:var(--text-dim);white-space:nowrap;width:80px;font-weight:500}
+.scan-result-card td:last-child{color:var(--text);font-weight:600;font-variant-numeric:tabular-nums}
+
+.env-snapshot-bar{
+  display:flex;gap:12px;background:rgba(0,188,212,.06);border:1px solid rgba(0,188,212,.12);
+  border-radius:8px;padding:8px 14px;font-size:.78rem
+}
+.env-item{display:flex;align-items:center;gap:4px}
+.env-item .env-val{color:var(--accent);font-weight:600;font-family:'Courier New',monospace}
+
+.wh-log-area{flex:1;min-height:110px;max-height:150px;overflow-y:auto;background:rgba(0,0,0,.2);border:1px solid var(--border);border-radius:8px;padding:10px 12px;scrollbar-width:thin;scrollbar-color:var(--border) transparent}
+.wh-log-area::-webkit-scrollbar{width:4px} .wh-log-area::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
+.log-entry{display:flex;align-items:center;gap:8px;padding:4px 0;font-size:.78rem;border-bottom:1px solid rgba(42,58,74,.3);animation:log-slide-in .3s ease-out}
+.log-entry:last-child{border-bottom:none}
+@keyframes log-slide-in{from{opacity:0;transform:translateX(-8px)} to{opacity:1;transform:none}}
+.log-time{color:var(--text-dim);font-family:'Courier New',monospace;font-size:.72rem;white-space:nowrap}
+.log-action{font-weight:600;padding:1px 7px;border-radius:4px;font-size:.72rem}
+.log-action-in{background:rgba(211,47,47,.2);color:#ef5350}
+.log-action-out{background:rgba(56,142,60,.2);color:#66bb6a}
+.log-msg{color:var(--text);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+.chart-wrap{position:relative;height:240px}
+.chart-wrap canvas{width:100%!important;height:100%!important}
+
+table{width:100%;border-collapse:collapse;font-size:.85rem}
+th,td{padding:10px 14px;text-align:left;border-bottom:1px solid var(--border)}
+th{color:var(--text-dim);font-weight:600;white-space:nowrap}
+.status-badge{padding:2px 10px;border-radius:10px;font-size:.75rem;font-weight:600}
+.status-in{background:#1b3a1b;color:var(--green)} .status-out{background:#3a1515;color:var(--red)}
+
+.status-bar{display:flex;align-items:center;gap:16px;padding:10px 16px;font-size:.8rem;color:var(--text-dim);border-top:1px solid var(--border);margin-top:20px}
+.status-dot{width:8px;height:8px;border-radius:50%;display:inline-block}
+.status-dot.online{background:var(--green);box-shadow:0 0 6px rgba(76,175,80,.5)}
+.status-dot.offline{background:var(--red)}
+.empty-state{text-align:center;padding:40px;color:var(--text-dim)}
+
+.toast-container{position:fixed;top:80px;right:24px;z-index:9999;display:flex;flex-direction:column;gap:8px}
+.toast{padding:12px 20px;border-radius:10px;font-size:.85rem;font-weight:500;color:#fff;min-width:260px;animation:toast-in .3s ease-out;box-shadow:0 4px 20px rgba(0,0,0,.4)}
+.toast-success{background:linear-gradient(135deg,#2e7d32,#1b5e20)}
+.toast-error{background:linear-gradient(135deg,#c62828,#b71c1c)}
+.toast-warn{background:linear-gradient(135deg,#ef6c00,#e65100)}
+@keyframes toast-in{from{opacity:0;transform:translateX(40px)} to{opacity:1;transform:none}}
+.toast-exit{animation:toast-out .25s ease-in forwards}
+@keyframes toast-out{to{opacity:0;transform:translateX(40px)}}
+
+@media(max-width:900px){.g4{grid-template-columns:repeat(2,1fr)}.g2{grid-template-columns:1fr}.cam-wh-row{grid-template-columns:1fr}main{padding:16px}}
+
+/* Toggle switch */
+.toggle-switch{position:relative;display:inline-block;width:44px;height:24px}
+.toggle-switch input{opacity:0;width:0;height:0}
+.toggle-slider{position:absolute;cursor:pointer;top:0;left:0;right:0;bottom:0;background:var(--border);border-radius:24px;transition:.3s}
+.toggle-slider:before{position:absolute;content:"";height:18px;width:18px;left:3px;bottom:3px;background:#666;border-radius:50%;transition:.3s}
+.toggle-switch input:checked+.toggle-slider{background:var(--accent)}
+.toggle-switch input:checked+.toggle-slider:before{transform:translateX(20px);background:#fff}
+
+/* Alarm panel */
+.alarm-panel{max-height:420px;overflow-y:auto;scrollbar-width:thin;scrollbar-color:var(--border) transparent}
+.alarm-panel::-webkit-scrollbar{width:4px}
+.alarm-panel::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
+.alarm-toolbar{display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap}
+.alarm-toolbar select,.alarm-toolbar button{background:var(--border);border:1px solid var(--border-light);color:var(--text);padding:6px 12px;border-radius:6px;font-size:.8rem;cursor:pointer;font-family:inherit;transition:all .2s}
+.alarm-toolbar select:hover,.alarm-toolbar button:hover{border-color:var(--accent)}
+.alarm-toolbar button.btn-sm{font-size:.75rem;padding:4px 10px}
+.alarm-table{width:100%;border-collapse:collapse;font-size:.8rem}
+.alarm-table th,.alarm-table td{padding:8px 10px;border-bottom:1px solid var(--border);text-align:left}
+.alarm-table th{color:var(--text-dim);font-weight:600;white-space:nowrap}
+.alarm-table tbody tr{cursor:pointer;transition:background .2s}
+.alarm-table tbody tr:hover{background:rgba(0,188,212,.06)}
+.alarm-table tbody tr.unack{background:rgba(244,67,54,.06)}
+.alarm-lv{display:inline-block;padding:2px 8px;border-radius:4px;font-size:.7rem;font-weight:700}
+.lv-1{background:rgba(255,193,7,.15);color:var(--yellow)}
+.lv-2{background:rgba(255,152,0,.15);color:var(--orange)}
+.lv-3{background:rgba(244,67,54,.2);color:var(--red)}
+.alarm-pager{display:flex;align-items:center;justify-content:center;gap:8px;margin-top:10px;font-size:.78rem}
+.alarm-pager button{background:var(--border);border:1px solid var(--border-light);color:var(--text);padding:4px 12px;border-radius:6px;cursor:pointer;font-family:inherit;transition:all .2s}
+.alarm-pager button:hover:not(:disabled){border-color:var(--accent)}
+.alarm-pager button:disabled{opacity:.4;cursor:not-allowed}
+
+/* Modal */
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:300;display:flex;align-items:center;justify-content:center;animation:fade-in .2s}
+@keyframes fade-in{from{opacity:0}}
+.modal-box{background:var(--card);border:1px solid var(--border-light);border-radius:12px;padding:24px;max-width:600px;width:90%;max-height:80vh;overflow-y:auto;box-shadow:0 8px 40px rgba(0,0,0,.5)}
+.modal-box h3{font-size:1rem;margin-bottom:16px;display:flex;align-items:center;gap:8px}
+.modal-box table{width:100%;font-size:.82rem;margin-bottom:16px}
+.modal-box table td{padding:5px 8px;border-bottom:1px solid var(--border)}
+.modal-box table td:first-child{color:var(--text-dim);width:90px;font-weight:500}
+.modal-box img{border-radius:8px;border:1px solid var(--border);max-width:100%}
+.modal-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:16px}
+.btn-ack{background:var(--green);border:none;color:#fff;padding:8px 20px;border-radius:8px;cursor:pointer;font-weight:600;font-family:inherit;transition:all .2s}
+.btn-ack:hover{background:#43a047}
+.btn-ack:disabled{opacity:.4;cursor:not-allowed}
+.btn-close-modal{background:var(--border);border:1px solid var(--border-light);color:var(--text-dim);padding:8px 20px;border-radius:8px;cursor:pointer;font-family:inherit;transition:all .2s}
+.btn-close-modal:hover{border-color:var(--accent);color:var(--text)}
+
+/* ===== 库存分类统计卡片 ===== */
+.cat-stats-row{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px}
+.cat-card{border-radius:10px;padding:14px 16px;text-align:center;border:1px solid var(--border);transition:all .25s}
+.cat-card:hover{border-color:var(--border-light);transform:translateY(-1px)}
+.cat-card .cat-label{font-size:.75rem;color:var(--text-dim);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px}
+.cat-card .cat-total{font-size:1.6rem;font-weight:700;line-height:1.2}
+.cat-card .cat-instock{font-size:.78rem;color:var(--text-dim);margin-top:2px}
+.cat-card-green{background:linear-gradient(135deg,rgba(76,175,80,.12),rgba(76,175,80,.04));border-color:rgba(76,175,80,.25)}.cat-card-green .cat-total{color:#66bb6a}
+.cat-card-blue{background:linear-gradient(135deg,rgba(66,165,245,.12),rgba(66,165,245,.04));border-color:rgba(66,165,245,.25)}.cat-card-blue .cat-total{color:#42a5f5}
+.cat-card-purple{background:linear-gradient(135deg,rgba(171,71,188,.12),rgba(171,71,188,.04));border-color:rgba(171,71,188,.25)}.cat-card-purple .cat-total{color:#ab47bc}
+.cat-card-gray{background:linear-gradient(135deg,rgba(255,255,255,.06),rgba(255,255,255,.02));border-color:rgba(255,255,255,.12)}.cat-card-gray .cat-total{color:var(--accent)}
+
+/* ===== 库存表格行着色 ===== */
+.tr-nitrogen{background:linear-gradient(90deg,rgba(76,175,80,.08),transparent);border-left:3px solid rgba(76,175,80,.5)}
+.tr-potash{background:linear-gradient(90deg,rgba(66,165,245,.08),transparent);border-left:3px solid rgba(66,165,245,.5)}
+.tr-compound{background:linear-gradient(90deg,rgba(171,71,188,.08),transparent);border-left:3px solid rgba(171,71,188,.5)}
+
+/* ===== 清空记录 & 手动新增按钮 ===== */
+.btn-danger-sm{background:rgba(244,67,54,.15);border:1px solid rgba(244,67,54,.3);color:#ef5350;padding:5px 12px;border-radius:6px;cursor:pointer;font-size:.72rem;font-weight:600;font-family:inherit;transition:all .2s;margin-left:auto}
+.btn-danger-sm:hover{background:rgba(244,67,54,.25);border-color:rgba(244,67,54,.5)}
+.btn-add{background:rgba(0,188,212,.12);border:1px solid rgba(0,188,212,.3);color:var(--accent);padding:6px 14px;border-radius:8px;cursor:pointer;font-size:.8rem;font-weight:600;font-family:inherit;transition:all .2s}
+.btn-add:hover{background:rgba(0,188,212,.22);border-color:var(--accent)}
+.btn-del-row{background:rgba(244,67,54,.15);border:1px solid rgba(244,67,54,.3);color:#ef5350;padding:3px 10px;border-radius:5px;cursor:pointer;font-size:.7rem;font-weight:600;font-family:inherit;transition:all .15s}
+.btn-del-row:hover{background:rgba(244,67,54,.35);border-color:rgba(244,67,54,.6)}
+.form-row{display:flex;gap:10px;margin-bottom:10px;flex-wrap:wrap}
+.form-row label{font-size:.78rem;color:var(--text-dim);min-width:60px;align-self:center}
+.form-row input,.form-row select{background:var(--border);border:1px solid var(--border-light);color:var(--text);padding:7px 10px;border-radius:6px;font-size:.82rem;font-family:inherit;flex:1;min-width:80px;transition:border-color .2s}
+.form-row input:focus,.form-row select:focus{outline:none;border-color:var(--accent)}
+.btn-submit{background:var(--accent);border:none;color:#000;padding:9px 22px;border-radius:8px;cursor:pointer;font-size:.85rem;font-weight:700;font-family:inherit;transition:all .2s}
+.btn-submit:hover{background:#00d5f0}
+
+/* ===== 仿真注入面板 ===== */
+.sim-panel{display:grid;grid-template-columns:repeat(6,1fr);gap:8px 12px;padding:8px 0}
+.sim-item{display:flex;flex-direction:column;gap:3px}
+.sim-item label{font-size:.7rem;color:var(--text-dim);text-transform:uppercase;letter-spacing:.3px}
+.sim-item input[type=range]{-webkit-appearance:none;width:100%;height:4px;background:var(--border);border-radius:2px;outline:none;cursor:pointer}
+.sim-item input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:16px;height:16px;border-radius:50%;background:var(--accent);cursor:pointer;border:2px solid var(--bg);transition:all .15s}
+.sim-item input[type=range]::-webkit-slider-thumb:hover{transform:scale(1.2);box-shadow:0 0 8px rgba(0,188,212,.4)}
+.sim-item .sim-val{font-size:.75rem;color:var(--accent);font-weight:600;font-family:'Courier New',monospace}
+.sim-preset-row{display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap}
+.btn-preset{padding:7px 14px;border-radius:8px;border:1px solid var(--border-light);background:var(--border);color:var(--text);cursor:pointer;font-size:.78rem;font-weight:600;font-family:inherit;transition:all .2s;white-space:nowrap}
+.btn-preset:hover{border-color:var(--accent);background:rgba(0,188,212,.1)}
+.btn-preset.l0{border-color:rgba(76,175,80,.3)}.btn-preset.l0:hover{background:rgba(76,175,80,.12);border-color:var(--green)}
+.btn-preset.l1{border-color:rgba(255,193,7,.3)}.btn-preset.l1:hover{background:rgba(255,193,7,.12);border-color:var(--yellow)}
+.btn-preset.l2{border-color:rgba(255,152,0,.3)}.btn-preset.l2:hover{background:rgba(255,152,0,.12);border-color:var(--orange)}
+.btn-preset.l3{border-color:rgba(244,67,54,.3)}.btn-preset.l3:hover{background:rgba(244,67,54,.12);border-color:var(--red)}
+.sim-debug{border:1px dashed var(--border);border-radius:8px;padding:8px 12px;margin-top:8px;font-family:'Courier New',monospace;font-size:.72rem;color:var(--text-dim);display:none;max-height:120px;overflow-y:auto;white-space:pre-wrap}
+
+/* ===== 报警配置面板 ===== */
+#alarmCfgCard input[type=range]{-webkit-appearance:none;width:100%;height:5px;background:var(--border);border-radius:3px;outline:none;cursor:pointer;margin:4px 0 8px}
+#alarmCfgCard input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;height:14px;border-radius:50%;background:var(--accent);cursor:pointer;border:2px solid var(--bg);transition:all .15s}
+#alarmCfgCard input[type=range]::-webkit-slider-thumb:hover{transform:scale(1.25);box-shadow:0 0 8px rgba(0,188,212,.5)}
+.cfg-toggle-row{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+.cfg-toggle-row .cfg-tg-label{font-size:.72rem;color:var(--text-dim);min-width:52px}
+.cfg-toggle-row .cfg-tg-opt{font-size:.68rem;color:var(--text-dim);font-weight:500;transition:color .2s;width:48px;text-align:center}
+.cfg-toggle-row .cfg-tg-opt.active{color:var(--accent);font-weight:700}
+.cfg-input-row{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+.cfg-input-row label{font-size:.7rem;color:var(--text-dim);min-width:0;flex-shrink:0}
+.cfg-input-row input[type=range]{flex:1;margin:0 4px}
+.cfg-num-input{width:52px;background:var(--border);border:1px solid var(--border-light);color:var(--accent);padding:3px 6px;border-radius:5px;font-size:.72rem;font-family:'Courier New',monospace;text-align:center;transition:border-color .2s;box-sizing:border-box}
+.cfg-num-input:focus{outline:none;border-color:var(--accent)}
+.cfg-num-input:hover{border-color:var(--border-light)}
+.cfg-section-title{font-size:.78rem;font-weight:600;margin-bottom:10px;display:flex;align-items:center;gap:6px}
+</style>
+</head>
+
+<body>
+<div class="toast-container" id="toastContainer"></div>
+
+<header>
+  <h1>📡 Smart<span>Monitor</span> 仪表盘</h1>
+  <div style="display:flex;align-items:center;gap:16px;">
+    <span class="alert-badge" id="alertBadge">L0 正常</span>
+    <span id="reasonLabel" class="alert-reason"></span>
+    <button id="btnRawData" onclick="toggleRawPanel()" title="显示/隐藏原始传感器数据"
+      style="background:var(--border);border:1px solid var(--border-light);color:var(--text-dim);cursor:pointer;padding:6px 14px;border-radius:8px;font-size:.8rem;font-family:inherit;transition:all .2s;"
+      onmouseover="this.style.borderColor='var(--accent)';this.style.color='var(--accent)'"
+      onmouseout="this.style.borderColor='var(--border-light)';this.style.color='var(--text-dim)'">📋 原始数据</button>
+  </div>
+</header>
+
+<main>
+  <!-- Sensor Cards -->
+  <div class="g4">
+    <div class="card sensor-card"><div class="value" id="valDs18Temp">--</div><span class="unit">°C</span><div class="label">DS18B20 温度</div></div>
+    <div class="card sensor-card"><div class="value" id="valDhtH">--</div><span class="unit">%RH</span><div class="label">DHT11 湿度</div></div>
+    <div class="card sensor-card"><div class="value" id="valLight">--</div><span class="unit">raw</span><span class="do-tag" id="doPhotoTag">DO--</span><div class="label">光敏ADC</div></div>
+    <div class="card sensor-card"><div class="value" id="valMq135">--</div><span class="unit">V</span><span class="do-tag" id="doMq135Tag">DO--</span><div class="label">MQ-135 电压</div></div>
+  </div>
+
+  <!-- Simulation + Alarm Config Row -->
+  <div class="g2">
+    <!-- Simulation Injection Panel -->
+    <div class="card" id="simCard">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+        <h3 style="margin:0;">🎮 仿真注入</h3>
+        <div style="display:flex;align-items:center;gap:10px;">
+          <span style="font-size:.75rem;color:var(--text-dim);" id="simModeLabel">模式: 真实传感器</span>
+          <button class="btn-preset" onclick="toggleSimPanel()" title="展开/收起仿真面板" style="font-size:.7rem;padding:3px 10px;">🔽</button>
+        </div>
+      </div>
+      <div id="simContent">
+        <div class="sim-preset-row">
+          <button class="btn-preset l0" onclick="loadSimPreset('L0')">L0 正常</button>
+          <button class="btn-preset l1" onclick="loadSimPreset('L1')">L1 预警</button>
+          <button class="btn-preset l2" onclick="loadSimPreset('L2')">L2 严重</button>
+          <button class="btn-preset l3" onclick="loadSimPreset('L3')">L3 紧急</button>
+        </div>
+        <div class="sim-panel">
+          <div class="sim-item"><label>DHT11温度 °C</label><input type="range" id="simDht11T" min="0" max="50" value="25" step="1" oninput="updateSimVal('simDht11T','simVDht11T')"><span class="sim-val" id="simVDht11T">25</span></div>
+          <div class="sim-item"><label>DHT11湿度 %</label><input type="range" id="simDht11H" min="20" max="90" value="60" step="1" oninput="updateSimVal('simDht11H','simVDht11H')"><span class="sim-val" id="simVDht11H">60</span></div>
+          <div class="sim-item"><label>DS18B20 °C</label><input type="range" id="simDs18T" min="-10" max="50" value="25" step="0.1" oninput="updateSimVal('simDs18T','simVDs18T')"><span class="sim-val" id="simVDs18T">25</span></div>
+          <div class="sim-item"><label>MQ135电压 V</label><input type="range" id="simMq135V" min="0" max="3.3" value="1.2" step="0.1" oninput="updateSimVal('simMq135V','simVMq135V')"><span class="sim-val" id="simVMq135V">1.2</span></div>
+          <div class="sim-item"><label>光敏AO原始值</label><input type="range" id="simPhotoRaw" min="0" max="4095" value="2000" step="50" oninput="updateSimVal('simPhotoRaw','simVPhotoRaw')"><span class="sim-val" id="simVPhotoRaw">2000</span></div>
+          <div class="sim-item"><label style="color:var(--text-dim);font-style:italic">级别/MCU计算</label><span class="sim-val" style="color:var(--text-dim)">由ESP32决定</span></div>
+        </div>
+        <div style="display:flex;gap:10px;align-items:center;margin-top:8px;">
+          <label style="font-size:.75rem;color:var(--text-dim);display:flex;align-items:center;gap:4px;cursor:pointer;">
+            <input type="checkbox" id="simMq135Do" checked onchange="this.nextSibling.textContent=this.checked?'正常':'报警'"> <span>MQ135 DO: 正常</span>
+          </label>
+          <label style="font-size:.75rem;color:var(--text-dim);display:flex;align-items:center;gap:4px;cursor:pointer;">
+            <input type="checkbox" id="simPhotoDo" checked onchange="this.nextSibling.textContent=this.checked?'正常':'报警'"> <span>光敏 DO: 正常</span>
+          </label>
+          <span style="font-size:.7rem;color:var(--text-dim);flex:1;">报警级别/原因由 MCU 根据注入值自动判断</span>
+          <button class="btn-submit" onclick="applySimInject()" style="padding:7px 18px;font-size:.82rem;">▶ Apply 注入</button>
+          <button class="btn-close-modal" onclick="resetSimInject()" style="padding:7px 18px;">⟳ Reset 恢复</button>
+        </div>
+        <div class="sim-debug" id="simDebug"></div>
+      </div>
+    </div>
+
+    <!-- Alarm Config Panel -->
+    <div class="card" id="alarmCfgCard">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+        <h3 style="margin:0;">⚙ 报警配置</h3>
+        <span style="font-size:.7rem;color:var(--text-dim);" id="alarmCfgUpdated">上次更新: --</span>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+        <!-- MQ-135 Column -->
+        <div style="border-right:1px solid var(--border);padding-right:10px;">
+          <div class="cfg-section-title" style="color:var(--accent);">🟡 MQ-135 气体</div>
+          <!-- 报警源开关 -->
+          <div class="cfg-toggle-row">
+            <span class="cfg-tg-label">报警源</span>
+            <span class="cfg-tg-opt" id="cfgMqDoLab">DO</span>
+            <label class="toggle-switch" style="margin:0 4px;">
+              <input type="checkbox" id="cfgMqSrc" onchange="onAlarmCfgToggle('mq')">
+              <span class="toggle-slider"></span>
+            </label>
+            <span class="cfg-tg-opt" id="cfgMqAoLab">AO</span>
+          </div>
+          <!-- AO 配置区 -->
+          <div id="cfgMqAoGroup" style="display:none;">
+            <div class="cfg-toggle-row">
+              <span class="cfg-tg-label">触发方向</span>
+              <span class="cfg-tg-opt" id="cfgMqDirAboveLab">高于</span>
+              <label class="toggle-switch" style="margin:0 4px;">
+                <input type="checkbox" id="cfgMqDir" onchange="onAlarmCfgToggle('mq')">
+                <span class="toggle-slider"></span>
+              </label>
+              <span class="cfg-tg-opt" id="cfgMqDirBelowLab">低于</span>
+            </div>
+            <div class="cfg-input-row">
+              <label>阈值(V)</label>
+              <input type="range" id="cfgMqAoThr" min="0" max="3.3" value="2.5" step="0.05" oninput="syncCfgSliderInput('cfgMqAoThr','cfgMqAoNum',2)">
+              <input class="cfg-num-input" id="cfgMqAoNum" value="2.50" step="0.05" onchange="syncCfgNumToSlider('cfgMqAoNum','cfgMqAoThr',2)">
+            </div>
+          </div>
+        </div>
+        <!-- Photo Column -->
+        <div style="padding-left:10px;">
+          <div class="cfg-section-title" style="color:#ffca28;">💡 光敏电阻</div>
+          <!-- 报警源开关 -->
+          <div class="cfg-toggle-row">
+            <span class="cfg-tg-label">报警源</span>
+            <span class="cfg-tg-opt" id="cfgPhDoLab">DO</span>
+            <label class="toggle-switch" style="margin:0 4px;">
+              <input type="checkbox" id="cfgPhSrc" onchange="onAlarmCfgToggle('ph')">
+              <span class="toggle-slider"></span>
+            </label>
+            <span class="cfg-tg-opt" id="cfgPhAoLab">AO</span>
+          </div>
+          <!-- AO 配置区 -->
+          <div id="cfgPhAoGroup" style="display:none;">
+            <div class="cfg-toggle-row">
+              <span class="cfg-tg-label">触发方向</span>
+              <span class="cfg-tg-opt" id="cfgPhDirAboveLab">高于</span>
+              <label class="toggle-switch" style="margin:0 4px;">
+                <input type="checkbox" id="cfgPhDir" onchange="onAlarmCfgToggle('ph')">
+                <span class="toggle-slider"></span>
+              </label>
+              <span class="cfg-tg-opt" id="cfgPhDirBelowLab">低于</span>
+            </div>
+            <div class="cfg-input-row">
+              <label>阈值(ADC)</label>
+              <input type="range" id="cfgPhAoThr" min="0" max="4095" value="1000" step="50" oninput="syncCfgSliderInput('cfgPhAoThr','cfgPhAoNum',0)">
+              <input class="cfg-num-input" id="cfgPhAoNum" value="1000" step="50" onchange="syncCfgNumToSlider('cfgPhAoNum','cfgPhAoThr',0)">
+            </div>
+          </div>
+        </div>
+      </div>
+      <!-- DHT / DS thresholds -->
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-top:12px;padding-top:10px;border-top:1px solid var(--border);">
+        <div class="cfg-section-title" style="color:#4fc3f7;margin:0;">🌡 温湿度报警</div>
+        <div class="cfg-toggle-row" style="margin:0;">
+          <span class="cfg-tg-opt" id="cfgThOffLab">关闭</span>
+          <label class="toggle-switch" style="margin:0 4px;">
+            <input type="checkbox" id="cfgThEn" checked onchange="onAlarmCfgToggle('th')">
+            <span class="toggle-slider"></span>
+          </label>
+          <span class="cfg-tg-opt" id="cfgThOnLab">启用</span>
+        </div>
+      </div>
+      <div id="cfgThGroup">
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-top:10px;">
+        <div>
+          <label style="font-size:.68rem;color:var(--text-dim);display:block;margin-bottom:2px;">DHT11 高温 °C</label>
+          <div class="cfg-input-row" style="margin-bottom:0;">
+            <input type="range" id="cfgDhtTHi" min="20" max="50" value="35" step="1" oninput="syncCfgSliderInput('cfgDhtTHi','cfgDhtTHiNum',0)" style="flex:1;">
+            <input class="cfg-num-input" id="cfgDhtTHiNum" value="35" step="1" onchange="syncCfgNumToSlider('cfgDhtTHiNum','cfgDhtTHi',0)">
+          </div>
+        </div>
+        <div>
+          <label style="font-size:.68rem;color:var(--text-dim);display:block;margin-bottom:2px;">DHT11 高湿 %</label>
+          <div class="cfg-input-row" style="margin-bottom:0;">
+            <input type="range" id="cfgDhtHHi" min="50" max="95" value="85" step="1" oninput="syncCfgSliderInput('cfgDhtHHi','cfgDhtHHiNum',0)" style="flex:1;">
+            <input class="cfg-num-input" id="cfgDhtHHiNum" value="85" step="1" onchange="syncCfgNumToSlider('cfgDhtHHiNum','cfgDhtHHi',0)">
+          </div>
+        </div>
+        <div>
+          <label style="font-size:.68rem;color:var(--text-dim);display:block;margin-bottom:2px;">DS18B20 高温 °C</label>
+          <div class="cfg-input-row" style="margin-bottom:0;">
+            <input type="range" id="cfgDsTHi" min="10" max="60" value="35" step="0.5" oninput="syncCfgSliderInput('cfgDsTHi','cfgDsTHiNum',1)" style="flex:1;">
+            <input class="cfg-num-input" id="cfgDsTHiNum" value="35.0" step="0.5" onchange="syncCfgNumToSlider('cfgDsTHiNum','cfgDsTHi',1)">
+          </div>
+        </div>
+      </div>
+      </div>
+      <div style="display:flex;gap:10px;margin-top:12px;">
+        <button class="btn-scan" onclick="loadAlarmConfigPanel()" style="flex:1;font-size:.78rem;">🔄 加载当前配置</button>
+        <button class="btn-submit" onclick="saveAlarmConfigPanel()" style="flex:1;padding:10px;font-size:.82rem;">📤 下发到 MCU</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Camera + Warehouse Row -->
+  <div class="cam-wh-row">
+    <!-- Camera Panel -->
+    <div class="card cam-panel">
+      <h3>🎥 摄像头实时画面</h3>
+      <div class="cam-viewport" id="camViewport">
+        <canvas id="camCanvas" style="display:none;width:100%;height:100%"></canvas>
+        <div id="camPlaceholder" style="display:flex;position:absolute;inset:0;background:#0a0f14;align-items:center;justify-content:center;color:var(--text-dim);font-size:.85rem;gap:8px;">📷 摄像头连接中...</div>
+        <div class="cam-overlay-info">
+          <span class="cam-chip offline-dot" id="camChipStatus">OFFLINE</span>
+          <span class="cam-chip" id="camChipFps">FPS: 0.0</span>
+        </div>
+        <div class="cam-mode-tag mode-tag-idle" id="camModeTag">待机模式</div>
+      </div>
+      <div class="cam-status-bar">
+        <span>帧数: <strong id="camFrameCount">0</strong></span>
+        <label class="toggle-switch" title="视频流开关" style="margin-left:auto;margin-right:8px;">
+          <input type="checkbox" id="camToggle" checked onchange="toggleCameraStream()">
+          <span class="toggle-slider"></span>
+        </label>
+        <span style="font-size:.75rem;" id="camToggleLabel">视频流</span>
+        <span style="margin-left:12px;">连接: <strong id="camConnText">未连接</strong></span>
+      </div>
+    </div>
+
+    <!-- Warehouse Panel -->
+    <div class="card wh-panel">
+      <h3>📦 出入库管理</h3>
+      <div class="wh-mode-group">
+        <button class="wh-mode-btn btn-checkin btn-idle" id="btnInbound" onclick="setMode('inbound')">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12l7-7 7 7"/></svg> 入 库
+        </button>
+        <button class="wh-mode-btn btn-checkout btn-idle" id="btnOutbound" onclick="setMode('outbound')">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 19V5M5 12l7 7 7-7"/></svg> 出 库
+        </button>
+      </div>
+      <div class="scan-btn-row">
+        <button class="btn-scan" id="btnScan" onclick="doScan()" disabled> 🔍 点击扫码识别二维码 </button>
+      </div>
+      <div class="scan-result-card" id="scanResultCard">
+        <div class="scan-empty" id="scanEmptyText">请先选择模式，再对准摄像头点击扫码</div>
+        <table id="scanResultTable" style="display:none;">
+          <tr><td>物料编号</td><td id="srId">-</td></tr>
+          <tr><td>品名</td><td id="srName">-</td></tr>
+          <tr><td>类别</td><td id="srCategory">-</td></tr>
+          <tr><td>批次号</td><td id="srBatch">-</td></tr>
+          <tr><td>规格</td><td id="srSpec">-</td></tr>
+          <tr><td>生产日期</td><td id="srMfgDate">-</td></tr>
+          <tr><td>有效期至</td><td id="srExpDate">-</td></tr>
+        </table>
+      </div>
+      <div class="env-snapshot-bar" id="envSnapshotBar">
+        <span class="env-item">🌡️ 温度: <span class="env-val" id="envTemp">--</span>°C</span>
+        <span class="env-item">💧 湿度: <span class="env-val" id="envHumi">--</span>%</span>
+        <span class="env-item">⚠️ 报警级别: <span class="env-val" id="envLevel">L0</span></span>
+        <span class="env-item">🔌 MQ135 DO: <span class="env-val" id="envMq135Do">--</span></span>
+        <span class="env-item">🔌 光敏 DO: <span class="env-val" id="envPhotoDo">--</span></span>
+      </div>
+      <div class="wh-log-area" id="whLogArea">
+        <div class="log-entry"><span class="log-time">--:--:--</span><span class="log-msg" style="color:var(--text-dim)">等待操作...</span></div>
+      </div>
+      <div style="display:flex;align-items:center;margin-top:4px;">
+        <span style="font-size:.72rem;color:var(--text-dim)">操作日志</span>
+        <button class="btn-danger-sm" onclick="clearCheckLog()" title="清空全部出入库流水记录">🗑 清空记录</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Charts -->
+  <div class="g2">
+    <div class="card"><h3>📈 温度趋势（最近 60 条）</h3><div class="chart-wrap"><canvas id="chartTemp"></canvas></div></div>
+    <div class="card"><h3>💧 湿度趋势</h3><div class="chart-wrap"><canvas id="chartHumi"></canvas></div></div>
+  </div>
+  <div class="g2">
+    <div class="card"><h3>⚠️ MQ-135 气体传感器电压</h3><div class="chart-wrap"><canvas id="chartGas"></canvas></div></div>
+    <div class="card"><h3>💡 光照传感器电压</h3><div class="chart-wrap"><canvas id="chartLight"></canvas></div></div>
+  </div>
+
+  <!-- Inventory Table -->
+  <div class="card">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+      <h3 style="margin:0;">📦 库存清单</h3>
+      <button class="btn-add" onclick="openAddInventoryModal()">＋ 手动新增物料</button>
+    </div>
+    <!-- 分类统计卡片 -->
+    <div class="cat-stats-row" id="catStatsRow">
+      <div class="cat-card cat-card-green"><div class="cat-label">🌱 氮肥</div><div class="cat-total" id="catNTotal">0</div><div class="cat-instock">在库: <span id="catNStock">0</span></div></div>
+      <div class="cat-card cat-card-blue"><div class="cat-label">🧂 钾肥</div><div class="cat-total" id="catKTotal">0</div><div class="cat-instock">在库: <span id="catKStock">0</span></div></div>
+      <div class="cat-card cat-card-purple"><div class="cat-label">⚗️ 复合肥</div><div class="cat-total" id="catCTotal">0</div><div class="cat-instock">在库: <span id="catCStock">0</span></div></div>
+      <div class="cat-card cat-card-gray"><div class="cat-label">📊 总计</div><div class="cat-total" id="catAllTotal">0</div><div class="cat-instock">在库: <span id="catAllStock">0</span></div></div>
+    </div>
+    <div id="inventoryTable"><div class="empty-state">加载中...</div></div>
+  </div>
+
+  <!-- Alarm History Panel -->
+  <div class="card">
+    <h3>🚨 报警历史记录</h3>
+    <div class="alarm-toolbar">
+      <select id="alarmLevelFilter" onchange="loadAlarmList(1)">
+        <option value="0">全部级别</option>
+        <option value="1">L1 预警</option>
+        <option value="2">L2 严重</option>
+        <option value="3">L3 紧急</option>
+      </select>
+      <button onclick="loadAlarmList(1)" class="btn-sm">🔄 刷新</button>
+      <span style="font-size:.75rem;color:var(--text-dim);margin-left:auto;" id="alarmSummary">共 0 条，未确认 0</span>
+      <button class="btn-danger-sm" onclick="clearAlarmRecords()" title="清空全部报警记录">🗑 清空报警</button>
+    </div>
+    <div class="alarm-panel" id="alarmTableBody">
+      <div class="empty-state">加载中...</div>
+    </div>
+    <div class="alarm-pager" id="alarmPager"></div>
+  </div>
+
+  <!-- Status Bar -->
+  <div class="status-bar" style="margin-top:0;">
+    <span class="status-dot online" id="wsDot"></span>
+    <span id="wsStatus">WebSocket 连接中...</span>
+    <span style="margin-left:auto;">最后更新: <span id="lastUpdate">--</span></span>
+  </div>
+  <div id="jsErr" style="display:none;background:#c62828;color:#fff;padding:8px 16px;font-size:13px;margin:0;"></div>
+</main>
+
+<!-- ====== Block 1: 核心数据层 ====== 最先执行，不依赖 Chart.js -->
+<script>
+// 全局JS错误捕获
+window.onerror=function(msg,src,line,col,err){
+  var el=document.getElementById('jsErr');
+  el.style.display='block';
+  el.textContent='JS ERROR: '+(err||msg)+' | '+src+' line '+line+':'+col;
+  return false;
+};
+console.log('[SmartMonitor] Block1 开始执行...');
+
+// 常量 & 数据数组
+var MAX_POINTS=60;
+var TL=[],TDh=[],TG=[],TDS=[],TLi=[];
+
+// Chart 更新函数 — 先定义为空操作，Block2 加载 Chart.js 后会重新定义
+var aDP=function(c,d,v){};
+var updAll=function(){};
+
+// 报警级别更新（纯 DOM，无 Chart 依赖）
+function updateAlert(lvl,reason){
+  var b=document.getElementById('alertBadge'),rEl=document.getElementById('reasonLabel');
+  var L={0:'L0 正常',1:'L1 预警',2:'L2 严重',3:'L3 紧急'};
+  b.textContent=L[lvl]||'L?';b.className='alert-badge level-'+lvl;rEl.textContent=reason||'';
+  if(lvl>=3)document.body.classList.add('l3-flash');else document.body.classList.remove('l3-flash');
+  document.getElementById('envLevel').textContent=L[lvl]||'L?';
+}
+
+// DO 数字输出状态更新
+function updateDoTags(mq135Do,photoDo){
+  function setDoTag(el,envEl,val){
+    var tag=document.getElementById(el),env=document.getElementById(envEl);
+    if(val==null||val===undefined||val<0){
+      tag.textContent='DO--';tag.className='do-tag do-unknown';if(env)env.textContent='--';if(env)env.style.color='var(--text-dim)';
+    }else if(val===1){
+      tag.textContent='DO正常';tag.className='do-tag do-ok';if(env){env.textContent='正常';env.style.color='var(--green)'}
+    }else if(val===0){
+      tag.textContent='DO报警';tag.className='do-tag do-alarm';if(env){env.textContent='报警';env.style.color='var(--red)'}
+    }
+  }
+  setDoTag('doMq135Tag','envMq135Do',mq135Do);
+  setDoTag('doPhotoTag','envPhotoDo',photoDo);
+}
+
+// ===== WebSocket + HTTP 轮询降级 =====
+var ws=null,_pollTimer=null,_wsTimeout=null;
+var _reconnectAttempts=0,_maxReconnect=10;
+function connectWS(){
+  if(ws){try{ws.close()}catch(e){}if(ws._heartbeat){clearInterval(ws._heartbeat);ws._heartbeat=null}}
+  var p=location.protocol==='https:'?'wss:':'ws:',u=p+'//'+location.host+'/ws';
+  console.log('[SmartMonitor] 尝试连接 WebSocket: '+u);
+  try{
+    ws=new WebSocket(u);
+  }catch(e){
+    console.error('[SmartMonitor] WebSocket 构造失败: '+e.message);
+    startPolling();
+    return;
+  }
+  _wsTimeout=setTimeout(function(){
+    console.warn('[SmartMonitor] WS 3秒超时，切换到 HTTP 轮询');
+    if(!ws||ws.readyState!==WebSocket.OPEN)startPolling();
+  },3000);
+  ws.onopen=function(){
+    clearTimeout(_wsTimeout);stopPolling();
+    _reconnectAttempts=0;  // ★ 成功后重置重连计数
+    console.log('[SmartMonitor] WebSocket 已连接');
+    document.getElementById('wsDot').className='status-dot online';
+    document.getElementById('wsStatus').textContent='WebSocket 已连接';
+    ws._heartbeat=setInterval(function(){if(ws.readyState===WebSocket.OPEN){try{ws.send(JSON.stringify({type:'ping'}))}catch(e){}}},25000);
+  };
+  ws.onmessage=function(evt){
+    try{
+      var m=JSON.parse(evt.data);
+      if(m.type==='sensor_update'){handleSensorData(m.data,m.timestamp,m.id,m.timestamp)}
+      else if(m.type==='sim_reset'){document.getElementById('simModeLabel').textContent='模式: 真实传感器';document.getElementById('simModeLabel').style.color='var(--text-dim)';document.getElementById('simDebug').style.display='none';showToast('success','MCU 已恢复真实传感器模式')}
+    }catch(e){console.warn('WS msg err:',e)}
+  };
+  ws.onclose=function(){
+    if(ws._heartbeat){clearInterval(ws._heartbeat);ws._heartbeat=null}
+    startPolling();
+    // ★ 指数退避重连，最多 10 次
+    if(_reconnectAttempts<_maxReconnect){
+      var delay=Math.min(2000*Math.pow(1.5,_reconnectAttempts),30000);
+      _reconnectAttempts++;
+      console.log('[SmartMonitor] WS 断开，'+Math.round(delay)+'ms后重连 (第'+_reconnectAttempts+'次)');
+      document.getElementById('wsDot').className='status-dot offline';
+      document.getElementById('wsStatus').textContent='WS 断开，'+Math.round(delay/1000)+'s后重连...';
+      setTimeout(connectWS,delay);
+    }else{
+      console.warn('[SmartMonitor] 达到最大重连次数，仅保持 HTTP 轮询');
+      document.getElementById('wsStatus').textContent='WS 重连失败，仅HTTP轮询中...';
+    }
+  };
+  ws.onerror=function(e){
+    console.warn('[SmartMonitor] WS onerror 触发');
+    try{ws.close()}catch(_){}
+  };
+}
+function startPolling(){
+  if(_pollTimer)return;
+  console.log('[SmartMonitor] 启动 HTTP 轮询 (2s间隔)');
+  document.getElementById('wsStatus').textContent='HTTP 轮询中...';
+  _pollTimer=setInterval(pollLatest,2000);
+  pollLatest(); // 立即拉一次
+}
+function stopPolling(){if(_pollTimer){clearInterval(_pollTimer);_pollTimer=null}}
+async function pollLatest(){
+  try{
+    var r=await fetch('/api/sensors/recent?limit=1');
+    if(r.ok){var rows=await r.json();if(rows.length>0)handleSensorData(rows[0],rows[0].ts)}
+  }catch(e){}
+}
+// 立即启动 WebSocket 连接
+connectWS();
+
+// ===== 传感器数据处理 =====
+function handleSensorData(data,ts){
+  document.getElementById('valDs18Temp').textContent=data.ds18b20_t!=null?data.ds18b20_t.toFixed(4):'--';
+  document.getElementById('valDhtH').textContent=data.dht11_h!=null?data.dht11_h.toFixed(1):'--';
+  document.getElementById('valLight').textContent=data.light_raw!=null?data.light_raw:'--';
+  document.getElementById('valMq135').textContent=data.mq135_v!=null?data.mq135_v.toFixed(3):'--';
+  updateAlert(data.level||0,data.reason||'');
+  var t=ts||new Date().toLocaleTimeString();document.getElementById('lastUpdate').textContent=t;
+  document.getElementById('envTemp').textContent=data.ds18b20_t!=null?data.ds18b20_t.toFixed(2):'--';
+  document.getElementById('envHumi').textContent=data.dht11_h!=null?data.dht11_h.toFixed(1):'--';
+  updateDoTags(data.mq135_do,data.photo_do);
+  TL.push(t);if(TL.length>MAX_POINTS)TL.shift();
+  // Chart 更新（如果 Block2 已加载，这些函数就有实际逻辑；否则是空操作）
+  aDP(window.cT,TDS,data.ds18b20_t);aDP(window.cH,TDh,data.dht11_h);aDP(window.cG,TG,data.mq135_v);
+  aDP(window.cL,TLi,data.light_raw);
+}
+
+// ===== 初始数据加载 =====
+async function loadInitialData(){
+  try{
+    var r=await fetch('/api/sensors/recent?limit=60');if(r.ok){
+      var rows=await r.json();
+      for(var i=0;i<rows.length;i++){var R=rows[i];TL.push(R.ts);if(TL.length>MAX_POINTS)TL.shift();TDS.push(R.ds18b20_t);if(TDS.length>MAX_POINTS)TDS.shift();TDh.push(R.dht11_h);if(TDh.length>MAX_POINTS)TDh.shift();TG.push(R.mq135_v);if(TG.length>MAX_POINTS)TG.shift();TLi.push(R.light_raw);if(TLi.length>MAX_POINTS)TLi.shift()}
+      if(rows.length>0){var last=rows[rows.length-1];handleSensorData(last,last.ts);updAll()}
+    }
+    var ir=await fetch('/api/inventory');if(ir.ok)renderInventory(await ir.json());
+    var sr=await fetch('/api/status');if(sr.ok){
+      var s=await sr.json();
+      if(s.last_update){updateAlert(s.level||0,s.reason||'');document.getElementById('valDs18Temp').textContent=s.ds18b20_t!=null?s.ds18b20_t.toFixed(4):'--';document.getElementById('valDhtH').textContent=s.dht11_h!=null?s.dht11_h.toFixed(1):'--';document.getElementById('valLight').textContent=s.light_raw!=null?s.light_raw:'--';document.getElementById('valMq135').textContent=s.mq135_v!=null?s.mq135_v.toFixed(3):'--';document.getElementById('lastUpdate').textContent=s.last_update||'--';document.getElementById('envTemp').textContent=s.ds18b20_t!=null?s.ds18b20_t.toFixed(2):'--';document.getElementById('envHumi').textContent=s.dht11_h!=null?s.dht11_h.toFixed(1):'--';updateDoTags(s.mq135_do,s.photo_do)}
+    }
+    await loadCheckLog();
+  }catch(e){console.warn('Load err:',e)}
+}
+console.log('[SmartMonitor] Block1 执行完毕，启动初始数据加载');
+loadInitialData();
+</script>
+
+<!-- ====== Block 2: Chart.js 图表层 ====== 仅在 Chart 加载成功时生效 -->
+<script>
+(function(){
+  if(typeof Chart==='undefined'){
+    console.warn('[SmartMonitor] Chart.js 未加载（CDN不可达），图表将不可用。传感器卡片不受影响。');
+    // 在图表区域显示友好提示
+    var wraps=document.querySelectorAll('.chart-wrap');
+    for(var i=0;i<wraps.length;i++){
+      wraps[i].innerHTML='<div style="display:flex;align-items:center;justify-content:center;height:100%;color:#8899aa;font-size:14px;">📊 图表模块不可用 (CDN 加载失败)</div>';
+    }
+    return;
+  }
+  console.log('[SmartMonitor] Block2: Chart.js 已加载，初始化图表...');
+
+  var CC={temp:'#ff7043',humi:'#42a5f5',gas:'#ab47bc',light:'#ffca28'};
+  function mkChart(id,lbl,c,yl,ymin,ymax){
+    var ctx=document.getElementById(id).getContext('2d');
+    return new Chart(ctx,{type:'line',data:{labels:[],datasets:[{label:lbl,data:[],borderColor:c,backgroundColor:c+'22',borderWidth:2,pointRadius:0,tension:.3,fill:true}]},options:{responsive:true,maintainAspectRatio:false,animation:{duration:300},scales:{x:{display:false},y:{title:{display:true,text:yl,color:'#8899aa'},ticks:{color:'#8899aa',font:{size:10}},grid:{color:'#2a3a4a33'},min:ymin, max:ymax}},plugins:{legend:{labels:{color:'#8899aa',font:{size:10}}}}}});
+  }
+  window.cT=mkChart('chartTemp','DS18B20 温度',CC.temp,'°C',0,50);
+  window.cH=mkChart('chartHumi','DHT11 湿度',CC.humi,'%RH',0,100);
+  window.cG=mkChart('chartGas','MQ-135 电压',CC.gas,'V',0,3.3);
+  window.cL=mkChart('chartLight','光敏ADC',CC.light,'raw',0,4095);
+
+  // 重新定义 Chart 更新函数（覆盖 Block1 的空操作）
+  aDP=function(c,d,v){
+    if(!c||v==null)return;d.push(v);if(d.length>MAX_POINTS)d.shift();
+    c.data.datasets[0].data=d;c.data.labels=TL;c.update();
+  };
+  updAll=function(){
+    if(window.cT){window.cT.data.datasets[0].data=TDS;window.cT.data.labels=TL;window.cT.update()}
+    if(window.cH){window.cH.data.datasets[0].data=TDh;window.cH.data.labels=TL;window.cH.update()}
+    if(window.cG){window.cG.data.datasets[0].data=TG;window.cG.data.labels=TL;window.cG.update()}
+    if(window.cL){window.cL.data.datasets[0].data=TLi;window.cL.data.labels=TL;window.cL.update()}
+  };
+  console.log('[SmartMonitor] Block2: 图表初始化完成');
+})();
+</script>
+
+<!-- ====== Block 3: 业务模块 ====== 库存/摄像头/出入库/Toast -->
+<script>
+console.log('[SmartMonitor] Block3: 业务模块初始化...');
+
+// ===== 仿真注入模块 (字段对齐 ESP32-P4 MCU 协议) =====
+var SIM_PRESETS={
+  'L0':{dht11_t:25,dht11_h:60,ds18b20_t:25.0,mq135_v:1.2,mq135_do:1,photo_raw:2000,photo_do:1,desc:'全部正常'},
+  'L1':{dht11_t:25,dht11_h:86,ds18b20_t:25.0,mq135_v:1.2,mq135_do:1,photo_raw:100,photo_do:0,desc:'光敏+湿度报警'},
+  'L2':{dht11_t:39,dht11_h:60,ds18b20_t:25.0,mq135_v:2.8,mq135_do:0,photo_raw:2000,photo_do:1,desc:'MQ135+高温'},
+  'L3':{dht11_t:39,dht11_h:60,ds18b20_t:38.5,mq135_v:2.8,mq135_do:0,photo_raw:2000,photo_do:1,desc:'多源紧急'},
+};
+function updateSimVal(sliderId,labelId){
+  var s=document.getElementById(sliderId),v=document.getElementById(labelId);
+  var step=parseFloat(s.step)||1;
+  v.textContent=(step>=1)?parseInt(s.value):parseFloat(s.value).toFixed(1);
+}
+function loadSimPreset(level){
+  var p=SIM_PRESETS[level];if(!p)return;
+  document.getElementById('simDht11T').value=p.dht11_t;updateSimVal('simDht11T','simVDht11T');
+  document.getElementById('simDht11H').value=p.dht11_h;updateSimVal('simDht11H','simVDht11H');
+  document.getElementById('simDs18T').value=p.ds18b20_t;updateSimVal('simDs18T','simVDs18T');
+  document.getElementById('simMq135V').value=p.mq135_v;updateSimVal('simMq135V','simVMq135V');
+  document.getElementById('simPhotoRaw').value=p.photo_raw;updateSimVal('simPhotoRaw','simVPhotoRaw');
+  document.getElementById('simMq135Do').checked=p.mq135_do===1;
+  document.getElementById('simPhotoDo').checked=p.photo_do===1;
+  showToast('success','已加载预设: '+level+' — '+p.desc);
+}
+async function applySimInject(){
+  var p={
+    dht11_t:parseInt(document.getElementById('simDht11T').value),
+    dht11_h:parseInt(document.getElementById('simDht11H').value),
+    ds18b20_t:parseFloat(document.getElementById('simDs18T').value),
+    mq135_v:parseFloat(document.getElementById('simMq135V').value),
+    photo_raw:parseInt(document.getElementById('simPhotoRaw').value),
+    mq135_do:document.getElementById('simMq135Do').checked?1:0,
+    photo_do:document.getElementById('simPhotoDo').checked?1:0
+    // level/reason 由 MCU 内部计算，前端不传
+  };
+  try{
+    var r=await fetch('/api/sim/inject',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(p)});
+    var rs=await r.json();
+    showToast(rs.ok?'success':'error',rs.message);
+    if(rs.ok){document.getElementById('simModeLabel').textContent='模式: 仿真注入 (MCU处理中...)';document.getElementById('simModeLabel').style.color='var(--red)';document.getElementById('simDebug').style.display='block';document.getElementById('simDebug').textContent='已发送到 MCU: '+JSON.stringify(p,null,2)+'\n等待 ESP32 回传数据...'}
+  }catch(e){showToast('error','仿真注入失败: '+e.message)}
+}
+async function resetSimInject(){
+  try{
+    var r=await fetch('/api/sim/reset',{method:'POST'});
+    var rs=await r.json();
+    showToast(rs.ok?'success':'error',rs.message);
+    if(rs.ok){document.getElementById('simModeLabel').textContent='模式: 真实传感器 (等待MCU恢复...)';document.getElementById('simModeLabel').style.color='var(--text-dim)';document.getElementById('simDebug').style.display='block';document.getElementById('simDebug').textContent='已发送 reset 到 MCU，等待真实数据回传...'}
+  }catch(e){showToast('error','恢复失败: '+e.message)}
+}
+function toggleSimPanel(){
+  var c=document.getElementById('simContent');c.style.display=c.style.display==='none'?'block':'none';
+}
+// 查询初始仿真状态
+(async function(){
+  try{var r=await fetch('/api/sim/status');if(r.ok){var s=await r.json();if(s.active){document.getElementById('simModeLabel').textContent='模式: 仿真注入 (MCU处理中...)';document.getElementById('simModeLabel').style.color='var(--red)';document.getElementById('simDebug').style.display='block';document.getElementById('simDebug').textContent='仿真模式已激活, ESP32 IP: '+s.esp_ip}}}catch(e){}
+})();
+
+function renderInventory(items){
+  var c=document.getElementById('inventoryTable');
+  if(!items||!items.length){c.innerHTML='<div class="empty-state">暂无库存数据</div>';return}
+  var sc=function(s){return s==='在库'?'status-in':'status-out'};
+  // 分类 → 行样式映射
+  var rc=function(cat){
+    if(!cat)return'';
+    if(cat==='氮肥')return' tr-nitrogen';
+    if(cat==='钾肥')return' tr-potash';
+    if(cat==='复合肥')return' tr-compound';
+    return'';
+  };
+  var h='<table><thead><tr><th>编号</th><th>名称</th><th>类别</th><th>批号</th><th>规格</th><th>生产日期</th><th>有效期</th><th>入库时间</th><th>入库温度</th><th>入库湿度</th><th>状态</th><th style="width:60px">操作</th></tr></thead><tbody>';
+  for(var i=0;i<items.length;i++){var it=items[i];h+='<tr class="'+rc(it.category)+'"><td>'+it.id+'</td><td>'+it.name+'</td><td>'+(it.category||'-')+'</td><td>'+(it.batch||'-')+'</td><td>'+(it.spec||'-')+'</td><td>'+(it.mfg_date||'-')+'</td><td>'+(it.exp_date||'-')+'</td><td>'+(it.checkin_time||'-')+'</td><td>'+(it.checkin_temp!=null?it.checkin_temp.toFixed(1):'-')+'°C</td><td>'+(it.checkin_humi!=null?it.checkin_humi.toFixed(1):'-')+'%</td><td><span class="status-badge '+sc(it.status)+'">'+it.status+'</span></td><td><button class="btn-del-row" onclick="deleteInventoryItem(\''+it.id.replace(/'/g,"\\'")+'\')" title="删除此物料及关联流水">✕ 删除</button></td></tr>';}
+  h+='</tbody></table>';c.innerHTML=h;
+}
+setInterval(async function(){try{var r=await fetch('/api/inventory');if(r.ok)renderInventory(await r.json());loadInventoryStats()}catch(e){}},10000);
+
+// ===== 库存分类统计 =====
+async function loadInventoryStats(){
+  try{
+    var r=await fetch('/api/inventory/stats');
+    if(!r.ok)return;
+    var d=await r.json();
+    var map={'氮肥':{t:'catNTotal',s:'catNStock'},'钾肥':{t:'catKTotal',s:'catKStock'},'复合肥':{t:'catCTotal',s:'catCStock'}};
+    (d.categories||[]).forEach(function(c){
+      var m=map[c.category];
+      if(m){document.getElementById(m.t).textContent=c.total;document.getElementById(m.s).textContent=c.in_stock}
+    });
+    // 未出现的分类归零
+    ['氮肥','钾肥','复合肥'].forEach(function(k){
+      var found=(d.categories||[]).some(function(c){return c.category===k});
+      if(!found){var m=map[k];document.getElementById(m.t).textContent='0';document.getElementById(m.s).textContent='0'}
+    });
+    document.getElementById('catAllTotal').textContent=d.total.total;
+    document.getElementById('catAllStock').textContent=d.total.in_stock;
+  }catch(e){}
+}
+loadInventoryStats();
+
+// ===== 摄像头模块 (Canvas 快照轮询, 消除 Chrome MJPEG 缓冲延迟) =====
+var _camPollTimer=null,_camPollInterval=200,_camLastW=0,_camLastH=0,_camPolling=false;
+function startCam(){
+  if(_camPolling)return;_camPolling=true;  // 防止重复启动
+  updateCamSnapshot();
+  pollCam();setInterval(pollCam,3000);
+}
+function updateCamSnapshot(){
+  // 视频流关闭时：显示黑屏，不请求摄像头
+  if(!document.getElementById('camToggle').checked){
+    var canvas=document.getElementById('camCanvas');
+    var vp=document.getElementById('camViewport');
+    var ctx=canvas.getContext('2d');
+    var w=vp.clientWidth,h=vp.clientHeight;
+    if(w!==_camLastW||h!==_camLastH){canvas.width=w;canvas.height=h;_camLastW=w;_camLastH=h}
+    ctx.fillStyle='#000';ctx.fillRect(0,0,canvas.width,canvas.height);
+    canvas.style.display='block';
+    document.getElementById('camPlaceholder').style.display='none';
+    if(_camPolling)_camPollTimer=setTimeout(updateCamSnapshot,_camPollInterval);
+    return;
+  }
+  fetch('/api/camera/snapshot?'+Date.now(),{cache:'no-store'})
+    .then(function(r){if(!r.ok)throw new Error('status '+r.status);return r.blob()})
+    .then(function(blob){
+      var canvas=document.getElementById('camCanvas');
+      var vp=document.getElementById('camViewport');
+      var ctx=canvas.getContext('2d');
+      var w=vp.clientWidth,h=vp.clientHeight;
+      if(w!==_camLastW||h!==_camLastH){canvas.width=w;canvas.height=h;_camLastW=w;_camLastH=h}
+      var img=new Image(),_objUrl=URL.createObjectURL(blob);
+      img.onload=function(){
+        URL.revokeObjectURL(_objUrl);  // ★ 释放 Blob URL 防止内存泄漏
+        ctx.fillStyle='#000';ctx.fillRect(0,0,canvas.width,canvas.height);
+        var scale=Math.min(canvas.width/img.width,canvas.height/img.height);
+        var dw=img.width*scale,dh=img.height*scale;
+        var dx=(canvas.width-dw)/2,dy=(canvas.height-dh)/2;
+        ctx.drawImage(img,dx,dy,dw,dh);
+        canvas.style.display='block';
+        document.getElementById('camPlaceholder').style.display='none';
+      };
+      img.onerror=function(){
+        URL.revokeObjectURL(_objUrl);  // ★ 错误时也要释放
+        throw new Error('decode');
+      };
+      img.src=_objUrl;
+    }).catch(function(e){
+      console.warn('[Cam] snapshot fail:',e.message||e);
+      document.getElementById('camCanvas').style.display='none';
+      document.getElementById('camPlaceholder').style.display='flex';
+    }).finally(function(){
+      if(_camPolling)_camPollTimer=setTimeout(updateCamSnapshot,_camPollInterval);
+    });
+}
+async function pollCam(){
+  try{
+    var r=await fetch('/api/camera/status');if(!r.ok)return;
+    var s=await r.json();
+    var ch=document.getElementById('camChipStatus');
+    ch.textContent=s.online?'ONLINE':'STANDBY';ch.className=s.online?'cam-chip online-dot':'cam-chip offline-dot';
+    document.getElementById('camChipFps').textContent='FPS: '+s.fps;
+    document.getElementById('camFrameCount').textContent=s.total_frames||0;
+    document.getElementById('camConnText').textContent=s.running?'运行中':'已停止';
+    // 同步视频流开关状态
+    document.getElementById('camToggle').checked=s.stream_enabled;
+    document.getElementById('camToggleLabel').textContent=s.stream_enabled?'视频流':'已暂停';
+    document.getElementById('btnScan').disabled=!(s.online&&whMode!==null);
+  }catch(e){}
+}
+startCam();
+
+// ===== 出入库管理 =====
+var whMode=null,lastScanItem=null;
+
+function setMode(m){
+  if(whMode===m){whMode=null;
+    ['Inbound','Outbound'].forEach(function(k){var b=document.getElementById('btn'+k);b.classList.remove('active');b.classList.add('btn-idle')});
+    document.getElementById('camModeTag').className='cam-mode-tag mode-tag-idle';document.getElementById('camModeTag').textContent='待机模式';document.getElementById('btnScan').disabled=true;return}
+  whMode=m;
+  var bI=document.getElementById('btnInbound'),bO=document.getElementById('btnOutbound');
+  bI.classList.remove('active','btn-idle');bO.classList.remove('active','btn-idle');
+  if(m==='inbound'){bI.classList.add('active');bO.classList.add('btn-idle');document.getElementById('camModeTag').className='cam-mode-tag mode-tag-inbound';document.getElementById('camModeTag').textContent='入库模式'}
+  else{bO.classList.add('active');bI.classList.add('btn-idle');document.getElementById('camModeTag').className='cam-mode-tag mode-tag-outbound';document.getElementById('camModeTag').textContent='出库模式'}
+  document.getElementById('btnScan').disabled=!document.getElementById('camChipStatus').classList.contains('online-dot')
+}
+
+async function doScan(){
+  var btn=document.getElementById('btnScan');btn.disabled=true;btn.innerHTML='<span class="spinner"></span> 正在扫码...';
+  try{
+    var r=await fetch('/api/camera/scan',{method:'POST'});
+    var res=await r.json();
+    if(res.success){lastScanItem=res.item;showSR(res.item);showToast('success','识别到: '+res.item.id+' — '+(res.item.name||''));await execWH()}
+    else{showToast('warn',res.message||'扫码失败');clearSR()}
+  }catch(e){showToast('error','扫码请求失败: '+e.message)}
+  btn.disabled=false;btn.innerHTML='🔍 点击扫码识别二维码';
+}
+function showSR(i){
+  document.getElementById('scanEmptyText').style.display='none';
+  document.getElementById('scanResultTable').style.display='table';
+  document.getElementById('srId').textContent=i.id||'-';
+  document.getElementById('srName').textContent=i.name||'-';
+  document.getElementById('srCategory').textContent=i.category||'-';
+  document.getElementById('srBatch').textContent=i.batch||'-';
+  document.getElementById('srSpec').textContent=i.spec||'-';
+  document.getElementById('srMfgDate').textContent=i.mfg_date||'-';
+  document.getElementById('srExpDate').textContent=i.exp_date||'-';
+}
+function clearSR(){document.getElementById('scanEmptyText').style.display='flex';document.getElementById('scanResultTable').style.display='none';lastScanItem=null}
+
+async function execWH(){
+  if(!lastScanItem||!whMode)return;
+  var env={temp:0,humi:0,level:0};
+  try{var er=await fetch('/api/env-snapshot');if(er.ok)env=await er.json()}catch(e){}
+  if(whMode==='inbound'){
+    var p={item_id:lastScanItem.id,name:lastScanItem.name||'',category:lastScanItem.category||'',batch:lastScanItem.batch||'',spec:lastScanItem.spec||'',mfg_date:lastScanItem.mfg_date||'',exp_date:lastScanItem.exp_date||'',env_temp:env.temp||0,env_humi:env.humi||0,env_level:env.level||0};
+    var r=await fetch('/api/warehouse/checkin',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(p)});
+    var rs=await r.json();addWL(rs.ok?'in':'warn',rs.message);showToast(rs.ok?'success':'error',rs.message);if(rs.ok)refreshWH()
+  }else if(whMode==='outbound'){
+    var p2={item_id:lastScanItem.id,env_temp:env.temp||0,env_humi:env.humi||0,env_level:env.level||0};
+    var r2=await fetch('/api/warehouse/checkout',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(p2)});
+    var rs2=await r2.json();addWL(rs2.ok?'out':'warn',rs2.message);showToast(rs2.ok?'success':'error',rs2.message);if(rs2.ok)refreshWH()
+  }
+}
+async function refreshWH(){try{var r=await fetch('/api/inventory');if(r.ok)renderInventory(await r.json());loadInventoryStats()}catch(e){}await loadCheckLog()}
+
+function addWL(t,msg){
+  var a=document.getElementById('whLogArea');
+  var now=new Date().toLocaleTimeString('zh-CN',{hour12:false});
+  var ac='',at='';
+  if(t==='in'){ac='log-action-in';at='入库'}else if(t==='out'){ac='log-action-out';at='出库'}else{at='提示'}
+  var e=document.createElement('div');e.className='log-entry';
+  e.innerHTML='<span class="log-time">'+now+'</span>'+(at?'<span class="log-action '+ac+'">'+at+'</span>':'')+'<span class="log-msg">'+msg+'</span>';
+  var ph=a.querySelector('.log-entry:last-child');
+  if(ph&&ph.querySelector('.log-msg')&&ph.querySelector('.log-msg').textContent.indexOf('等待操作')>=0)ph.remove();
+  a.insertBefore(e,a.firstChild);
+  while(a.children.length>30)a.removeChild(a.lastChild)
+}
+async function loadCheckLog(){
+  try{var r=await fetch('/api/warehouse/log?limit=10');if(r.ok){var logs=await r.json();var a=document.getElementById('whLogArea');a.innerHTML='';for(var i=0;i<logs.length;i++){var l=logs[i];addWL(l.action==='入库'?'in':(l.action==='出库'?'out':'info'),l.item_id+' | '+l.action+(l.timestamp?' @ '+l.timestamp:''))}}}catch(e){}
+}
+
+// ===== 清空全部出入库流水 =====
+async function clearCheckLog(){
+  if(!confirm('确定要清空全部出入库流水记录吗？此操作不可撤销。'))return;
+  try{
+    var r=await fetch('/api/warehouse/log',{method:'DELETE'});
+    var rs=await r.json();
+    showToast(rs.ok?'success':'error',rs.message);
+    if(rs.ok){var a=document.getElementById('whLogArea');a.innerHTML='<div class="log-entry"><span class="log-time">--:--:--</span><span class="log-msg" style="color:var(--text-dim)">等待操作...</span></div>'}
+  }catch(e){showToast('error','清空失败: '+e.message)}
+}
+
+// ===== 删除库存物料 =====
+async function deleteInventoryItem(id){
+  if(!confirm('确定删除物料 '+id+' 吗？关联的流水记录也会一并删除。'))return;
+  try{
+    var r=await fetch('/api/inventory/'+encodeURIComponent(id),{method:'DELETE'});
+    var rs=await r.json();
+    showToast(rs.ok?'success':'error',rs.message);
+    if(rs.ok){refreshWH()}
+  }catch(e){showToast('error','删除失败: '+e.message)}
+}
+
+// ===== 手动新增物料弹窗 =====
+function openAddInventoryModal(){
+  var cls=document.getElementById('addInvModal');if(cls){cls.remove();return}
+  var h='<div class="modal-overlay" id="addInvModal" onclick="if(event.target===this)this.remove()">';
+  h+='<div class="modal-box" style="max-width:520px">';
+  h+='<h3>📦 手动新增库存物料</h3>';
+  h+='<div class="form-row"><label>物料编号＊</label><input id="addInvId" placeholder="例如: FERT-20260611-999-01"></div>';
+  h+='<div class="form-row"><label>品名＊</label><input id="addInvName" placeholder="例如: 碳酸氢铵"></div>';
+  h+='<div class="form-row"><label>类别</label><select id="addInvCat"><option value="氮肥">氮肥</option><option value="钾肥">钾肥</option><option value="复合肥">复合肥</option></select></div>';
+  h+='<div class="form-row"><label>批次</label><input id="addInvBatch" placeholder="例如: B2026-0611"></div>';
+  h+='<div class="form-row"><label>规格</label><input id="addInvSpec" placeholder="例如: 50kg/袋" value="50kg/袋"></div>';
+  h+='<div class="form-row"><label>生产日期</label><input id="addInvMfg" type="date" value="2026-06-01"></div>';
+  h+='<div class="form-row"><label>有效期</label><input id="addInvExp" type="date" value="2027-06-01"></div>';
+  h+='<div class="modal-actions">';
+  h+='<button class="btn-submit" onclick="submitAddInventory()">✅ 确认新增</button>';
+  h+='<button class="btn-close-modal" onclick="document.getElementById(\'addInvModal\').remove()">取消</button>';
+  h+='</div></div></div>';
+  document.body.insertAdjacentHTML('beforeend',h);
+}
+
+async function submitAddInventory(){
+  var id=document.getElementById('addInvId').value.trim();
+  var name=document.getElementById('addInvName').value.trim();
+  if(!id||!name){showToast('warn','物料编号和品名为必填项');return}
+  var p={
+    id:id, name:name,
+    category:document.getElementById('addInvCat').value,
+    batch:document.getElementById('addInvBatch').value.trim(),
+    spec:document.getElementById('addInvSpec').value.trim(),
+    mfg_date:document.getElementById('addInvMfg').value,
+    exp_date:document.getElementById('addInvExp').value,
+    checkin_time:'', checkin_temp:0, checkin_humi:0, status:'在库'
+  };
+  try{
+    var r=await fetch('/api/inventory/add',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(p)});
+    var rs=await r.json();
+    showToast(rs.ok?'success':'error',rs.message);
+    if(rs.ok){document.getElementById('addInvModal').remove();refreshWH()}
+  }catch(e){showToast('error','新增失败: '+e.message)}
+}
+
+// Toast 通知
+function showToast(type,msg,dur){
+  if(!dur)dur=3500;
+  var c=document.getElementById('toastContainer');
+  var t=document.createElement('div');t.className='toast toast-'+type;t.textContent=msg;c.appendChild(t);
+  setTimeout(function(){t.classList.add('toast-exit');setTimeout(function(){t.remove()},280)},dur)
+}
+
+// ===== 摄像头视频流开关 =====
+async function toggleCameraStream(){
+  try{
+    var r=await fetch('/api/camera/stream',{method:'POST'});
+    var s=await r.json();
+    document.getElementById('camToggle').checked=s.enabled;
+    document.getElementById('camToggleLabel').textContent=s.enabled?'视频流':'已暂停';
+    showToast('success',s.enabled?'视频流已开启':'视频流已关闭');
+    // 立即刷新画面：关闭时切黑屏，开启时恢复拉流
+    if(_camPollTimer){clearTimeout(_camPollTimer);_camPollTimer=null}
+    updateCamSnapshot();
+  }catch(e){showToast('error','切换失败: '+e.message);}
+}
+
+// ===== 报警历史面板 =====
+var _alarmPage=1,_alarmPageSize=20;
+
+async function loadAlarmSummary(){
+  try{
+    var r=await fetch('/api/alarms/summary');
+    if(r.ok){
+      var s=await r.json();
+      document.getElementById('alarmSummary').textContent='共 '+s.total_count+' 条，未确认 '+s.unacknowledged+' | 最新: L'+s.latest_level+' '+(s.latest_reason||'');
+    }
+  }catch(e){}
+}
+
+async function loadAlarmList(page){
+  if(!page)page=_alarmPage;_alarmPage=page;
+  var lv=document.getElementById('alarmLevelFilter').value;
+  try{
+    var r=await fetch('/api/alarms?page='+page+'&page_size='+_alarmPageSize+'&level='+lv);
+    if(!r.ok)return;
+    var res=await r.json();
+    var tbody=document.getElementById('alarmTableBody');
+    if(!res.items||!res.items.length){tbody.innerHTML='<div class="empty-state">暂无报警记录</div>';document.getElementById('alarmPager').innerHTML='';return}
+    var h='<table class="alarm-table"><thead><tr><th>时间</th><th>级别</th><th>原因</th><th>温度</th><th>湿度</th><th>MQ135</th><th>快照</th><th>确认</th></tr></thead><tbody>';
+    for(var i=0;i<res.items.length;i++){
+      var it=res.items[i];
+      h+='<tr class="'+(it.acknowledged?'':'unack')+'" onclick="openAlarmDetail('+it.id+')">';
+      h+='<td style="white-space:nowrap">'+(it.ts||'')+'</td>';
+      h+='<td><span class="alarm-lv lv-'+it.level+'">L'+it.level+'</span></td>';
+      h+='<td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(it.reason||'-')+'</td>';
+      h+='<td>'+(it.ds18b20_t!=null?it.ds18b20_t.toFixed(1)+'°C':'-')+'</td>';
+      h+='<td>'+(it.dht11_h!=null?it.dht11_h.toFixed(1)+'%':'-')+'</td>';
+      h+='<td>'+(it.mq135_v!=null?it.mq135_v.toFixed(2)+'V':'-')+'</td>';
+      h+='<td>'+(it.has_snapshot?'📸':'-')+'</td>';
+      h+='<td>'+(it.acknowledged?'✅':'<button class="btn-sm" onclick="event.stopPropagation();ackAlarm('+it.id+')" style="font-size:.65rem">确认</button>')+'</td>';
+      h+='</tr>';
+    }
+    h+='</tbody></table>';tbody.innerHTML=h;
+    // 分页器
+    var totalPages=Math.ceil(res.total/_alarmPageSize);
+    var pager='<button '+(page<=1?'disabled':'')+' onclick="loadAlarmList('+(page-1)+')">◀ 上一页</button>';
+    pager+='<span>第 '+page+'/'+totalPages+' 页 (共 '+res.total+' 条)</span>';
+    pager+='<button '+(page>=totalPages?'disabled':'')+' onclick="loadAlarmList('+(page+1)+')">下一页 ▶</button>';
+    document.getElementById('alarmPager').innerHTML=pager;
+  }catch(e){console.warn('Alarm load err:',e)}
+}
+
+async function openAlarmDetail(id){
+  try{
+    var r=await fetch('/api/alarms/'+id);if(!r.ok)return;
+    var d=await r.json();if(!d.event)return;
+    var e=d.event;
+    var lvlMap={0:'正常',1:'预警',2:'严重',3:'紧急'};
+    var h='<div class="modal-overlay" id="alarmModal" onclick="if(event.target===this)closeAlarmModal()">';
+    h+='<div class="modal-box">';
+    h+='<h3><span class="alarm-lv lv-'+e.level+'">L'+e.level+' '+lvlMap[e.level]+'</span> 报警详情</h3>';
+    h+='<table>';
+    h+='<tr><td>时间</td><td>'+e.ts+'</td></tr>';
+    h+='<tr><td>原因</td><td>'+e.reason+'</td></tr>';
+    h+='<tr><td>DS18B20 温度</td><td>'+(e.ds18b20_t!=null?e.ds18b20_t.toFixed(2)+'°C':'-')+'</td></tr>';
+    h+='<tr><td>DHT11 湿度</td><td>'+(e.dht11_h!=null?e.dht11_h.toFixed(1)+'%':'-')+'</td></tr>';
+    h+='<tr><td>MQ-135 电压</td><td>'+(e.mq135_v!=null?e.mq135_v.toFixed(3)+'V':'-')+'</td></tr>';
+    h+='<tr><td>MQ-135 DO</td><td>'+(e.mq135_do!=null?(e.mq135_do===1?'正常':'报警'):'-')+'</td></tr>';
+    h+='<tr><td>光敏ADC</td><td>'+(e.light_raw!=null?e.light_raw+' raw':'-')+'</td></tr>';
+    h+='<tr><td>光敏 DO</td><td>'+(e.photo_do!=null?(e.photo_do===1?'正常':'报警'):'-')+'</td></tr>';
+    h+='<tr><td>确认状态</td><td>'+(e.acknowledged?'✅ 已确认':'⚠️ 未确认')+'</td></tr>';
+    h+='</table>';
+    if(d.snapshot_b64){
+      h+='<h3 style="font-size:.85rem;margin-bottom:8px;">📸 现场快照</h3>';
+      h+='<img src="data:image/jpeg;base64,'+d.snapshot_b64+'" alt="报警现场快照">';
+    }else{
+      h+='<p style="color:var(--text-dim);font-size:.85rem;">📷 无现场快照（摄像头可能未连接）</p>';
+    }
+    h+='<div class="modal-actions">';
+    if(!e.acknowledged)h+='<button class="btn-ack" onclick="ackAlarm('+e.id+')">✅ 确认此报警</button>';
+    h+='<button class="btn-close-modal" onclick="closeAlarmModal()">关闭</button>';
+    h+='</div></div></div>';
+    document.body.insertAdjacentHTML('beforeend',h);
+  }catch(e2){console.warn('Alarm detail err:',e2)}
+}
+
+function closeAlarmModal(){
+  var m=document.getElementById('alarmModal');if(m)m.remove();
+}
+
+async function ackAlarm(id){
+  try{
+    var r=await fetch('/api/alarms/'+id+'/ack',{method:'POST'});
+    var res=await r.json();
+    if(res.ok){showToast('success','报警已确认');loadAlarmList();loadAlarmSummary()}
+    else showToast('error','确认失败')
+  }catch(e){showToast('error','确认失败: '+e.message)}
+}
+
+// ===== 清空全部报警记录 =====
+async function clearAlarmRecords(){
+  if(!confirm('确定要清空全部报警记录吗？此操作不可撤销。'))return;
+  try{
+    var r=await fetch('/api/alarms',{method:'DELETE'});
+    var rs=await r.json();
+    showToast(rs.ok?'success':'error',rs.message);
+    if(rs.ok){loadAlarmList(1);loadAlarmSummary()}
+  }catch(e){showToast('error','清空失败: '+e.message)}
+}
+
+// 初始加载报警数据
+loadAlarmSummary();loadAlarmList(1);
+setInterval(function(){loadAlarmSummary()},10000);
+
+// ===== 报警配置面板 =====
+// 开关同步：checkbox checked=true → AO模式
+function onAlarmCfgToggle(sensor){
+  if(sensor==='mq'){
+    var ao=document.getElementById('cfgMqSrc').checked;
+    document.getElementById('cfgMqAoGroup').style.display=ao?'block':'none';
+    document.getElementById('cfgMqDoLab').className='cfg-tg-opt'+(ao?'':' active');
+    document.getElementById('cfgMqAoLab').className='cfg-tg-opt'+(ao?' active':'');
+    if(ao){
+      var dirOn=document.getElementById('cfgMqDir').checked;
+      document.getElementById('cfgMqDirAboveLab').className='cfg-tg-opt'+(dirOn?'':' active');
+      document.getElementById('cfgMqDirBelowLab').className='cfg-tg-opt'+(dirOn?' active':'');
+    }
+  }else if(sensor==='ph'){
+    var ao2=document.getElementById('cfgPhSrc').checked;
+    document.getElementById('cfgPhAoGroup').style.display=ao2?'block':'none';
+    document.getElementById('cfgPhDoLab').className='cfg-tg-opt'+(ao2?'':' active');
+    document.getElementById('cfgPhAoLab').className='cfg-tg-opt'+(ao2?' active':'');
+    if(ao2){
+      var dirOn2=document.getElementById('cfgPhDir').checked;
+      document.getElementById('cfgPhDirAboveLab').className='cfg-tg-opt'+(dirOn2?'':' active');
+      document.getElementById('cfgPhDirBelowLab').className='cfg-tg-opt'+(dirOn2?' active':'');
+    }
+  }else if(sensor==='th'){
+    var thOn=document.getElementById('cfgThEn').checked;
+    document.getElementById('cfgThGroup').style.display=thOn?'block':'none';
+    document.getElementById('cfgThOffLab').className='cfg-tg-opt'+(thOn?'':' active');
+    document.getElementById('cfgThOnLab').className='cfg-tg-opt'+(thOn?' active':'');
+  }
+}
+// 滑块 → 数值框同步
+function syncCfgSliderInput(sliderId,numId,decimals){
+  var s=document.getElementById(sliderId),n=document.getElementById(numId);
+  n.value=parseFloat(s.value).toFixed(decimals);
+}
+// 数值框 → 滑块同步
+function syncCfgNumToSlider(numId,sliderId,decimals){
+  var n=document.getElementById(numId),s=document.getElementById(sliderId);
+  var v=parseFloat(n.value);
+  if(isNaN(v)){n.value=s.value;return}
+  var stp=parseFloat(s.step)||1; v=Math.round(v/stp)*stp;
+  v=Math.min(parseFloat(s.max),Math.max(parseFloat(s.min),v));
+  s.value=v; n.value=v.toFixed(decimals);
+}
+
+async function loadAlarmConfigPanel(){
+  try{
+    var r=await fetch('/api/alarm/config');
+    if(!r.ok){showToast('error','加载配置失败');return}
+    var c=await r.json();
+    // MQ-135 报警源 (1=AO)
+    var mqAo=(c.mq135_alarm_src||0)===1;
+    document.getElementById('cfgMqSrc').checked=mqAo;
+    // MQ-135 触发方向 (1=低于)
+    var mqDir=(c.mq135_ao_dir||0)===1;
+    document.getElementById('cfgMqDir').checked=mqDir;
+    // MQ-135 阈值
+    var mqThr=c.mq135_ao_threshold||2.5;
+    document.getElementById('cfgMqAoThr').value=mqThr;
+    document.getElementById('cfgMqAoNum').value=mqThr.toFixed(2);
+    // Photo 报警源
+    var phAo=(c.photo_alarm_src||0)===1;
+    document.getElementById('cfgPhSrc').checked=phAo;
+    // Photo 触发方向 (默认1=低于)
+    var phDir=(c.photo_ao_dir!=null?c.photo_ao_dir:1)===1;
+    document.getElementById('cfgPhDir').checked=phDir;
+    // Photo 阈值
+    var phThr=c.photo_ao_threshold||1000;
+    document.getElementById('cfgPhAoThr').value=phThr;
+    document.getElementById('cfgPhAoNum').value=phThr;
+    // DHT / DS 阈值
+    var dhtT=c.dht11_temp_high||35;
+    document.getElementById('cfgDhtTHi').value=dhtT;
+    document.getElementById('cfgDhtTHiNum').value=dhtT;
+    var dhtH=c.dht11_humi_high||85;
+    document.getElementById('cfgDhtHHi').value=dhtH;
+    document.getElementById('cfgDhtHHiNum').value=dhtH;
+    var dsT=c.ds18b20_temp_high||35;
+    document.getElementById('cfgDsTHi').value=dsT;
+    document.getElementById('cfgDsTHiNum').value=dsT.toFixed(1);
+    // 温湿度报警开关
+    var thEn=(c.temp_humi_alarm_enabled!=null?c.temp_humi_alarm_enabled:1)===1;
+    document.getElementById('cfgThEn').checked=thEn;
+    // 更新开关样式
+    onAlarmCfgToggle('mq'); onAlarmCfgToggle('ph'); onAlarmCfgToggle('th');
+    document.getElementById('alarmCfgUpdated').textContent='上次更新: '+(c.updated_at||'--');
+    showToast('success','已加载当前报警配置');
+  }catch(e){showToast('error','加载配置失败: '+e.message)}
+}
+
+async function saveAlarmConfigPanel(){
+  var cfg={
+    mq135_alarm_src: document.getElementById('cfgMqSrc').checked?1:0,
+    photo_alarm_src: document.getElementById('cfgPhSrc').checked?1:0,
+    mq135_ao_dir: document.getElementById('cfgMqDir').checked?1:0,
+    photo_ao_dir: document.getElementById('cfgPhDir').checked?1:0,
+    mq135_ao_threshold: parseFloat(document.getElementById('cfgMqAoNum').value)||2.5,
+    photo_ao_threshold: parseInt(document.getElementById('cfgPhAoNum').value)||1000,
+    dht11_temp_high: parseInt(document.getElementById('cfgDhtTHiNum').value)||35,
+    dht11_humi_high: parseInt(document.getElementById('cfgDhtHHiNum').value)||85,
+    ds18b20_temp_high: parseFloat(document.getElementById('cfgDsTHiNum').value)||35.0,
+    temp_humi_alarm_enabled: document.getElementById('cfgThEn').checked?1:0
+  };
+  try{
+    var r=await fetch('/api/alarm/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(cfg)});
+    var rs=await r.json();
+    showToast(r.ok?'success':'error',rs.message||'配置已更新');
+    if(r.ok){
+      document.getElementById('alarmCfgUpdated').textContent='上次更新: '+(rs.updated_at||new Date().toLocaleTimeString('zh-CN',{hour12:false}));
+    }
+  }catch(e){showToast('error','下发失败: '+e.message)}
+}
+
+// 初始加载报警配置
+setTimeout(function(){loadAlarmConfigPanel()},1500);
+
+console.log('[SmartMonitor] Block3: 业务模块初始化完成');
+</script>
+
+<!-- ====== Raw Sensor Data Floating Panel ====== -->
+<div id="rawDataPanel" style="display:none;position:fixed;bottom:16px;right:16px;width:420px;max-height:480px;z-index:200;
+  background:linear-gradient(145deg,#1a2733 0%,rgba(15,25,35,.97)100%);
+  border:1px solid var(--border-light);border-radius:12px;padding:16px;
+  box-shadow:0 8px 36px rgba(0,0,0,.6);overflow:hidden;backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+    <h3 style="margin:0;font-size:.85rem;display:flex;align-items:center;gap:6px;">📋 原始传感器数据</h3>
+    <div style="display:flex;gap:6px;">
+      <span id="rawDataCounter" style="font-size:.7rem;color:var(--text-dim);padding:2px 8px;background:rgba(0,0,0,.3);border-radius:4px;">#0</span>
+      <button onclick="toggleRawPanel()" style="background:var(--border);border:1px solid var(--border-light);color:var(--text-dim);
+        cursor:pointer;width:28px;height:28px;border-radius:6px;font-size:.85rem;line-height:1;display:flex;align-items:center;justify-content:center;transition:all .2s;"
+        onmouseover="this.style.borderColor='var(--red)';this.style.color='var(--red)'"
+        onmouseout="this.style.borderColor='var(--border-light)';this.style.color='var(--text-dim)'">✕</button>
+    </div>
+  </div>
+  <pre id="rawDataContent" style="font-family:'Courier New',Consolas,monospace;font-size:.75rem;color:#00bcd4;
+    white-space:pre-wrap;word-break:break-all;
+    max-height:340px;overflow-y:auto;
+    background:rgba(0,0,0,.35);padding:12px;border-radius:8px;border:1px solid rgba(0,188,212,.12);
+    margin:0;scrollbar-width:thin;scrollbar-color:var(--border) transparent;">等待数据...</pre>
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-top:8px;font-size:.72rem;color:var(--text-dim);">
+    <span>接收时间: <span id="rawDataTime" style="color:var(--accent);">--</span></span>
+    <span>记录ID: <span id="rawDataId" style="color:var(--accent);">--</span></span>
+  </div>
+</div>
+
+<!-- Raw data toggle & counter JS -->
+<script>
+var _rawCount=0;
+function toggleRawPanel(){
+  var p=document.getElementById('rawDataPanel');
+  var b=document.getElementById('btnRawData');
+  var show=p.style.display==='none';
+  p.style.display=show?'block':'none';
+  b.style.borderColor=show?'var(--accent)':'var(--border-light)';
+  b.style.color=show?'var(--accent)':'var(--text-dim)';
+}
+// Hook into existing handleSensorData — wrap it to also update raw panel
+(function(){
+  var _orig=handleSensorData;
+  handleSensorData=function(data,ts,rawId,rawTs){
+    _orig(data,ts);
+    var pre=document.getElementById('rawDataContent');
+    if(pre){
+      var obj={};
+      for(var k in data){
+        if(data.hasOwnProperty(k))obj[k]=data[k];
+      }
+      if(rawId)obj._record_id=rawId;
+      obj._receive_time=rawTs||ts||new Date().toLocaleTimeString('zh-CN',{hour12:false});
+      _rawCount++;
+      document.getElementById('rawDataCounter').textContent='#'+_rawCount;
+      document.getElementById('rawDataTime').textContent=obj._receive_time;
+      document.getElementById('rawDataId').textContent=rawId||'--';
+      pre.textContent=JSON.stringify(obj,null,2);
+    }
+  };
+})();
+</script>
+
+</body>
+</html>

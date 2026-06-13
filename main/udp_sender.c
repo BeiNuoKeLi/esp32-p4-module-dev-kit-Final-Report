@@ -11,7 +11,7 @@
  *
  * JSON 报文格式 v2.0（分级报警）：
  *   {"type":"data","level":0,"ts":毫秒,"dht11_t":°C,"dht11_h":%,
- *    "ds18b20_t":°C,"mq135_v":V,"light_v":V,"alert":0/1,"err":位掩码,
+ *    "ds18b20_t":°C,"mq135_v":V,"light_raw":ADC,"alert":0/1,"err":位掩码,
  *    "reason":"触发原因(mq135/dht11_temp/ds18b20_temp/photo/dht11_humi)"}
  *
  * 组包方式（REQUIREMENT.md 6.3）：
@@ -112,27 +112,54 @@ void udp_sender_task(void *arg)
          * esp_timer_get_time() 返回从 boot 开始的微秒数 */
         unsigned long ts = (unsigned long)(esp_timer_get_time() / 1000);
 
-        /* 光敏电压换算（REQUIREMENT.md 5.4）:
-         * voltage = adc_reading * 3.3f / 4095.0f */
-        float light_v = (local.photo_raw >= 0)
-                        ? local.photo_raw * 3.3f / 4095.0f
-                        : -1.0f;
+        /* 光敏: 直接上报 ADC 原始值 (0~4095) */
+        int light_raw = local.photo_raw;
 
         /* MQ-135 电压: 已在 mq135_read() 中计算并存入 g_sensor_data */
         float mq135_v = local.mq135_voltage;
 
-        /* 报警标志 (v2.0 分级报警):
-         * alert = 任一报警源触发 (A 类 OR B 类)
-         * A 类: MQ-135 DO=0 / DHT11 高温 / DS18B20 高温
-         * B 类: 光敏 DO=0 / DHT11 高湿 */
-        int alert_a_mq135    = (!local.mq135_do) ? 1 : 0;
-        int alert_a_temp_dht = (local.dht11_temp >= ALARM_TEMP_HIGH_DHT11
+        /* ── 报警判定 (v3.5): 镜像 buzzer_task 逻辑, 使用运行时 AO/DO 配置 ── */
+
+        /* MQ-135 预热保护: 未预热时 DO 读数不可信, 强制视为正常 */
+        int mq135_do_safe = mq135_is_warmed_up() ? local.mq135_do : 1;
+
+        /* A 类: MQ-135 — 根据运行时报警源配置选择 DO/AO 判定 */
+        int alert_a_mq135 = 0;
+        if (local.mq135_alarm_src == ALARM_SRC_DO) {
+            alert_a_mq135 = (!mq135_do_safe) ? 1 : 0;                     /* DO 模式 */
+        } else {
+            /* AO 模式: 根据电压阈值 + 触发方向判定 */
+            if (local.mq135_ao_dir == AO_TRIG_ABOVE) {
+                alert_a_mq135 = (local.mq135_voltage >= local.mq135_ao_threshold) ? 1 : 0;
+            } else {
+                alert_a_mq135 = (local.mq135_voltage <= local.mq135_ao_threshold) ? 1 : 0;
+            }
+        }
+
+        /* A 类: 温度 — 使用运行时阈值 (buzzer_task 同步) */
+        int temp_humi_en = local.temp_humi_alarm_enabled;
+        int alert_a_temp_dht = (temp_humi_en && local.dht11_temp >= local.dht11_temp_high
                                 && local.dht11_temp <= 50) ? 1 : 0;
-        int alert_a_temp_ds  = (local.ds18b20_temp >= ALARM_TEMP_HIGH_DS18B20
+        int alert_a_temp_ds  = (temp_humi_en && local.ds18b20_temp >= local.ds18b20_temp_high
                                 && local.ds18b20_temp <= 125.0f) ? 1 : 0;
-        int alert_b_photo    = (!local.photo_do) ? 1 : 0;
-        int alert_b_humi     = (local.dht11_humi >= ALARM_HUMI_HIGH
-                                && local.dht11_humi <= 90) ? 1 : 0;
+
+        /* B 类: 光敏 — 根据运行时报警源配置选择 DO/AO 判定 */
+        int alert_b_photo = 0;
+        if (local.photo_alarm_src == ALARM_SRC_DO) {
+            alert_b_photo = (!local.photo_do) ? 1 : 0;                    /* DO 模式 */
+        } else {
+            /* AO 模式: 根据 ADC 阈值 + 触发方向判定 (默认低于阈值=光线暗→报警) */
+            if (local.photo_ao_dir == AO_TRIG_ABOVE) {
+                alert_b_photo = (local.photo_raw >= local.photo_ao_threshold) ? 1 : 0;
+            } else {
+                alert_b_photo = (local.photo_raw <= local.photo_ao_threshold) ? 1 : 0;
+            }
+        }
+
+        /* B 类: 湿度 — 使用运行时阈值 */
+        int alert_b_humi  = (temp_humi_en && local.dht11_humi >= local.dht11_humi_high
+                             && local.dht11_humi <= 90) ? 1 : 0;
+
         int alert = (alert_a_mq135 || alert_a_temp_dht || alert_a_temp_ds
                      || alert_b_photo || alert_b_humi) ? 1 : 0;
 
@@ -157,16 +184,18 @@ void udp_sender_task(void *arg)
         int err = local.dht11_err | local.ds18b20_err
                 | local.mq135_err  | local.photo_err;
 
-        /* ---- 4.3 构建 JSON 报文（v2.0: 新增 type + level 字段）---- */
+        /* ---- 4.3 构建 JSON 报文（v3.0: 新增 mq135_do + photo_do）---- */
         int written = snprintf(buf, sizeof(buf),
             "{\"type\":\"data\",\"level\":%d,"
             "\"ts\":%lu,\"dht11_t\":%.1f,\"dht11_h\":%.1f,"
-            "\"ds18b20_t\":%.4f,\"mq135_v\":%.2f,\"light_v\":%.2f,"
+            "\"ds18b20_t\":%.4f,\"mq135_v\":%.2f,\"light_raw\":%d,"
+            "\"mq135_do\":%d,\"photo_do\":%d,"
             "\"alert\":%d,\"err\":%d,\"reason\":\"%s\"}",
             (int)local.alarm_level,
             ts,
             (float)local.dht11_temp, (float)local.dht11_humi,
-            local.ds18b20_temp, mq135_v, light_v,
+            local.ds18b20_temp, mq135_v, light_raw,
+            (int)local.mq135_do, (int)local.photo_do,
             alert, err, reason);
 
         /* 检查是否超出缓冲区（REQUIREMENT.md 6.1: < 512 字节） */

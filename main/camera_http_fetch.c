@@ -31,9 +31,9 @@ static const char *TAG = "cam_http";
 #ifndef CONFIG_CAMERA_HTTP_UDP_IP
 #define CONFIG_CAMERA_HTTP_UDP_IP "10.16.234.215"
 #endif
-#ifndef CONFIG_CAMERA_HTTP_FPS
-#define CONFIG_CAMERA_HTTP_FPS 3
-#endif
+/* 强制覆盖 Kconfig 默认值 (sdkconfig 可能缓存旧值 3) */
+#undef CONFIG_CAMERA_HTTP_FPS
+#define CONFIG_CAMERA_HTTP_FPS 10
 
 #define CAM_URL          CONFIG_CAMERA_HTTP_ESP32CAM_URL
 #define CAM_UDP_IP       CONFIG_CAMERA_HTTP_UDP_IP
@@ -128,49 +128,78 @@ void camera_http_fetch_task(void *arg)
     ESP_LOGI(TAG, "缓冲就绪: JPEG=%uKB UDP=%uKB",
              JPEG_BUF_SIZE / 1024, UDP_PKT_BUF_SIZE / 1024);
 
-    /* ===== 4. HTTP 客户端配置 (全局复用) ===== */
+    /* ===== 4. HTTP 客户端配置 (全局复用, 启用 keep-alive 长连接) ===== */
     esp_http_client_config_t http_cfg = {
-        .url      = CAM_URL,
-        .method   = HTTP_METHOD_GET,
-        .timeout_ms = 5000,
+        .url               = CAM_URL,
+        .method            = HTTP_METHOD_GET,
+        .timeout_ms        = 10000,
+        .keep_alive_enable = true,
     };
 
     uint16_t frame_id = 0;
 
-    /* ===== 5. 主循环: HTTP GET → 读 JPEG → UDP 分包发送 ===== */
+    /* ===== 5. HTTP 客户端创建 (循环外 init 一次, 长连接复用) ===== */
+    esp_http_client_handle_t client = esp_http_client_init(&http_cfg);
+    if (!client) {
+        ESP_LOGE(TAG, "HTTP client init 失败");
+        free(udp_pkt);
+        free(jpeg_buf);
+        close(sock);
+        vTaskDelete(NULL);
+        return;
+    }
+    ESP_LOGI(TAG, "HTTP 长连接就绪 (keep_alive)");
+
+    /* ===== 6. 主循环: HTTP GET → 读 JPEG → UDP 分包发送 ===== */
+    int http_retry_count = 0;
+    const int HTTP_MAX_RETRIES = 5;  // ★ 最大重连次数，防止无限循环
     while (1) {
         TickType_t loop_start = xTaskGetTickCount();
 
-        /* ---- 5.1 发起 HTTP GET 请求 ---- */
-        esp_http_client_handle_t client = esp_http_client_init(&http_cfg);
+        /* ---- 6.0 守护: 确保 client 非空（防止 re-init 失败后 NULL 解引用）---- */
         if (!client) {
-            ESP_LOGE(TAG, "HTTP client init 失败");
-            vTaskDelay(pdMS_TO_TICKS(1000));
-            continue;
+            ESP_LOGE(TAG, "HTTP client 为 NULL, 尝试重新初始化...");
+            client = esp_http_client_init(&http_cfg);
+            if (!client) {
+                ESP_LOGE(TAG, "HTTP re-init 持续失败, 3s 后重试");
+                vTaskDelay(pdMS_TO_TICKS(3000));
+                continue;
+            }
         }
 
+        /* ---- 6.1 发起 HTTP GET 请求 ---- */
         esp_err_t err = esp_http_client_open(client, 0);  /* write_len=0 → GET */
         if (err != ESP_OK) {
-            ESP_LOGE(TAG, "HTTP open 失败: %s (%d)", esp_err_to_name(err), err);
+            http_retry_count++;
+            ESP_LOGE(TAG, "HTTP open 失败 (%d/%d): %s (%d), 重连...",
+                     http_retry_count, HTTP_MAX_RETRIES, esp_err_to_name(err), err);
             esp_http_client_cleanup(client);
-            vTaskDelay(pdMS_TO_TICKS(500));
+            client = NULL;  // ★ 先置 NULL，让 6.0 守护段在下轮重新 init
+            if (http_retry_count > HTTP_MAX_RETRIES) {
+                ESP_LOGE(TAG, "HTTP 重连超过上限 %d 次, 10s 冷却后重置计数",
+                         HTTP_MAX_RETRIES);
+                vTaskDelay(pdMS_TO_TICKS(10000));
+                http_retry_count = 0;
+            } else {
+                vTaskDelay(pdMS_TO_TICKS(500));
+            }
             continue;
         }
+        http_retry_count = 0;  // ★ 成功后重置计数
 
         int content_length = esp_http_client_fetch_headers(client);
         int status = esp_http_client_get_status_code(client);
 
-        if (status != 200) {
+        if (status != 200 || content_length <= 0) {
             ESP_LOGW(TAG, "HTTP %d, Content-Length=%d", status, content_length);
             esp_http_client_close(client);
-            esp_http_client_cleanup(client);
             vTaskDelay(pdMS_TO_TICKS(500));
             continue;
         }
 
-        /* ---- 5.2 读取 JPEG 数据 ---- */
+        /* ---- 6.2 读取 JPEG 数据 ---- */
         int total_read = 0;
-        int read_len;
+        int read_len = 0;
 
         while (total_read < JPEG_BUF_SIZE &&
                (read_len = esp_http_client_read(client,
@@ -179,12 +208,14 @@ void camera_http_fetch_task(void *arg)
             total_read += read_len;
         }
 
-        if (read_len < 0) {
-            ESP_LOGW(TAG, "HTTP read 错误: errno=%d (已读 %d 字节)", errno, total_read);
-        }
-
         esp_http_client_close(client);
-        esp_http_client_cleanup(client);
+
+        if (read_len < 0) {
+            ESP_LOGW(TAG, "HTTP read 错误: errno=%d (已读 %d 字节), 丢弃不完整帧",
+                     errno, total_read);
+            vTaskDelay(pdMS_TO_TICKS(100));  // ★ 跳过发送，防止畸形 JPEG 传输
+            continue;
+        }
 
         if (total_read <= 0) {
             ESP_LOGW(TAG, "未收到 JPEG 数据 (status=%d)", status);
@@ -192,7 +223,9 @@ void camera_http_fetch_task(void *arg)
             continue;
         }
 
-        /* ---- 5.3 UDP 分包发送 ---- */
+        ESP_LOGI(TAG, "HTTP read 完成 (%d 字节)", total_read);
+
+        /* ---- 6.3 UDP 分包发送 ---- */
         uint16_t total_chunks = (uint16_t)((total_read + UDP_PAYLOAD_MAX - 1)
                                            / UDP_PAYLOAD_MAX);
 
@@ -215,11 +248,11 @@ void camera_http_fetch_task(void *arg)
                          errno, chunk + 1, total_chunks);
             }
 
-            /* 每包微延迟, 让 Sensor UDP 有机会获得 pbuf, 避免 ENOMEM(errno=12) */
-            vTaskDelay(pdMS_TO_TICKS(5));
+            /* 1 tick 延迟让 WiFi 栈完成前一个包发送, 避免 burst 丢包 */
+            vTaskDelay(1);
         }
 
-        /* ---- 5.4 进度日志 (每 30 帧打印一次) ---- */
+        /* ---- 6.4 进度日志 (每 30 帧打印一次) ---- */
         if (frame_id % 30 == 0) {
             ESP_LOGI(TAG, "#%04u | JPEG:%dB → %u 包 | HTTP %dms",
                      frame_id, total_read, total_chunks,
@@ -228,7 +261,7 @@ void camera_http_fetch_task(void *arg)
 
         frame_id++;
 
-        /* ---- 5.5 帧率控制 ---- */
+        /* ---- 6.5 帧率控制 ---- */
         TickType_t elapsed = xTaskGetTickCount() - loop_start;
         int32_t remain_ms = CAM_FRAME_MS - (int32_t)pdTICKS_TO_MS(elapsed);
         if (remain_ms > 0) {
@@ -237,6 +270,7 @@ void camera_http_fetch_task(void *arg)
     }
 
     /* 不会执行到这里, 但保持防御性清理 */
+    esp_http_client_cleanup(client);
     free(udp_pkt);
     free(jpeg_buf);
     close(sock);

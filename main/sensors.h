@@ -68,11 +68,29 @@
 #define ADC_SAMPLE_COUNT    12      /*!< 连续采样次数 */
 #define ADC_DISCARD_COUNT   2       /*!< 每端去掉的个数，剩余 8 个取平均 */
 
-/* ==================== 分级报警阈值 (危化品仓库业务场景) ==================== */
-#define ALARM_TEMP_HIGH_DHT11     38      /*!< DHT11 高温阈值 (°C)，超过则触发 A 类报警开风扇 */
-#define ALARM_TEMP_HIGH_DS18B20   38.0f   /*!< DS18B20 高温阈值 (°C)，超过则触发 A 类报警开风扇 */
-#define ALARM_HUMI_HIGH           85      /*!< DHT11 高湿阈值 (%RH)，超过则触发 B 类报警(仅提醒) */
+/* ==================== 分级报警阈值 (农资化肥仓库场景) ==================== */
+/* 碳酸氢铵 35°C 开始分解, 尿素 30°C+ 氨挥发加速 */
+/* 以下宏仍保留作编译期默认值，运行时可通过 NVS 配置覆盖 */
+#define ALARM_TEMP_HIGH_DHT11     35      /*!< DHT11 高温阈值 (°C) */
+#define ALARM_TEMP_HIGH_DS18B20   35.0f   /*!< DS18B20 高温阈值 (°C) */
+#define ALARM_HUMI_HIGH           85      /*!< DHT11 高湿阈值 (%RH) */
 #define ALARM_ESCALATE_MS         30000   /*!< 报警持续多久升级到 L3 紧急 (毫秒) */
+
+/* ==================== AO 报警阈值默认值 ==================== */
+#define ALARM_DEFAULT_MQ135_AO_THR_MV  2500   /*!< MQ-135 AO 电压阈值默认值 (mV), 2.5V */
+#define ALARM_DEFAULT_PHOTO_AO_THR     1000   /*!< 光敏 AO ADC 阈值默认值 (0~4095) */
+
+/* ==================== 报警源选择枚举 ==================== */
+typedef enum {
+    ALARM_SRC_DO = 0,   /*!< DO 数字量模式：硬件比较器判定 */
+    ALARM_SRC_AO = 1    /*!< AO 模拟量模式：软件阈值判定 */
+} alarm_source_t;
+
+/* ==================== AO 触发方向枚举 ==================== */
+typedef enum {
+    AO_TRIG_ABOVE = 0,  /*!< 高于阈值触发报警 (MQ-135: 电压超过阈值→毒气) */
+    AO_TRIG_BELOW = 1   /*!< 低于阈值触发报警 (光敏: ADC低于阈值→光线暗) */
+} ao_trigger_dir_t;
 
 /* ==================== 仿真模式通信端口 ==================== */
 #define SIM_UDP_PORT               8081    /*!< PC → ESP32 仿真注入 UDP 端口 */
@@ -162,6 +180,18 @@ typedef struct {
 
     /* Wi-Fi */
     int     wifi_connected; /*!< Wi-Fi 连接状态: 0=断开, 1=已连接 */
+
+    /* ── 报警模式配置（运行时可变, NVS 持久化）── */
+    alarm_source_t   mq135_alarm_src;     /*!< MQ-135 报警源: DO(0) 或 AO(1), 默认 0 */
+    alarm_source_t   photo_alarm_src;     /*!< 光敏报警源:   DO(0) 或 AO(1), 默认 0 */
+    ao_trigger_dir_t mq135_ao_dir;        /*!< MQ-135 AO 触发方向, 默认 AO_TRIG_ABOVE */
+    ao_trigger_dir_t photo_ao_dir;        /*!< 光敏 AO 触发方向,  默认 AO_TRIG_BELOW */
+    float            mq135_ao_threshold;  /*!< MQ-135 AO 阈值 (V),     默认 2.5 */
+    int              photo_ao_threshold;  /*!< 光敏 AO 阈值 (ADC raw),  默认 1000 */
+    int              dht11_temp_high;     /*!< DHT11 高温阈值 (°C),     默认 35 */
+    int              dht11_humi_high;     /*!< DHT11 高湿阈值 (%),      默认 85 */
+    float            ds18b20_temp_high;   /*!< DS18B20 高温阈值 (°C),   默认 35.0 */
+    int              temp_humi_alarm_enabled; /*!< 温湿度报警总开关, 1=启用 默认 1 */
 } sensor_shared_t;
 
 /* 全局共享数据句柄 */

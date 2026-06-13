@@ -2,7 +2,7 @@
 
 > **文档目的**：记录项目当前状态、规范和已实现功能，方便后续 Agent 理解和继续开发
 >
-> **最后更新**：2026-06-07（Camera HTTP Relay 上线，ENOMEM/Wi-Fi 等待修复）
+> **最后更新**：2026-06-13（v3.4 仿真注入系统上线；内置UDP监听器；报警/库存管理增强；化肥场景迁移）
 
 ---
 
@@ -52,7 +52,7 @@
 
 #### MQ-135 空气质量传感器
 - **模块供电**：5V（传感器加热）或 3.3V（灵敏度略低）
-- **检测气体**：氨气、硫化物、苯系蒸气、烟雾
+- **检测气体**：氨气、硫化物、烟雾
 - **检测浓度**：10 ~ 1000 ppm
 - **预热时间**：上电后 ≥ 3 分钟读数稳定（技术手册）
 - **AO 特性**：浓度越高 → 电压越高（模块基础参数）
@@ -110,6 +110,17 @@ camera_capture_sender.py    # ✅ 摄像头采集 + Gamma校正/锐化 + JPEG编
 camera_display_receiver.py  # ✅ UDP接收 + 分片重组 + JPEG解码 + OpenCV实时显示
 camera_protocol.py          # ✅ Magic 0xAA55 协议头编解码 (大端序, 8字节头, 4096字节payload)
 CAMERA_DEBUG_LOG.md         # 摄像头调试历史 & 参数速查
+
+# Docker Web 仪表盘 v3.4 (2026-06-13 更新)
+docker/
+├── docker-compose.yml      # ✅ 容器编排 (UDP 8080 端口暴露 + ESP32_IP 环境变量)
+├── app/
+│   ├── main.py            # ✅ FastAPI + WebSocket + 内置 UDP 监听器 + 仿真注入 API
+│   ├── database.py        # ✅ AIOSQLite (清空报警/清空流水/新增物料/删除物料)
+│   ├── models.py          # ✅ Pydantic 模型 (SimInjectRequest, SimStatus)
+│   └── static/
+│       └── dashboard.html # ✅ Chart.js 仪表盘 (仿真面板 + 库存统计 + 报警清空)
+└── ...
 ```
 
 ### 2.4 OLED 显示内容（8行布局）
@@ -301,7 +312,7 @@ portENABLE_INTERRUPTS();
   "dht11_h": 56.0,
   "ds18b20_t": 28.4375,
   "mq135_v": 0.31,
-  "light_v": 1.34,
+  "light_raw": 2000,
   "alert": 0,
   "err": 0,
   "reason": ""
@@ -317,7 +328,7 @@ portENABLE_INTERRUPTS();
 | `dht11_h` | float | 1 位小数 | DHT11 湿度 (%RH) |
 | `ds18b20_t` | float | 4 位小数 | DS18B20 温度, 0.0625°C 分辨率 |
 | `mq135_v` | float | 2 位小数 | MQ-135 AO 电压 (V) |
-| `light_v` | float | 2 位小数 | 光敏 AO 电压, photo_raw × 3.3 / 4095 |
+| `light_raw` | int | — | 光敏 ADC 原始值, photo_raw 直接上报 |
 | `alert` | int | 0/1 | 任一 DO 为低 → 1 |
 | `err` | int | 位掩码 | bit0=DHT11, bit1=DS18B20, bit2=MQ135, bit3=光敏 |
 | `reason` | string | — | 报警原因枚举 (如 `"mq135"`, `"dht11_temp"`)
@@ -336,9 +347,9 @@ portENABLE_INTERRUPTS();
 | 分辨率 / 格式 | 640×360 MJPG |
 | 传输端口 | 8082 UDP (与传感器数据 8080 隔离) |
 | 协议头 | Magic 0xAA55 + FrameID(2B) + ChunkIdx(2B) + TotalChunks(2B) |
-| 单包载荷 | 4096 字节 |
-| 发送端 | `camera_capture_sender.py` (PC直连) 或 `camera_http_fetch.c` (P4中继) |
-| 接收端 | `camera_display_receiver.py` (UDP → 重组 → 解码 → imshow) |
+| 单包载荷 | 1400 字节（避免分片） |
+| 发送端 | `camera_http_fetch.c` (P4 HTTP 中继模式) 或 `camera_server.py` (Docker 直连) |
+| 接收端 | `Docker camera_server.py` (UDP → 重组 → MJPEG) |
 
 ### 6.5 Camera HTTP Relay 配置 ✅ 已实现
 
@@ -351,6 +362,46 @@ portENABLE_INTERRUPTS();
 | 缓冲区 | JPEG 128KB + UDP 64KB (PSRAM 分配) |
 | HTTP 超时 | 5000ms |
 | 依赖 | `esp_http_client` (IDF 内置, 无需额外 component) |
+
+### 6.6 UDP 配置命令协议（v3.5）
+
+**端口**：UDP 8081（与仿真注入共用）
+
+**cmd:config — 报警配置命令**：
+
+```json
+{
+  "cmd": "config",
+  "mq135_alarm_src": 0,
+  "photo_alarm_src": 1,
+  "mq135_ao_dir": 0,
+  "photo_ao_dir": 1,
+  "mq135_ao_threshold": 2.5,
+  "photo_ao_threshold": 1000,
+  "dht11_temp_high": 35,
+  "dht11_humi_high": 85,
+  "ds18b20_temp_high": 35.0,
+  "temp_humi_alarm_enabled": 1
+}
+```
+
+所有字段均为可选。MCU 收到后：
+1. 解析 JSON → 写入 `g_sensor_data` 运行时字段
+2. `save_alarm_config_to_nvs()` 持久化到 NVS `alarm_cfg` 命名空间
+3. 回复 `OK` 到发送方
+
+**AO/DO 报警模式**：
+- `ALARM_SRC_DO=0`：DO 数字量模式（硬件比较器，工厂预设阈值）
+- `ALARM_SRC_AO=1`：AO 模拟量模式（软件阈值判定 + 触发方向）
+- MQ-135 和光敏各自独立选择模式，温湿度可独立开关
+
+### 6.7 报警升级定时 ✅ 已实现
+
+| 参数 | 值 | 说明 |
+|------|-----|------|
+| `ALARM_ESCALATE_MS` | 30000ms | 报警持续超过 30s 自动升级到 L3 紧急 |
+
+
 
 ---
 
@@ -517,6 +568,10 @@ portENABLE_INTERRUPTS();
 | 2026-06-06 | 摄像头图像流模块 | Agent | KYT-U400 USB 摄像头, DirectShow + MJPG, Gamma/Sharpen 画质处理, UDP 分包, 接收显示, 8个阶段调试完成 |
 | 2026-06-07 | Camera HTTP Relay | Agent | 新增 camera_http_fetch.c/h, ESP32-CAM HTTP 拉图 → UDP 0xAA55 分包转发, Kconfig 可配置, Task_Cam_HTTP 任务 |
 | 2026-06-07 | UDP 稳定性修复 | Agent | ENOMEM(errno=12) 退避重试; Camera 每包 5ms 微延迟; 移除 lwIP 不支持的 SO_SNDBUF; Wi-Fi 等待改用 esp_netif 轮询 |
+| 2026-06-08 | Docker Web 仪表盘 v3.0 上线 | Agent | FastAPI + WebSocket + AIOSQLite + Chart.js, 传感器卡片/报警历史/趋势曲线/仓储管理, Docker 容器化 |
+| 2026-06-10 | 农资化肥场景迁移 v3.3 | Agent | 危化品 → 化肥场景全面迁移; QR 标签 FERT-xxx; 库存分类统计; generate_qr_labels.py --copies 参数 |
+| 2026-06-12 | 摄像头架构重构 v3.3 | Agent | Docker 直连 ESP32-CAM (HVGA 480×320); Canvas 快照轮询替代 MJPEG <img>; CameraWebServer Arduino 工程 |
+| 2026-06-13 | 仿真注入系统 v3.4 | Agent | 内置 UDP 监听器 SensorUDPProtocol:8080 替代外部桥接; POST /api/sim/inject + 前端预设面板; DELETE /api/alarms 报警清空; 库存管理增强 (手动新增/流水清空/物料删除); 视频流关闭→黑屏; 文档全面更新至 v3.4 |
 
 ---
 

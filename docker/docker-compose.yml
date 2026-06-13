@@ -1,0 +1,14 @@
+services:
+  dashboard:
+    build: .
+    container_name: smart-monitor-dashboard
+    ports:
+      - "8000:8000"
+      - "8080:8080/udp"
+      - "8082:8082/udp"
+    environment:
+      - ESP32_IP=10.16.234.86            # ★ ESP32-P4 设备 IP（仿真注入时用）
+    volumes:
+      - ./data:/app/data
+      - ./app/static:/app/app/static:ro   # 实时同步前端文件（容器内路径为 /app/app/static）
+    restart: unless-stopped

@@ -18,7 +18,7 @@ import struct
 MAGIC_HIGH = 0xAA       # Magic 高字节
 MAGIC_LOW = 0x55        # Magic 低字节
 HEADER_SIZE = 8         # 协议头字节数
-MAX_PAYLOAD = 1400      # 单包有效载荷 (留出 UDP/IP 头 + Magic 头余量，避免分片)
+MAX_PAYLOAD = 4096      # 单包有效载荷 (local UDP 不限 MTU)
 
 
 def pack_header(frame_id: int, chunk_idx: int, total_chunks: int) -> bytes:

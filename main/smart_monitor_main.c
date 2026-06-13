@@ -100,6 +100,106 @@ static __attribute__((unused)) void wifi_init_sta(void)
     ESP_LOGI(TAG, "Wi-Fi STA init done, SSID: %s", WIFI_SSID);
 }
 
+/* ================== NVS 报警配置持久化 ================== */
+#define NVS_ALARM_NS   "alarm_cfg"   /*!< NVS 命名空间（≤15字符） */
+
+/**
+ * @brief 从 NVS 加载报警配置到 g_sensor_data
+ *
+ * 先写入编译期默认值，再尝试从 NVS 覆盖。
+ * 命名空间不存在时静默跳过，全用默认值。
+ * 必须在 buzzer_task 创建前调用！
+ */
+static void load_alarm_config_from_nvs(void)
+{
+    /* 1. 先写入编译期默认值 */
+    g_sensor_data.mq135_alarm_src   = ALARM_SRC_DO;
+    g_sensor_data.photo_alarm_src   = ALARM_SRC_DO;
+    g_sensor_data.mq135_ao_dir      = AO_TRIG_ABOVE;
+    g_sensor_data.photo_ao_dir      = AO_TRIG_BELOW;
+    g_sensor_data.mq135_ao_threshold = (float)ALARM_DEFAULT_MQ135_AO_THR_MV / 1000.0f;
+    g_sensor_data.photo_ao_threshold = ALARM_DEFAULT_PHOTO_AO_THR;
+    g_sensor_data.dht11_temp_high    = ALARM_TEMP_HIGH_DHT11;
+    g_sensor_data.dht11_humi_high    = ALARM_HUMI_HIGH;
+    g_sensor_data.ds18b20_temp_high  = ALARM_TEMP_HIGH_DS18B20;
+    g_sensor_data.temp_humi_alarm_enabled = 1;
+
+    /* 2. 尝试从 NVS 读取覆盖 */
+    nvs_handle_t h;
+    if (nvs_open(NVS_ALARM_NS, NVS_READONLY, &h) != ESP_OK) {
+        ESP_LOGI(TAG, "NVS: 命名空间 '%s' 不存在，使用默认配置", NVS_ALARM_NS);
+        return;
+    }
+
+    uint8_t  u8_val;
+    uint32_t u32_val;
+    int32_t  i32_val;
+
+    /* ── 读取并做范围验证, 拒绝 flash 中的损坏值 ── */
+    if (nvs_get_u8(h, "mq_mode", &u8_val) == ESP_OK && u8_val <= 1)
+        g_sensor_data.mq135_alarm_src = (alarm_source_t)u8_val;
+    if (nvs_get_u32(h, "mq_ao_thr", &u32_val) == ESP_OK && u32_val >= 100 && u32_val <= 5000)
+        g_sensor_data.mq135_ao_threshold = (float)u32_val / 1000.0f;
+    if (nvs_get_u8(h, "mq_ao_dir", &u8_val) == ESP_OK && u8_val <= 1)
+        g_sensor_data.mq135_ao_dir = (ao_trigger_dir_t)u8_val;
+
+    if (nvs_get_u8(h, "ph_mode", &u8_val) == ESP_OK && u8_val <= 1)
+        g_sensor_data.photo_alarm_src = (alarm_source_t)u8_val;
+    if (nvs_get_u32(h, "ph_ao_thr", &u32_val) == ESP_OK && u32_val >= 100 && u32_val <= 4095)
+        g_sensor_data.photo_ao_threshold = (int)u32_val;
+    if (nvs_get_u8(h, "ph_ao_dir", &u8_val) == ESP_OK && u8_val <= 1)
+        g_sensor_data.photo_ao_dir = (ao_trigger_dir_t)u8_val;
+
+    if (nvs_get_i32(h, "dht_t_hi", &i32_val) == ESP_OK && i32_val >= 10 && i32_val <= 60)
+        g_sensor_data.dht11_temp_high = (int)i32_val;
+    if (nvs_get_i32(h, "dht_h_hi", &i32_val) == ESP_OK && i32_val >= 30 && i32_val <= 100)
+        g_sensor_data.dht11_humi_high = (int)i32_val;
+    if (nvs_get_i32(h, "ds_t_hi", &i32_val) == ESP_OK && i32_val >= 0 && i32_val <= 800)
+        g_sensor_data.ds18b20_temp_high = (float)i32_val / 10.0f;
+    if (nvs_get_u8(h, "temp_en", &u8_val) == ESP_OK && u8_val <= 1)
+        g_sensor_data.temp_humi_alarm_enabled = (int)u8_val;
+
+    nvs_close(h);
+    ESP_LOGI(TAG, "NVS: 报警配置已加载 | mq_src=%d mq_thr=%.2fV ph_src=%d ph_thr=%d dht_t=%d dht_h=%d ds_t=%.1f temp_en=%d",
+             g_sensor_data.mq135_alarm_src, g_sensor_data.mq135_ao_threshold,
+             g_sensor_data.photo_alarm_src, g_sensor_data.photo_ao_threshold,
+             g_sensor_data.dht11_temp_high, g_sensor_data.dht11_humi_high,
+             g_sensor_data.ds18b20_temp_high, g_sensor_data.temp_humi_alarm_enabled);
+}
+
+/**
+ * @brief 将当前报警配置保存到 NVS（在收到 config 命令时调用）
+ */
+static void save_alarm_config_to_nvs(void)
+{
+    nvs_handle_t h;
+    esp_err_t ret = nvs_open(NVS_ALARM_NS, NVS_READWRITE, &h);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "NVS: 无法打开 '%s' 进行写入: %d", NVS_ALARM_NS, ret);
+        return;
+    }
+
+    nvs_set_u8(h,  "mq_mode",   (uint8_t)g_sensor_data.mq135_alarm_src);
+    nvs_set_u32(h, "mq_ao_thr", (uint32_t)(g_sensor_data.mq135_ao_threshold * 1000.0f));
+    nvs_set_u8(h,  "mq_ao_dir", (uint8_t)g_sensor_data.mq135_ao_dir);
+    nvs_set_u8(h,  "ph_mode",   (uint8_t)g_sensor_data.photo_alarm_src);
+    nvs_set_u32(h, "ph_ao_thr", (uint32_t)g_sensor_data.photo_ao_threshold);
+    nvs_set_u8(h,  "ph_ao_dir", (uint8_t)g_sensor_data.photo_ao_dir);
+    nvs_set_i32(h, "dht_t_hi",  (int32_t)g_sensor_data.dht11_temp_high);
+    nvs_set_i32(h, "dht_h_hi",  (int32_t)g_sensor_data.dht11_humi_high);
+    nvs_set_i32(h, "ds_t_hi",   (int32_t)(g_sensor_data.ds18b20_temp_high * 10.0f));
+    nvs_set_u8(h,  "temp_en",   (uint8_t)g_sensor_data.temp_humi_alarm_enabled);
+
+    ret = nvs_commit(h);
+    nvs_close(h);
+
+    if (ret == ESP_OK) {
+        ESP_LOGI(TAG, "NVS: 报警配置已持久化");
+    } else {
+        ESP_LOGE(TAG, "NVS: 提交失败: %d", ret);
+    }
+}
+
 /* ================== MQ-135 空气质量传感器读取任务 ================== */
 static void mq135_task(void *arg)
 {
@@ -219,8 +319,13 @@ static void dht11_task(void *arg)
             vTaskDelay(pdMS_TO_TICKS(2000));
             continue;
         }
-        /* ---- 真实传感器读取 ---- */
-        dht11_read(&data);
+        /* ---- 真实传感器读取 (带重试) ---- */
+        data.err = 1;
+        for (int retry = 0; retry < 3 && data.err != 0; retry++) {
+            dht11_read(&data);
+            if (data.err == 0) break;
+            vTaskDelay(pdMS_TO_TICKS(100));  /* 让总线恢复, 避让 WiFi 突发 */
+        }
 
         if (xSemaphoreTake(g_sensor_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
             g_sensor_data.dht11_temp = data.temp;
@@ -230,7 +335,7 @@ static void dht11_task(void *arg)
         }
 
         if (data.err) {
-            ESP_LOGW(TAG, "DHT11: 读取失败, err=0x%02X", data.err);
+            ESP_LOGW(TAG, "DHT11: 读取失败(重试3次均失败), err=0x%02X", data.err);
         } else {
             ESP_LOGI(TAG, "DHT11: 温度=%d°C | 湿度=%d%%RH", data.temp, data.humi);
         }
@@ -410,33 +515,76 @@ static void buzzer_task(void *arg)
     static alarm_level_t s_prev_level = ALARM_OFF; /* 上一轮级别 */
 
     while (1) {
-        /* ---- 1. 读传感器数据 ---- */
+        /* ---- 1. 读传感器数据 + 运行时阈值 ---- */
         int mq135_do = 1, photo_do = 1;
         int dht11_temp = 0, dht11_humi = 0;
         float ds18b20_temp = 0.0f;
+        float mq135_voltage = 0.0f;
+        int   photo_raw = 0;
+        alarm_source_t mq_src = ALARM_SRC_DO, ph_src = ALARM_SRC_DO;
+        ao_trigger_dir_t mq_dir = AO_TRIG_ABOVE, ph_dir = AO_TRIG_BELOW;
+        float mq_ao_thr = 2.5f;
+        int   ph_ao_thr = 1000;
+        int   dht_t_hi = 35, dht_h_hi = 85;
+        float ds_t_hi  = 35.0f;
+        int   temp_humi_en = 1;
 
         if (xSemaphoreTake(g_sensor_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
-            mq135_do     = mq135_is_warmed_up() ? g_sensor_data.mq135_do : 1;
-            photo_do     = g_sensor_data.photo_do;
-            dht11_temp   = g_sensor_data.dht11_temp;
-            dht11_humi   = g_sensor_data.dht11_humi;
-            ds18b20_temp = g_sensor_data.ds18b20_temp;
+            mq135_do       = mq135_is_warmed_up() ? g_sensor_data.mq135_do : 1;
+            mq135_voltage  = g_sensor_data.mq135_voltage;
+            photo_do       = g_sensor_data.photo_do;
+            photo_raw      = g_sensor_data.photo_raw;
+            dht11_temp     = g_sensor_data.dht11_temp;
+            dht11_humi     = g_sensor_data.dht11_humi;
+            ds18b20_temp   = g_sensor_data.ds18b20_temp;
+            mq_src         = g_sensor_data.mq135_alarm_src;
+            ph_src         = g_sensor_data.photo_alarm_src;
+            mq_dir         = g_sensor_data.mq135_ao_dir;
+            ph_dir         = g_sensor_data.photo_ao_dir;
+            mq_ao_thr      = g_sensor_data.mq135_ao_threshold;
+            ph_ao_thr      = g_sensor_data.photo_ao_threshold;
+            dht_t_hi       = g_sensor_data.dht11_temp_high;
+            dht_h_hi       = g_sensor_data.dht11_humi_high;
+            ds_t_hi        = g_sensor_data.ds18b20_temp_high;
+            temp_humi_en   = g_sensor_data.temp_humi_alarm_enabled;
             xSemaphoreGive(g_sensor_mutex);
         }
 
         /* ---- 2. 计算报警源分类 ---- */
         /* A 类: 毒气/高温 → 必须排风 */
-        int cat_a_mq135    = (!mq135_do) ? 1 : 0;                        /* MQ-135 DO=0 */
-        int cat_a_temp_dht = (dht11_temp >= ALARM_TEMP_HIGH_DHT11
+        int cat_a_mq135 = 0;
+        if (mq_src == ALARM_SRC_DO) {
+            cat_a_mq135 = (!mq135_do) ? 1 : 0;                      /* DO 模式 */
+        } else {
+            /* AO 模式: 根据电压阈值判定 */
+            if (mq_dir == AO_TRIG_ABOVE) {
+                cat_a_mq135 = (mq135_voltage >= mq_ao_thr) ? 1 : 0;
+            } else {
+                cat_a_mq135 = (mq135_voltage <= mq_ao_thr) ? 1 : 0;
+            }
+        }
+
+        int cat_a_temp_dht = (temp_humi_en && dht11_temp >= dht_t_hi
                               && dht11_temp <= 50) ? 1 : 0;              /* DHT11 高温 */
-        int cat_a_temp_ds  = (ds18b20_temp >= ALARM_TEMP_HIGH_DS18B20
+        int cat_a_temp_ds  = (temp_humi_en && ds18b20_temp >= ds_t_hi
                               && ds18b20_temp <= 125.0f) ? 1 : 0;       /* DS18B20 高温 */
         int cat_a = cat_a_mq135 || cat_a_temp_dht || cat_a_temp_ds;
         int cat_a_count = cat_a_mq135 + cat_a_temp_dht + cat_a_temp_ds;
 
         /* B 类: 光照/湿度异常 → 仅提醒, 不排风 */
-        int cat_b_photo  = (!photo_do) ? 1 : 0;                          /* 光敏 DO=0 */
-        int cat_b_humi   = (dht11_humi >= ALARM_HUMI_HIGH
+        int cat_b_photo = 0;
+        if (ph_src == ALARM_SRC_DO) {
+            cat_b_photo = (!photo_do) ? 1 : 0;                      /* DO 模式 */
+        } else {
+            /* AO 模式: 根据 ADC 阈值判定 */
+            if (ph_dir == AO_TRIG_ABOVE) {
+                cat_b_photo = (photo_raw >= ph_ao_thr) ? 1 : 0;
+            } else {
+                cat_b_photo = (photo_raw <= ph_ao_thr) ? 1 : 0;
+            }
+        }
+
+        int cat_b_humi   = (temp_humi_en && dht11_humi >= dht_h_hi
                             && dht11_humi <= 90) ? 1 : 0;               /* DHT11 高湿 */
         int cat_b = cat_b_photo || cat_b_humi;
 
@@ -554,8 +702,24 @@ static void udp_sim_command_task(void *arg)
 {
     (void)arg;
 
-    /* 等待 Wi-Fi 连接 */
-    vTaskDelay(pdMS_TO_TICKS(5000));
+    /* 等待 Wi-Fi 连接 (轮询 esp_netif, 最多 20s, 参考 udp_sender_task) */
+    esp_netif_t *sta_netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+    esp_netif_ip_info_t ip_info;
+    int wait = 0;
+    while (wait < 200) {
+        if (sta_netif && esp_netif_is_netif_up(sta_netif)) {
+            esp_netif_get_ip_info(sta_netif, &ip_info);
+            if (ip_info.ip.addr != 0) break;
+        }
+        vTaskDelay(pdMS_TO_TICKS(100));
+        wait++;
+    }
+    if (wait >= 200) {
+        ESP_LOGE(TAG, "仿真命令: Wi-Fi 连接超时 (20s)");
+        vTaskDelete(NULL);
+        return;
+    }
+    ESP_LOGI(TAG, "仿真命令: Wi-Fi 就绪 (等待约 %dms)", wait * 100);
 
     /* 创建 UDP socket */
     int sock = socket(AF_INET, SOCK_DGRAM, 0);
@@ -603,7 +767,56 @@ static void udp_sim_command_task(void *arg)
             }
             ESP_LOGI(TAG, "仿真模式已关闭, 恢复真实传感器");
             /* 回复确认 */
-            sendto(sock, "{\"status\":\"ok\",\"mode\":\"real\"}", 27, 0,
+            const char *reset_ack = "{\"status\":\"ok\",\"mode\":\"real\"}";
+            sendto(sock, reset_ack, strlen(reset_ack), 0,
+                  (const struct sockaddr *)&src_addr, addr_len);
+            continue;
+        }
+
+        /* ---- 解析 "config" 命令: 报警配置 ---- */
+        if (strstr(buf, "\"cmd\": \"config\"") || strstr(buf, "\"cmd\":\"config\"")) {
+            char *p;
+            int   tmp_i = 0;
+            float tmp_f = 0.0f;
+
+            if (xSemaphoreTake(g_sensor_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+                /* 字段可选，提取到才更新
+                   offset = strlen(needle) 跳过整个 "\"key\":" 来到值首字符 */
+                if ((p = strstr(buf, "\"mq135_alarm_src\":")))
+                    { if (sscanf(p + 18, "%d", &tmp_i) == 1) g_sensor_data.mq135_alarm_src = (alarm_source_t)tmp_i; }
+                if ((p = strstr(buf, "\"photo_alarm_src\":")))
+                    { if (sscanf(p + 18, "%d", &tmp_i) == 1) g_sensor_data.photo_alarm_src = (alarm_source_t)tmp_i; }
+                if ((p = strstr(buf, "\"mq135_ao_dir\":")))
+                    { if (sscanf(p + 15, "%d", &tmp_i) == 1) g_sensor_data.mq135_ao_dir = (ao_trigger_dir_t)tmp_i; }
+                if ((p = strstr(buf, "\"photo_ao_dir\":")))
+                    { if (sscanf(p + 15, "%d", &tmp_i) == 1) g_sensor_data.photo_ao_dir = (ao_trigger_dir_t)tmp_i; }
+                if ((p = strstr(buf, "\"mq135_ao_threshold\":")))
+                    { if (sscanf(p + 21, "%f", &tmp_f) == 1) g_sensor_data.mq135_ao_threshold = tmp_f; }
+                if ((p = strstr(buf, "\"photo_ao_threshold\":")))
+                    { if (sscanf(p + 21, "%d", &tmp_i) == 1) g_sensor_data.photo_ao_threshold = tmp_i; }
+                if ((p = strstr(buf, "\"dht11_temp_high\":")))
+                    { if (sscanf(p + 18, "%d", &tmp_i) == 1) g_sensor_data.dht11_temp_high = tmp_i; }
+                if ((p = strstr(buf, "\"dht11_humi_high\":")))
+                    { if (sscanf(p + 18, "%d", &tmp_i) == 1) g_sensor_data.dht11_humi_high = tmp_i; }
+                if ((p = strstr(buf, "\"ds18b20_temp_high\":")))
+                    { if (sscanf(p + 20, "%f", &tmp_f) == 1) g_sensor_data.ds18b20_temp_high = tmp_f; }
+                if ((p = strstr(buf, "\"temp_humi_alarm_enabled\":")))
+                    { if (sscanf(p + 26, "%d", &tmp_i) == 1) g_sensor_data.temp_humi_alarm_enabled = tmp_i; }
+                xSemaphoreGive(g_sensor_mutex);
+            }
+
+            /* 异步持久化到 NVS */
+            save_alarm_config_to_nvs();
+
+            ESP_LOGI(TAG, "报警配置已更新: mq_src=%d mq_thr=%.2fV ph_src=%d ph_thr=%d dht_t=%d dht_h=%d ds_t=%.1f temp_en=%d",
+                     g_sensor_data.mq135_alarm_src, g_sensor_data.mq135_ao_threshold,
+                     g_sensor_data.photo_alarm_src, g_sensor_data.photo_ao_threshold,
+                     g_sensor_data.dht11_temp_high, g_sensor_data.dht11_humi_high,
+                     g_sensor_data.ds18b20_temp_high, g_sensor_data.temp_humi_alarm_enabled);
+
+            /* 回复确认 */
+            const char *cfg_ack = "{\"status\":\"ok\",\"cmd\":\"config\"}";
+            sendto(sock, cfg_ack, strlen(cfg_ack), 0,
                   (const struct sockaddr *)&src_addr, addr_len);
             continue;
         }
@@ -680,12 +893,16 @@ void app_main(void)
 
     /* 初始化 OLED */
     esp_err_t ret = oled_init();
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "OLED 初始化失败: %s", esp_err_to_name(ret));
+    bool oled_ok = (ret == ESP_OK);
+    if (!oled_ok) {
+        ESP_LOGE(TAG, "OLED 初始化失败: %s, 跳过显示任务", esp_err_to_name(ret));
     }
 
     /* WiFi STA 初始化 — 当前注释，后续需要时启用 */
     wifi_init_sta();
+
+    /* 从 NVS 加载报警配置（必须在 buzzer_task 创建前完成） */
+    load_alarm_config_from_nvs();
 
     /* 创建 MQ-135 传感器读取任务 (优先级3, 栈4096) */
     xTaskCreate(mq135_task, "mq135_sensor", 4096, NULL, 3, NULL);
@@ -699,11 +916,13 @@ void app_main(void)
     /* 创建光敏电阻传感器读取任务 (优先级3, 栈4096) */
     xTaskCreate(photo_sensor_task, "photo_sensor", 4096, NULL, 3, NULL);
 
-    /* 创建 OLED 显示刷新任务 (优先级2, 栈4096) */
-    xTaskCreate(oled_display_task, "oled_display", 4096, NULL, 2, NULL);
+    /* 创建 OLED 显示刷新任务 (优先级2, 栈4096) — 仅在初始化成功时创建 */
+    if (oled_ok) {
+        xTaskCreate(oled_display_task, "oled_display", 4096, NULL, 2, NULL);
+    }
 
-    /* 创建蜂鸣器报警任务 (优先级2, 栈2048) */
-    xTaskCreate(buzzer_task, "buzzer_alarm", 2048, NULL, 2, NULL);
+    /* 创建蜂鸣器报警任务 (优先级2, 栈5120 — 局部变量多+ESP_LOG格式化) */
+    xTaskCreate(buzzer_task, "buzzer_alarm", 5120, NULL, 2, NULL);
 
     /* 创建 UDP 传感器数据发送任务 (优先级2, 栈3584, 不绑核避免 SDIO 中断冲突) */
     xTaskCreate(udp_sender_task, "Task_UDP_Send", 3584, NULL, 2, NULL);

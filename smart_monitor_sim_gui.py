@@ -194,7 +194,7 @@ class SimGUI:
             ("DS18B20 温度", "ds18b20_t", "°C"),
             ("MQ-135 电压", "mq135_v", "V"),
             ("MQ-135 DO", "mq135_do", ""),
-            ("光敏 AO", "light_v", "V"),
+            ("光敏 ADC", "light_raw", "raw"),
             ("光敏 DO", "photo_do", ""),
             ("报警级别", "level", ""),
             ("报警原因", "reason", ""),
@@ -617,7 +617,7 @@ class SimGUI:
             "ds18b20_t": ("ds18b20_t", lambda v: f"{v:.4f}"),
             "mq135_v": ("mq135_v", lambda v: f"{v:.2f}"),
             "mq135_do": ("mq135_do", lambda v: "正常" if v == 1 else ("超标" if v == 0 else "--")),
-            "light_v": ("light_v", lambda v: f"{v:.2f}"),
+            "light_raw": ("light_raw", lambda v: f"{v}"),
             "photo_do": ("photo_do", lambda v: "正常" if v == 1 else ("异常" if v == 0 else "--")),
             "level": ("level", lambda v: LEVEL_NAMES.get(v, f"未知({v})")),
             "reason": ("reason", lambda v: str(v) if v else "--"),
@@ -764,7 +764,11 @@ class SimGUI:
 
             # 显示到独立窗口（如果已打开）
             if self.cam_window is not None and self.cam_window.winfo_exists():
-                self._set_cam_image(frame)
+                if self.warehouse_mode is None:
+                    black = np.zeros((480, 640, 3), dtype=np.uint8)
+                    self._set_cam_image(black)
+                else:
+                    self._set_cam_image(frame)
             mode_text = {"inbound": "入库模式", "outbound": "出库模式"}.get(self.warehouse_mode, "待机")
             self.lbl_cam_status.config(text=f"FPS:{fps:.1f} | 模式:{mode_text} | 帧#{self.total_frames}")
 

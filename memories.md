@@ -312,7 +312,7 @@ portENABLE_INTERRUPTS();
   "dht11_h": 56.0,
   "ds18b20_t": 28.4375,
   "mq135_v": 0.31,
-  "light_v": 1.34,
+  "light_raw": 2000,
   "alert": 0,
   "err": 0,
   "reason": ""
@@ -328,7 +328,7 @@ portENABLE_INTERRUPTS();
 | `dht11_h` | float | 1 位小数 | DHT11 湿度 (%RH) |
 | `ds18b20_t` | float | 4 位小数 | DS18B20 温度, 0.0625°C 分辨率 |
 | `mq135_v` | float | 2 位小数 | MQ-135 AO 电压 (V) |
-| `light_v` | float | 2 位小数 | 光敏 AO 电压, photo_raw × 3.3 / 4095 |
+| `light_raw` | int | — | 光敏 ADC 原始值, photo_raw 直接上报 |
 | `alert` | int | 0/1 | 任一 DO 为低 → 1 |
 | `err` | int | 位掩码 | bit0=DHT11, bit1=DS18B20, bit2=MQ135, bit3=光敏 |
 | `reason` | string | — | 报警原因枚举 (如 `"mq135"`, `"dht11_temp"`)
@@ -347,9 +347,9 @@ portENABLE_INTERRUPTS();
 | 分辨率 / 格式 | 640×360 MJPG |
 | 传输端口 | 8082 UDP (与传感器数据 8080 隔离) |
 | 协议头 | Magic 0xAA55 + FrameID(2B) + ChunkIdx(2B) + TotalChunks(2B) |
-| 单包载荷 | 4096 字节 |
-| 发送端 | `camera_capture_sender.py` (PC直连) 或 `camera_http_fetch.c` (P4中继) |
-| 接收端 | `camera_display_receiver.py` (UDP → 重组 → 解码 → imshow) |
+| 单包载荷 | 1400 字节（避免分片） |
+| 发送端 | `camera_http_fetch.c` (P4 HTTP 中继模式) 或 `camera_server.py` (Docker 直连) |
+| 接收端 | `Docker camera_server.py` (UDP → 重组 → MJPEG) |
 
 ### 6.5 Camera HTTP Relay 配置 ✅ 已实现
 
@@ -362,6 +362,46 @@ portENABLE_INTERRUPTS();
 | 缓冲区 | JPEG 128KB + UDP 64KB (PSRAM 分配) |
 | HTTP 超时 | 5000ms |
 | 依赖 | `esp_http_client` (IDF 内置, 无需额外 component) |
+
+### 6.6 UDP 配置命令协议（v3.5）
+
+**端口**：UDP 8081（与仿真注入共用）
+
+**cmd:config — 报警配置命令**：
+
+```json
+{
+  "cmd": "config",
+  "mq135_alarm_src": 0,
+  "photo_alarm_src": 1,
+  "mq135_ao_dir": 0,
+  "photo_ao_dir": 1,
+  "mq135_ao_threshold": 2.5,
+  "photo_ao_threshold": 1000,
+  "dht11_temp_high": 35,
+  "dht11_humi_high": 85,
+  "ds18b20_temp_high": 35.0,
+  "temp_humi_alarm_enabled": 1
+}
+```
+
+所有字段均为可选。MCU 收到后：
+1. 解析 JSON → 写入 `g_sensor_data` 运行时字段
+2. `save_alarm_config_to_nvs()` 持久化到 NVS `alarm_cfg` 命名空间
+3. 回复 `OK` 到发送方
+
+**AO/DO 报警模式**：
+- `ALARM_SRC_DO=0`：DO 数字量模式（硬件比较器，工厂预设阈值）
+- `ALARM_SRC_AO=1`：AO 模拟量模式（软件阈值判定 + 触发方向）
+- MQ-135 和光敏各自独立选择模式，温湿度可独立开关
+
+### 6.7 报警升级定时 ✅ 已实现
+
+| 参数 | 值 | 说明 |
+|------|-----|------|
+| `ALARM_ESCALATE_MS` | 30000ms | 报警持续超过 30s 自动升级到 L3 紧急 |
+
+
 
 ---
 

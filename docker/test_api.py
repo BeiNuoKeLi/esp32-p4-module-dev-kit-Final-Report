@@ -94,7 +94,7 @@ def main():
         resp = expect_json_post("/api/sensors", {
             "dht11_t": 25.6, "dht11_h": 62.0,
             "ds18b20_t": 24.8, "mq135_v": 1.2,
-            "light_v": 2.0, "level": 0,
+            "light_raw": 2000, "level": 0,
             "alert": 0, "reason": "", "err": 0
         })
         assert resp["ok"] is True, f"ok 应为 True, 实际 {resp}"
@@ -104,7 +104,7 @@ def main():
         resp = expect_json_post("/api/sensors", {
             "dht11_t": -999, "dht11_h": 150,
             "ds18b20_t": 200, "mq135_v": 5.0,
-            "light_v": -1.0, "level": 0,
+            "light_raw": -1, "level": 0,
             "alert": 1, "reason": "test", "err": 1
         })
         assert resp["ok"] is True, "异常数据也应成功写入"

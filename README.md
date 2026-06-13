@@ -137,7 +137,7 @@ docker-compose up -d
 | 上位机 IP | 10.16.234.215 |
 | 端口 | 8080 UDP |
 | 间隔 | 每 2 秒 |
-| 格式 | JSON (12 字段: ts, dht11_t/h, ds18b20_t, mq135_v, light_v, mq135_do, photo_do, level, alert, err, reason) |
+| 格式 | JSON (12 字段: ts, dht11_t/h, ds18b20_t, mq135_v, light_raw, mq135_do, photo_do, level, alert, err, reason) |
 
 ```bash
 # 启动上位机接收端

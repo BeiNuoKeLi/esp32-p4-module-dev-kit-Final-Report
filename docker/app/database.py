@@ -7,6 +7,7 @@ SQLite 数据库操作层 — 异步（aiosqlite）
   - check_log:    出入库流水（复用 warehouse_db.py 结构）
 """
 import aiosqlite
+import base64
 import os
 import datetime
 from typing import Optional
@@ -35,7 +36,7 @@ async def init_db():
                 dht11_h   REAL,
                 ds18b20_t REAL,
                 mq135_v   REAL,
-                light_v   REAL,
+                light_raw  INTEGER,
                 mq135_do  INTEGER DEFAULT -1,
                 photo_do  INTEGER DEFAULT -1,
                 level     INTEGER DEFAULT 0,
@@ -84,7 +85,7 @@ async def init_db():
                 ds18b20_t    REAL,
                 mq135_v      REAL,
                 mq135_do     INTEGER DEFAULT -1,
-                light_v      REAL,
+                light_raw      INTEGER,
                 photo_do     INTEGER DEFAULT -1,
                 snapshot     BLOB DEFAULT NULL,
                 acknowledged INTEGER DEFAULT 0
@@ -101,6 +102,8 @@ async def init_db():
             except Exception:
                 pass  # 列已存在
         await db.commit()
+        # ── 报警配置表（v3.5 新增）──
+        await init_alarm_config_table()
 
 
 async def insert_sensor_data(data: dict) -> int:
@@ -110,13 +113,13 @@ async def insert_sensor_data(data: dict) -> int:
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         cursor = await db.execute("""
-            INSERT INTO sensor_data (ts, dht11_t, dht11_h, ds18b20_t, mq135_v, light_v, mq135_do, photo_do, level, alert, reason, err)
+            INSERT INTO sensor_data (ts, dht11_t, dht11_h, ds18b20_t, mq135_v, light_raw, mq135_do, photo_do, level, alert, reason, err)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             now,
             data.get("dht11_t"), data.get("dht11_h"),
             data.get("ds18b20_t"), data.get("mq135_v"),
-            data.get("light_v"),
+            data.get("light_raw"),
             data.get("mq135_do", -1), data.get("photo_do", -1),
             data.get("level", 0),
             data.get("alert", 0), data.get("reason", ""),
@@ -306,13 +309,18 @@ async def clear_alarm_events() -> int:
 
 
 async def delete_inventory_item(item_id: str) -> bool:
-    """删除库存中指定物料（同时删关联流水），返回是否成功"""
+    """删除库存中指定物料（同时删关联流水，事务保证原子性），返回是否成功"""
     _ensure_dir()
     async with aiosqlite.connect(DB_PATH) as db:
-        cursor = await db.execute("DELETE FROM inventory WHERE id = ?", (item_id,))
-        await db.execute("DELETE FROM check_log WHERE item_id = ?", (item_id,))
-        await db.commit()
-        return cursor.rowcount > 0
+        await db.execute("BEGIN")
+        try:
+            cursor = await db.execute("DELETE FROM inventory WHERE id = ?", (item_id,))
+            await db.execute("DELETE FROM check_log WHERE item_id = ?", (item_id,))
+            await db.commit()
+            return cursor.rowcount > 0
+        except Exception:
+            await db.rollback()
+            raise
 
 
 async def add_inventory_item(item: dict) -> tuple[bool, str]:
@@ -394,7 +402,7 @@ async def insert_alarm_event(
     level: int, reason: str = "",
     dht11_t: float | None = None, dht11_h: float | None = None,
     ds18b20_t: float | None = None, mq135_v: float | None = None,
-    mq135_do: int | None = None, light_v: float | None = None,
+    mq135_do: int | None = None, light_raw: int | None = None,
     photo_do: int | None = None, snapshot: bytes | None = None
 ) -> int:
     """插入一条报警事件记录（含快照），返回 id"""
@@ -404,10 +412,10 @@ async def insert_alarm_event(
         db.row_factory = aiosqlite.Row
         cursor = await db.execute("""
             INSERT INTO alarm_events (ts, level, reason, dht11_t, dht11_h, ds18b20_t,
-                                       mq135_v, mq135_do, light_v, photo_do, snapshot)
+                                       mq135_v, mq135_do, light_raw, photo_do, snapshot)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (now, level, reason, dht11_t, dht11_h, ds18b20_t,
-              mq135_v, mq135_do, light_v, photo_do, snapshot))
+              mq135_v, mq135_do, light_raw, photo_do, snapshot))
         await db.commit()
         return cursor.lastrowid
 
@@ -428,7 +436,7 @@ async def get_alarm_events(page: int = 1, page_size: int = 20,
             offset = (page - 1) * page_size
             cursor = await db.execute(
                 "SELECT id, ts, level, reason, dht11_t, dht11_h, ds18b20_t, "
-                "mq135_v, mq135_do, light_v, photo_do, "
+                "mq135_v, mq135_do, light_raw, photo_do, "
                 "CASE WHEN snapshot IS NOT NULL THEN 1 ELSE 0 END as has_snapshot, "
                 "acknowledged "
                 "FROM alarm_events WHERE level = ? "
@@ -441,7 +449,7 @@ async def get_alarm_events(page: int = 1, page_size: int = 20,
             offset = (page - 1) * page_size
             cursor = await db.execute(
                 "SELECT id, ts, level, reason, dht11_t, dht11_h, ds18b20_t, "
-                "mq135_v, mq135_do, light_v, photo_do, "
+                "mq135_v, mq135_do, light_raw, photo_do, "
                 "CASE WHEN snapshot IS NOT NULL THEN 1 ELSE 0 END as has_snapshot, "
                 "acknowledged "
                 "FROM alarm_events ORDER BY id DESC LIMIT ? OFFSET ?",
@@ -464,7 +472,6 @@ async def get_alarm_event_detail(alarm_id: int) -> dict | None:
             return None
         r = dict(row)
         # 将 snapshot BLOB 转为 base64
-        import base64
         if r.get("snapshot"):
             r["snapshot_b64"] = base64.b64encode(r["snapshot"]).decode("ascii")
         else:
@@ -507,3 +514,98 @@ async def acknowledge_alarm(alarm_id: int) -> bool:
         )
         await db.commit()
         return cursor.rowcount > 0
+
+
+# ==================== 报警配置操作 ====================
+
+async def init_alarm_config_table():
+    """初始化 alarm_config 表（在 init_db 中调用）"""
+    _ensure_dir()
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS alarm_config (
+                id                  INTEGER PRIMARY KEY CHECK (id = 1),
+                mq135_alarm_src     INTEGER DEFAULT 0,
+                photo_alarm_src     INTEGER DEFAULT 0,
+                mq135_ao_dir        INTEGER DEFAULT 0,
+                photo_ao_dir        INTEGER DEFAULT 1,
+                mq135_ao_threshold  REAL DEFAULT 2.5,
+                photo_ao_threshold  INTEGER DEFAULT 1000,
+                dht11_temp_high     INTEGER DEFAULT 35,
+                dht11_humi_high     INTEGER DEFAULT 85,
+                ds18b20_temp_high   REAL DEFAULT 35.0,
+                temp_humi_alarm_enabled INTEGER DEFAULT 1,
+                updated_at          TEXT DEFAULT ''
+            )
+        """)
+        # 兼容旧表: 列可能不存在时自动补齐
+        try:
+            await db.execute("ALTER TABLE alarm_config ADD COLUMN temp_humi_alarm_enabled INTEGER DEFAULT 1")
+        except Exception:
+            pass  # 列已存在
+        # 确保存在唯一的配置行 (id=1)
+        await db.execute("""
+            INSERT OR IGNORE INTO alarm_config (id) VALUES (1)
+        """)
+        await db.commit()
+
+
+async def get_alarm_config() -> dict:
+    """获取当前报警配置"""
+    _ensure_dir()
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute("SELECT * FROM alarm_config WHERE id = 1")
+        row = await cursor.fetchone()
+        if row is None:
+            return {
+                "mq135_alarm_src": 0, "photo_alarm_src": 0,
+                "mq135_ao_dir": 0, "photo_ao_dir": 1,
+                "mq135_ao_threshold": 2.5, "photo_ao_threshold": 1000,
+                "dht11_temp_high": 35, "dht11_humi_high": 85,
+                "ds18b20_temp_high": 35.0, "temp_humi_alarm_enabled": 1,
+                "updated_at": "",
+            }
+        return dict(row)
+
+
+async def set_alarm_config(config: dict) -> dict:
+    """写入报警配置（UPSERT id=1）"""
+    _ensure_dir()
+    import datetime as _dt
+    now = _dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        await db.execute("""
+            INSERT INTO alarm_config (id, mq135_alarm_src, photo_alarm_src,
+                mq135_ao_dir, photo_ao_dir, mq135_ao_threshold,
+                photo_ao_threshold, dht11_temp_high, dht11_humi_high,
+                ds18b20_temp_high, temp_humi_alarm_enabled, updated_at)
+            VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                mq135_alarm_src        = excluded.mq135_alarm_src,
+                photo_alarm_src        = excluded.photo_alarm_src,
+                mq135_ao_dir           = excluded.mq135_ao_dir,
+                photo_ao_dir           = excluded.photo_ao_dir,
+                mq135_ao_threshold     = excluded.mq135_ao_threshold,
+                photo_ao_threshold     = excluded.photo_ao_threshold,
+                dht11_temp_high        = excluded.dht11_temp_high,
+                dht11_humi_high        = excluded.dht11_humi_high,
+                ds18b20_temp_high      = excluded.ds18b20_temp_high,
+                temp_humi_alarm_enabled = excluded.temp_humi_alarm_enabled,
+                updated_at             = excluded.updated_at
+        """, (
+            config.get("mq135_alarm_src", 0),
+            config.get("photo_alarm_src", 0),
+            config.get("mq135_ao_dir", 0),
+            config.get("photo_ao_dir", 1),
+            config.get("mq135_ao_threshold", 2.5),
+            config.get("photo_ao_threshold", 1000),
+            config.get("dht11_temp_high", 35),
+            config.get("dht11_humi_high", 85),
+            config.get("ds18b20_temp_high", 35.0),
+            config.get("temp_humi_alarm_enabled", 1),
+            now,
+        ))
+        await db.commit()
+        return await get_alarm_config()

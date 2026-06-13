@@ -16,7 +16,7 @@ class SensorData(BaseModel):
     dht11_h: Optional[float] = None
     ds18b20_t: Optional[float] = None
     mq135_v: Optional[float] = None
-    light_v: Optional[float] = None
+    light_raw: Optional[int] = None     # 光敏 ADC 原始值 (0~4095)
     mq135_do: Optional[int] = None    # 0=超阈值, 1=正常
     photo_do: Optional[int] = None    # 0=超阈值, 1=正常
     alert: int = 0          # 0=正常, 1=任一报警源触发
@@ -32,7 +32,7 @@ class SensorRecord(BaseModel):
     dht11_h: Optional[float] = None
     ds18b20_t: Optional[float] = None
     mq135_v: Optional[float] = None
-    light_v: Optional[float] = None
+    light_raw: Optional[int] = None
     mq135_do: Optional[int] = None
     photo_do: Optional[int] = None
     level: int = 0
@@ -48,7 +48,7 @@ class StatusResponse(BaseModel):
     dht11_h: Optional[float] = None
     ds18b20_t: Optional[float] = None
     mq135_v: Optional[float] = None
-    light_v: Optional[float] = None
+    light_raw: Optional[int] = None
     mq135_do: Optional[int] = None
     photo_do: Optional[int] = None
     alert: int = 0
@@ -135,7 +135,7 @@ class AlarmEvent(BaseModel):
     ds18b20_t: Optional[float] = None
     mq135_v: Optional[float] = None
     mq135_do: Optional[int] = None
-    light_v: Optional[float] = None
+    light_raw: Optional[int] = None
     photo_do: Optional[int] = None
     has_snapshot: bool = False      # 是否有现场照片
     acknowledged: int = 0           # 0=未确认, 1=已确认
@@ -173,8 +173,8 @@ class StreamStatus(BaseModel):
 
 class SimInjectRequest(BaseModel):
     """仿真数据注入请求 — 字段与 MCU (smart_monitor_main.c:549-553) 一致"""
-    dht11_t: int = 25              # DHT11 温度 (°C)
-    dht11_h: int = 60              # DHT11 湿度 (%RH)
+    dht11_t: float = 25.0            # DHT11 温度 (°C) — 统一用 float 与其他模型一致
+    dht11_h: float = 60.0            # DHT11 湿度 (%RH)
     ds18b20_t: float = 25.0        # DS18B20 温度 (°C)
     mq135_v: float = 1.2           # MQ-135 电压 (V)
     mq135_do: int = 1              # MQ-135 DO (0=超阈值, 1=正常)
@@ -187,4 +187,36 @@ class SimStatus(BaseModel):
     """仿真状态查询响应"""
     active: bool
     esp_ip: str = ""
+    message: str = ""
+
+
+# ─── 报警配置模型 ──────────────────────────────────────────
+
+class AlarmConfigRequest(BaseModel):
+    """报警配置请求 — 字段全部可选，缺失保留当前值"""
+    mq135_alarm_src: int = 0        # 0=DO, 1=AO
+    photo_alarm_src: int = 0
+    mq135_ao_dir: int = 0           # 0=高于阈值触发, 1=低于阈值触发
+    photo_ao_dir: int = 1           # 默认 1=低于阈值（光线暗报警）
+    mq135_ao_threshold: float = 2.5
+    photo_ao_threshold: int = 1000
+    dht11_temp_high: int = 35
+    dht11_humi_high: int = 85
+    ds18b20_temp_high: float = 35.0
+    temp_humi_alarm_enabled: int = 1   # 1=启用温湿度报警, 0=关闭
+
+
+class AlarmConfigResponse(BaseModel):
+    """报警配置查询响应"""
+    mq135_alarm_src: int = 0
+    photo_alarm_src: int = 0
+    mq135_ao_dir: int = 0
+    photo_ao_dir: int = 1
+    mq135_ao_threshold: float = 2.5
+    photo_ao_threshold: int = 1000
+    dht11_temp_high: int = 35
+    dht11_humi_high: int = 85
+    ds18b20_temp_high: float = 35.0
+    temp_humi_alarm_enabled: int = 1
+    updated_at: str = ""
     message: str = ""

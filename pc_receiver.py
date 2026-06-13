@@ -24,7 +24,7 @@ JSON 报文格式 v2.0（分级报警）：
   "dht11_h": 62.0,            // DHT11 湿度 (%RH)
   "ds18b20_t": 28.3125,       // DS18B20 温度 (°C, 4位小数)
   "mq135_v": 1.25,            // MQ-135 AO 电压 (V)
-  "light_v": 0.85,            // 光敏 AO 电压 (V)
+  "light_raw": 1500,          // 光敏 ADC 原始值 (0~4095)
   "alert": 0,                 // 0=正常, 1=任一报警源触发
   "err": 0,                   // 错误位掩码
   "reason": ""                // 报警原因 (mq135/dht11_temp/ds18b20_temp/photo/dht11_humi)
@@ -169,7 +169,7 @@ class UdpReceiver:
         dht11_h = obj.get("dht11_h", 0)
         ds18b20_t = obj.get("ds18b20_t", 0)
         mq135_v = obj.get("mq135_v", 0)
-        light_v = obj.get("light_v", 0)
+        light_raw = obj.get("light_raw", 0)
         alert = obj.get("alert", 0)
         err = obj.get("err", 0)
         reason = obj.get("reason", "")
@@ -196,7 +196,7 @@ class UdpReceiver:
         line = (f"[{ts}] "
                 f"DHT11: {dht11_t:>5.1f}°C | {dht11_h:>5.1f}% "
                 f"|| DS18B20: {ds18b20_t:>8.4f}°C "
-                f"|| MQ135: {mq135_v:>.2f}V | Light: {light_v:>.2f}V "
+                f"|| MQ135: {mq135_v:>.2f}V | Light: {light_raw} ADC "
                 f"|| {level_color}{alert_str:>14}\033[0m | Err: {err_field}")
 
         if level >= 3:
@@ -213,7 +213,7 @@ class UdpReceiver:
         追加写入 CSV 日志文件 (v2.0 分级报警)
 
         首次写入时自动写表头
-        CSV 列: timestamp, esp_ts, type, level, dht11_t, dht11_h, ds18b20_t, mq135_v, light_v, alert, err, reason
+        CSV 列: timestamp, esp_ts, type, level, dht11_t, dht11_h, ds18b20_t, mq135_v, light_raw, alert, err, reason
         """
         try:
             with open(CSV_FILE, "a", newline="", encoding="utf-8") as f:
@@ -226,7 +226,7 @@ class UdpReceiver:
                         "type", "level",
                         "dht11_t", "dht11_h",
                         "ds18b20_t",
-                        "mq135_v", "light_v",
+                        "mq135_v", "light_raw",
                         "alert", "err", "reason"
                     ])
                     self.csv_written_header = True
@@ -241,7 +241,7 @@ class UdpReceiver:
                     obj.get("dht11_h", ""),
                     obj.get("ds18b20_t", ""),
                     obj.get("mq135_v", ""),
-                    obj.get("light_v", ""),
+                    obj.get("light_raw", ""),
                     obj.get("alert", ""),
                     f"0x{obj.get('err', 0):02X}",
                     obj.get("reason", "")

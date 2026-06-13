@@ -15,11 +15,11 @@ import os
 
 # ─── 各传感器物理范围 (min, max) ─────────────────────────────
 RANGE_LIMITS = {
-    "dht11_t": (-10.0, 50.0),
+    "dht11_t": (-10.0, 60.0),      # ★ 上限放宽至 60°C（化肥堆垛自热可达 55°C）
     "dht11_h": (0.0, 100.0),
     "ds18b20_t": (-55.0, 125.0),
     "mq135_v": (0.0, 3.6),
-    "light_v": (0.0, 3.6),
+    "light_raw": (0, 4095),
 }
 
 # ─── EMA 平滑系数 (alpha 越小越平滑) ─────────────────────────
@@ -28,19 +28,22 @@ EMA_ALPHAS = {
     "dht11_h": 0.20,
     "ds18b20_t": 0.20,
     "mq135_v": 0.08,   # 气体传感器响应慢，强平滑抑制 ADC 噪声
-    "light_v": 0.15,
+    "light_raw": 0.15,
 }
 
 
 # ─── 哨兵值：ESP32 传感器读失败时发送的标记值 ────────────────
-#   DHT11/MQ-135/光敏等所有传感器读失败时统一发 -1.0
-_SENTINEL_THRESHOLD = -0.5  # 小于此值视为无效（读失败哨兵）
+#   通用哨兵: <-0.5 (DHT11 失败返回 -127.0, MQ135/光敏失败返回 -1.0)
+#   DS18B20 合法范围含负值 (-55~125°C), 需特殊处理
+_SENTINEL_THRESHOLD = -0.5
+_SENTINEL_DS18B20 = -50.0  # ★ DS18B20: <-50°C 视为哨兵 (物理极限 -55°C)
 
 
 def _is_sentinel(key: str, value: float) -> bool:
     """判断是否为传感器读失败的哨兵值"""
-    # 温度/湿度/电压等所有传感器：负值毫无意义，直接丢弃
-    return value < _SENTINEL_THRESHOLD
+    if key == "ds18b20_t":
+        return value < _SENTINEL_DS18B20  # DS18B20: -55°C 下限, <-50 即弃
+    return value < _SENTINEL_THRESHOLD   # 其他传感器: 负值无意义
 
 
 def _clamp(key: str, value: float | None) -> float | None:

@@ -261,6 +261,22 @@ th{color:var(--text-dim);font-weight:600;white-space:nowrap}
 .btn-preset.l2{border-color:rgba(255,152,0,.3)}.btn-preset.l2:hover{background:rgba(255,152,0,.12);border-color:var(--orange)}
 .btn-preset.l3{border-color:rgba(244,67,54,.3)}.btn-preset.l3:hover{background:rgba(244,67,54,.12);border-color:var(--red)}
 .sim-debug{border:1px dashed var(--border);border-radius:8px;padding:8px 12px;margin-top:8px;font-family:'Courier New',monospace;font-size:.72rem;color:var(--text-dim);display:none;max-height:120px;overflow-y:auto;white-space:pre-wrap}
+
+/* ===== 报警配置面板 ===== */
+#alarmCfgCard input[type=range]{-webkit-appearance:none;width:100%;height:5px;background:var(--border);border-radius:3px;outline:none;cursor:pointer;margin:4px 0 8px}
+#alarmCfgCard input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;height:14px;border-radius:50%;background:var(--accent);cursor:pointer;border:2px solid var(--bg);transition:all .15s}
+#alarmCfgCard input[type=range]::-webkit-slider-thumb:hover{transform:scale(1.25);box-shadow:0 0 8px rgba(0,188,212,.5)}
+.cfg-toggle-row{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+.cfg-toggle-row .cfg-tg-label{font-size:.72rem;color:var(--text-dim);min-width:52px}
+.cfg-toggle-row .cfg-tg-opt{font-size:.68rem;color:var(--text-dim);font-weight:500;transition:color .2s;width:48px;text-align:center}
+.cfg-toggle-row .cfg-tg-opt.active{color:var(--accent);font-weight:700}
+.cfg-input-row{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+.cfg-input-row label{font-size:.7rem;color:var(--text-dim);min-width:0;flex-shrink:0}
+.cfg-input-row input[type=range]{flex:1;margin:0 4px}
+.cfg-num-input{width:52px;background:var(--border);border:1px solid var(--border-light);color:var(--accent);padding:3px 6px;border-radius:5px;font-size:.72rem;font-family:'Courier New',monospace;text-align:center;transition:border-color .2s;box-sizing:border-box}
+.cfg-num-input:focus{outline:none;border-color:var(--accent)}
+.cfg-num-input:hover{border-color:var(--border-light)}
+.cfg-section-title{font-size:.78rem;font-weight:600;margin-bottom:10px;display:flex;align-items:center;gap:6px}
 </style>
 </head>
 
@@ -284,46 +300,162 @@ th{color:var(--text-dim);font-weight:600;white-space:nowrap}
   <div class="g4">
     <div class="card sensor-card"><div class="value" id="valDs18Temp">--</div><span class="unit">°C</span><div class="label">DS18B20 温度</div></div>
     <div class="card sensor-card"><div class="value" id="valDhtH">--</div><span class="unit">%RH</span><div class="label">DHT11 湿度</div></div>
-    <div class="card sensor-card"><div class="value" id="valLight">--</div><span class="unit">V</span><span class="do-tag" id="doPhotoTag">DO--</span><div class="label">光敏电压</div></div>
+    <div class="card sensor-card"><div class="value" id="valLight">--</div><span class="unit">raw</span><span class="do-tag" id="doPhotoTag">DO--</span><div class="label">光敏ADC</div></div>
     <div class="card sensor-card"><div class="value" id="valMq135">--</div><span class="unit">V</span><span class="do-tag" id="doMq135Tag">DO--</span><div class="label">MQ-135 电压</div></div>
   </div>
 
-  <!-- Simulation Injection Panel -->
-  <div class="card" id="simCard">
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
-      <h3 style="margin:0;">🎮 仿真注入</h3>
-      <div style="display:flex;align-items:center;gap:10px;">
-        <span style="font-size:.75rem;color:var(--text-dim);" id="simModeLabel">模式: 真实传感器</span>
-        <button class="btn-preset" onclick="toggleSimPanel()" title="展开/收起仿真面板" style="font-size:.7rem;padding:3px 10px;">🔽</button>
+  <!-- Simulation + Alarm Config Row -->
+  <div class="g2">
+    <!-- Simulation Injection Panel -->
+    <div class="card" id="simCard">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+        <h3 style="margin:0;">🎮 仿真注入</h3>
+        <div style="display:flex;align-items:center;gap:10px;">
+          <span style="font-size:.75rem;color:var(--text-dim);" id="simModeLabel">模式: 真实传感器</span>
+          <button class="btn-preset" onclick="toggleSimPanel()" title="展开/收起仿真面板" style="font-size:.7rem;padding:3px 10px;">🔽</button>
+        </div>
+      </div>
+      <div id="simContent">
+        <div class="sim-preset-row">
+          <button class="btn-preset l0" onclick="loadSimPreset('L0')">L0 正常</button>
+          <button class="btn-preset l1" onclick="loadSimPreset('L1')">L1 预警</button>
+          <button class="btn-preset l2" onclick="loadSimPreset('L2')">L2 严重</button>
+          <button class="btn-preset l3" onclick="loadSimPreset('L3')">L3 紧急</button>
+        </div>
+        <div class="sim-panel">
+          <div class="sim-item"><label>DHT11温度 °C</label><input type="range" id="simDht11T" min="0" max="50" value="25" step="1" oninput="updateSimVal('simDht11T','simVDht11T')"><span class="sim-val" id="simVDht11T">25</span></div>
+          <div class="sim-item"><label>DHT11湿度 %</label><input type="range" id="simDht11H" min="20" max="90" value="60" step="1" oninput="updateSimVal('simDht11H','simVDht11H')"><span class="sim-val" id="simVDht11H">60</span></div>
+          <div class="sim-item"><label>DS18B20 °C</label><input type="range" id="simDs18T" min="-10" max="50" value="25" step="0.1" oninput="updateSimVal('simDs18T','simVDs18T')"><span class="sim-val" id="simVDs18T">25</span></div>
+          <div class="sim-item"><label>MQ135电压 V</label><input type="range" id="simMq135V" min="0" max="3.3" value="1.2" step="0.1" oninput="updateSimVal('simMq135V','simVMq135V')"><span class="sim-val" id="simVMq135V">1.2</span></div>
+          <div class="sim-item"><label>光敏AO原始值</label><input type="range" id="simPhotoRaw" min="0" max="4095" value="2000" step="50" oninput="updateSimVal('simPhotoRaw','simVPhotoRaw')"><span class="sim-val" id="simVPhotoRaw">2000</span></div>
+          <div class="sim-item"><label style="color:var(--text-dim);font-style:italic">级别/MCU计算</label><span class="sim-val" style="color:var(--text-dim)">由ESP32决定</span></div>
+        </div>
+        <div style="display:flex;gap:10px;align-items:center;margin-top:8px;">
+          <label style="font-size:.75rem;color:var(--text-dim);display:flex;align-items:center;gap:4px;cursor:pointer;">
+            <input type="checkbox" id="simMq135Do" checked onchange="this.nextSibling.textContent=this.checked?'正常':'报警'"> <span>MQ135 DO: 正常</span>
+          </label>
+          <label style="font-size:.75rem;color:var(--text-dim);display:flex;align-items:center;gap:4px;cursor:pointer;">
+            <input type="checkbox" id="simPhotoDo" checked onchange="this.nextSibling.textContent=this.checked?'正常':'报警'"> <span>光敏 DO: 正常</span>
+          </label>
+          <span style="font-size:.7rem;color:var(--text-dim);flex:1;">报警级别/原因由 MCU 根据注入值自动判断</span>
+          <button class="btn-submit" onclick="applySimInject()" style="padding:7px 18px;font-size:.82rem;">▶ Apply 注入</button>
+          <button class="btn-close-modal" onclick="resetSimInject()" style="padding:7px 18px;">⟳ Reset 恢复</button>
+        </div>
+        <div class="sim-debug" id="simDebug"></div>
       </div>
     </div>
-    <div id="simContent">
-      <div class="sim-preset-row">
-        <button class="btn-preset l0" onclick="loadSimPreset('L0')">L0 正常</button>
-        <button class="btn-preset l1" onclick="loadSimPreset('L1')">L1 预警</button>
-        <button class="btn-preset l2" onclick="loadSimPreset('L2')">L2 严重</button>
-        <button class="btn-preset l3" onclick="loadSimPreset('L3')">L3 紧急</button>
+
+    <!-- Alarm Config Panel -->
+    <div class="card" id="alarmCfgCard">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+        <h3 style="margin:0;">⚙ 报警配置</h3>
+        <span style="font-size:.7rem;color:var(--text-dim);" id="alarmCfgUpdated">上次更新: --</span>
       </div>
-      <div class="sim-panel">
-        <div class="sim-item"><label>DHT11温度 °C</label><input type="range" id="simDht11T" min="0" max="50" value="25" step="1" oninput="updateSimVal('simDht11T','simVDht11T')"><span class="sim-val" id="simVDht11T">25</span></div>
-        <div class="sim-item"><label>DHT11湿度 %</label><input type="range" id="simDht11H" min="20" max="90" value="60" step="1" oninput="updateSimVal('simDht11H','simVDht11H')"><span class="sim-val" id="simVDht11H">60</span></div>
-        <div class="sim-item"><label>DS18B20 °C</label><input type="range" id="simDs18T" min="-10" max="50" value="25" step="0.1" oninput="updateSimVal('simDs18T','simVDs18T')"><span class="sim-val" id="simVDs18T">25</span></div>
-        <div class="sim-item"><label>MQ135电压 V</label><input type="range" id="simMq135V" min="0" max="3.3" value="1.2" step="0.1" oninput="updateSimVal('simMq135V','simVMq135V')"><span class="sim-val" id="simVMq135V">1.2</span></div>
-        <div class="sim-item"><label>光敏AO原始值</label><input type="range" id="simPhotoRaw" min="0" max="4095" value="2000" step="50" oninput="updateSimVal('simPhotoRaw','simVPhotoRaw')"><span class="sim-val" id="simVPhotoRaw">2000</span></div>
-        <div class="sim-item"><label style="color:var(--text-dim);font-style:italic">级别/MCU计算</label><span class="sim-val" style="color:var(--text-dim)">由ESP32决定</span></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+        <!-- MQ-135 Column -->
+        <div style="border-right:1px solid var(--border);padding-right:10px;">
+          <div class="cfg-section-title" style="color:var(--accent);">🟡 MQ-135 气体</div>
+          <!-- 报警源开关 -->
+          <div class="cfg-toggle-row">
+            <span class="cfg-tg-label">报警源</span>
+            <span class="cfg-tg-opt" id="cfgMqDoLab">DO</span>
+            <label class="toggle-switch" style="margin:0 4px;">
+              <input type="checkbox" id="cfgMqSrc" onchange="onAlarmCfgToggle('mq')">
+              <span class="toggle-slider"></span>
+            </label>
+            <span class="cfg-tg-opt" id="cfgMqAoLab">AO</span>
+          </div>
+          <!-- AO 配置区 -->
+          <div id="cfgMqAoGroup" style="display:none;">
+            <div class="cfg-toggle-row">
+              <span class="cfg-tg-label">触发方向</span>
+              <span class="cfg-tg-opt" id="cfgMqDirAboveLab">高于</span>
+              <label class="toggle-switch" style="margin:0 4px;">
+                <input type="checkbox" id="cfgMqDir" onchange="onAlarmCfgToggle('mq')">
+                <span class="toggle-slider"></span>
+              </label>
+              <span class="cfg-tg-opt" id="cfgMqDirBelowLab">低于</span>
+            </div>
+            <div class="cfg-input-row">
+              <label>阈值(V)</label>
+              <input type="range" id="cfgMqAoThr" min="0" max="3.3" value="2.5" step="0.05" oninput="syncCfgSliderInput('cfgMqAoThr','cfgMqAoNum',2)">
+              <input class="cfg-num-input" id="cfgMqAoNum" value="2.50" step="0.05" onchange="syncCfgNumToSlider('cfgMqAoNum','cfgMqAoThr',2)">
+            </div>
+          </div>
+        </div>
+        <!-- Photo Column -->
+        <div style="padding-left:10px;">
+          <div class="cfg-section-title" style="color:#ffca28;">💡 光敏电阻</div>
+          <!-- 报警源开关 -->
+          <div class="cfg-toggle-row">
+            <span class="cfg-tg-label">报警源</span>
+            <span class="cfg-tg-opt" id="cfgPhDoLab">DO</span>
+            <label class="toggle-switch" style="margin:0 4px;">
+              <input type="checkbox" id="cfgPhSrc" onchange="onAlarmCfgToggle('ph')">
+              <span class="toggle-slider"></span>
+            </label>
+            <span class="cfg-tg-opt" id="cfgPhAoLab">AO</span>
+          </div>
+          <!-- AO 配置区 -->
+          <div id="cfgPhAoGroup" style="display:none;">
+            <div class="cfg-toggle-row">
+              <span class="cfg-tg-label">触发方向</span>
+              <span class="cfg-tg-opt" id="cfgPhDirAboveLab">高于</span>
+              <label class="toggle-switch" style="margin:0 4px;">
+                <input type="checkbox" id="cfgPhDir" onchange="onAlarmCfgToggle('ph')">
+                <span class="toggle-slider"></span>
+              </label>
+              <span class="cfg-tg-opt" id="cfgPhDirBelowLab">低于</span>
+            </div>
+            <div class="cfg-input-row">
+              <label>阈值(ADC)</label>
+              <input type="range" id="cfgPhAoThr" min="0" max="4095" value="1000" step="50" oninput="syncCfgSliderInput('cfgPhAoThr','cfgPhAoNum',0)">
+              <input class="cfg-num-input" id="cfgPhAoNum" value="1000" step="50" onchange="syncCfgNumToSlider('cfgPhAoNum','cfgPhAoThr',0)">
+            </div>
+          </div>
+        </div>
       </div>
-      <div style="display:flex;gap:10px;align-items:center;margin-top:8px;">
-        <label style="font-size:.75rem;color:var(--text-dim);display:flex;align-items:center;gap:4px;cursor:pointer;">
-          <input type="checkbox" id="simMq135Do" checked onchange="this.nextSibling.textContent=this.checked?'正常':'报警'"> <span>MQ135 DO: 正常</span>
-        </label>
-        <label style="font-size:.75rem;color:var(--text-dim);display:flex;align-items:center;gap:4px;cursor:pointer;">
-          <input type="checkbox" id="simPhotoDo" checked onchange="this.nextSibling.textContent=this.checked?'正常':'报警'"> <span>光敏 DO: 正常</span>
-        </label>
-        <span style="font-size:.7rem;color:var(--text-dim);flex:1;">报警级别/原因由 MCU 根据注入值自动判断</span>
-        <button class="btn-submit" onclick="applySimInject()" style="padding:7px 18px;font-size:.82rem;">▶ Apply 注入</button>
-        <button class="btn-close-modal" onclick="resetSimInject()" style="padding:7px 18px;">⟳ Reset 恢复</button>
+      <!-- DHT / DS thresholds -->
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-top:12px;padding-top:10px;border-top:1px solid var(--border);">
+        <div class="cfg-section-title" style="color:#4fc3f7;margin:0;">🌡 温湿度报警</div>
+        <div class="cfg-toggle-row" style="margin:0;">
+          <span class="cfg-tg-opt" id="cfgThOffLab">关闭</span>
+          <label class="toggle-switch" style="margin:0 4px;">
+            <input type="checkbox" id="cfgThEn" checked onchange="onAlarmCfgToggle('th')">
+            <span class="toggle-slider"></span>
+          </label>
+          <span class="cfg-tg-opt" id="cfgThOnLab">启用</span>
+        </div>
       </div>
-      <div class="sim-debug" id="simDebug"></div>
+      <div id="cfgThGroup">
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-top:10px;">
+        <div>
+          <label style="font-size:.68rem;color:var(--text-dim);display:block;margin-bottom:2px;">DHT11 高温 °C</label>
+          <div class="cfg-input-row" style="margin-bottom:0;">
+            <input type="range" id="cfgDhtTHi" min="20" max="50" value="35" step="1" oninput="syncCfgSliderInput('cfgDhtTHi','cfgDhtTHiNum',0)" style="flex:1;">
+            <input class="cfg-num-input" id="cfgDhtTHiNum" value="35" step="1" onchange="syncCfgNumToSlider('cfgDhtTHiNum','cfgDhtTHi',0)">
+          </div>
+        </div>
+        <div>
+          <label style="font-size:.68rem;color:var(--text-dim);display:block;margin-bottom:2px;">DHT11 高湿 %</label>
+          <div class="cfg-input-row" style="margin-bottom:0;">
+            <input type="range" id="cfgDhtHHi" min="50" max="95" value="85" step="1" oninput="syncCfgSliderInput('cfgDhtHHi','cfgDhtHHiNum',0)" style="flex:1;">
+            <input class="cfg-num-input" id="cfgDhtHHiNum" value="85" step="1" onchange="syncCfgNumToSlider('cfgDhtHHiNum','cfgDhtHHi',0)">
+          </div>
+        </div>
+        <div>
+          <label style="font-size:.68rem;color:var(--text-dim);display:block;margin-bottom:2px;">DS18B20 高温 °C</label>
+          <div class="cfg-input-row" style="margin-bottom:0;">
+            <input type="range" id="cfgDsTHi" min="10" max="60" value="35" step="0.5" oninput="syncCfgSliderInput('cfgDsTHi','cfgDsTHiNum',1)" style="flex:1;">
+            <input class="cfg-num-input" id="cfgDsTHiNum" value="35.0" step="0.5" onchange="syncCfgNumToSlider('cfgDsTHiNum','cfgDsTHi',1)">
+          </div>
+        </div>
+      </div>
+      </div>
+      <div style="display:flex;gap:10px;margin-top:12px;">
+        <button class="btn-scan" onclick="loadAlarmConfigPanel()" style="flex:1;font-size:.78rem;">🔄 加载当前配置</button>
+        <button class="btn-submit" onclick="saveAlarmConfigPanel()" style="flex:1;padding:10px;font-size:.82rem;">📤 下发到 MCU</button>
+      </div>
     </div>
   </div>
 
@@ -496,6 +628,7 @@ function updateDoTags(mq135Do,photoDo){
 
 // ===== WebSocket + HTTP 轮询降级 =====
 var ws=null,_pollTimer=null,_wsTimeout=null;
+var _reconnectAttempts=0,_maxReconnect=10;
 function connectWS(){
   if(ws){try{ws.close()}catch(e){}if(ws._heartbeat){clearInterval(ws._heartbeat);ws._heartbeat=null}}
   var p=location.protocol==='https:'?'wss:':'ws:',u=p+'//'+location.host+'/ws';
@@ -513,6 +646,7 @@ function connectWS(){
   },3000);
   ws.onopen=function(){
     clearTimeout(_wsTimeout);stopPolling();
+    _reconnectAttempts=0;  // ★ 成功后重置重连计数
     console.log('[SmartMonitor] WebSocket 已连接');
     document.getElementById('wsDot').className='status-dot online';
     document.getElementById('wsStatus').textContent='WebSocket 已连接';
@@ -527,10 +661,19 @@ function connectWS(){
   };
   ws.onclose=function(){
     if(ws._heartbeat){clearInterval(ws._heartbeat);ws._heartbeat=null}
-    console.log('[SmartMonitor] WS 断开，启动轮询并5秒后重连');
-    document.getElementById('wsDot').className='status-dot offline';
-    document.getElementById('wsStatus').textContent='WS 断开，3秒后重连(轮询中)...';
-    startPolling();setTimeout(connectWS,5000);
+    startPolling();
+    // ★ 指数退避重连，最多 10 次
+    if(_reconnectAttempts<_maxReconnect){
+      var delay=Math.min(2000*Math.pow(1.5,_reconnectAttempts),30000);
+      _reconnectAttempts++;
+      console.log('[SmartMonitor] WS 断开，'+Math.round(delay)+'ms后重连 (第'+_reconnectAttempts+'次)');
+      document.getElementById('wsDot').className='status-dot offline';
+      document.getElementById('wsStatus').textContent='WS 断开，'+Math.round(delay/1000)+'s后重连...';
+      setTimeout(connectWS,delay);
+    }else{
+      console.warn('[SmartMonitor] 达到最大重连次数，仅保持 HTTP 轮询');
+      document.getElementById('wsStatus').textContent='WS 重连失败，仅HTTP轮询中...';
+    }
   };
   ws.onerror=function(e){
     console.warn('[SmartMonitor] WS onerror 触发');
@@ -558,7 +701,7 @@ connectWS();
 function handleSensorData(data,ts){
   document.getElementById('valDs18Temp').textContent=data.ds18b20_t!=null?data.ds18b20_t.toFixed(4):'--';
   document.getElementById('valDhtH').textContent=data.dht11_h!=null?data.dht11_h.toFixed(1):'--';
-  document.getElementById('valLight').textContent=data.light_v!=null?data.light_v.toFixed(3):'--';
+  document.getElementById('valLight').textContent=data.light_raw!=null?data.light_raw:'--';
   document.getElementById('valMq135').textContent=data.mq135_v!=null?data.mq135_v.toFixed(3):'--';
   updateAlert(data.level||0,data.reason||'');
   var t=ts||new Date().toLocaleTimeString();document.getElementById('lastUpdate').textContent=t;
@@ -568,7 +711,7 @@ function handleSensorData(data,ts){
   TL.push(t);if(TL.length>MAX_POINTS)TL.shift();
   // Chart 更新（如果 Block2 已加载，这些函数就有实际逻辑；否则是空操作）
   aDP(window.cT,TDS,data.ds18b20_t);aDP(window.cH,TDh,data.dht11_h);aDP(window.cG,TG,data.mq135_v);
-  aDP(window.cL,TLi,data.light_v);
+  aDP(window.cL,TLi,data.light_raw);
 }
 
 // ===== 初始数据加载 =====
@@ -576,13 +719,13 @@ async function loadInitialData(){
   try{
     var r=await fetch('/api/sensors/recent?limit=60');if(r.ok){
       var rows=await r.json();
-      for(var i=0;i<rows.length;i++){var R=rows[i];TL.push(R.ts);if(TL.length>MAX_POINTS)TL.shift();TDS.push(R.ds18b20_t);if(TDS.length>MAX_POINTS)TDS.shift();TDh.push(R.dht11_h);if(TDh.length>MAX_POINTS)TDh.shift();TG.push(R.mq135_v);if(TG.length>MAX_POINTS)TG.shift();TLi.push(R.light_v);if(TLi.length>MAX_POINTS)TLi.shift()}
+      for(var i=0;i<rows.length;i++){var R=rows[i];TL.push(R.ts);if(TL.length>MAX_POINTS)TL.shift();TDS.push(R.ds18b20_t);if(TDS.length>MAX_POINTS)TDS.shift();TDh.push(R.dht11_h);if(TDh.length>MAX_POINTS)TDh.shift();TG.push(R.mq135_v);if(TG.length>MAX_POINTS)TG.shift();TLi.push(R.light_raw);if(TLi.length>MAX_POINTS)TLi.shift()}
       if(rows.length>0){var last=rows[rows.length-1];handleSensorData(last,last.ts);updAll()}
     }
     var ir=await fetch('/api/inventory');if(ir.ok)renderInventory(await ir.json());
     var sr=await fetch('/api/status');if(sr.ok){
       var s=await sr.json();
-      if(s.last_update){updateAlert(s.level||0,s.reason||'');document.getElementById('valDs18Temp').textContent=s.ds18b20_t!=null?s.ds18b20_t.toFixed(4):'--';document.getElementById('valDhtH').textContent=s.dht11_h!=null?s.dht11_h.toFixed(1):'--';document.getElementById('valLight').textContent=s.light_v!=null?s.light_v.toFixed(3):'--';document.getElementById('valMq135').textContent=s.mq135_v!=null?s.mq135_v.toFixed(3):'--';document.getElementById('lastUpdate').textContent=s.last_update||'--';document.getElementById('envTemp').textContent=s.ds18b20_t!=null?s.ds18b20_t.toFixed(2):'--';document.getElementById('envHumi').textContent=s.dht11_h!=null?s.dht11_h.toFixed(1):'--';updateDoTags(s.mq135_do,s.photo_do)}
+      if(s.last_update){updateAlert(s.level||0,s.reason||'');document.getElementById('valDs18Temp').textContent=s.ds18b20_t!=null?s.ds18b20_t.toFixed(4):'--';document.getElementById('valDhtH').textContent=s.dht11_h!=null?s.dht11_h.toFixed(1):'--';document.getElementById('valLight').textContent=s.light_raw!=null?s.light_raw:'--';document.getElementById('valMq135').textContent=s.mq135_v!=null?s.mq135_v.toFixed(3):'--';document.getElementById('lastUpdate').textContent=s.last_update||'--';document.getElementById('envTemp').textContent=s.ds18b20_t!=null?s.ds18b20_t.toFixed(2):'--';document.getElementById('envHumi').textContent=s.dht11_h!=null?s.dht11_h.toFixed(1):'--';updateDoTags(s.mq135_do,s.photo_do)}
     }
     await loadCheckLog();
   }catch(e){console.warn('Load err:',e)}
@@ -613,7 +756,7 @@ loadInitialData();
   window.cT=mkChart('chartTemp','DS18B20 温度',CC.temp,'°C',0,50);
   window.cH=mkChart('chartHumi','DHT11 湿度',CC.humi,'%RH',0,100);
   window.cG=mkChart('chartGas','MQ-135 电压',CC.gas,'V',0,3.3);
-  window.cL=mkChart('chartLight','光敏电压',CC.light,'V',0,3.3);
+  window.cL=mkChart('chartLight','光敏ADC',CC.light,'raw',0,4095);
 
   // 重新定义 Chart 更新函数（覆盖 Block1 的空操作）
   aDP=function(c,d,v){
@@ -1018,7 +1161,7 @@ async function openAlarmDetail(id){
     h+='<tr><td>DHT11 湿度</td><td>'+(e.dht11_h!=null?e.dht11_h.toFixed(1)+'%':'-')+'</td></tr>';
     h+='<tr><td>MQ-135 电压</td><td>'+(e.mq135_v!=null?e.mq135_v.toFixed(3)+'V':'-')+'</td></tr>';
     h+='<tr><td>MQ-135 DO</td><td>'+(e.mq135_do!=null?(e.mq135_do===1?'正常':'报警'):'-')+'</td></tr>';
-    h+='<tr><td>光敏电压</td><td>'+(e.light_v!=null?e.light_v.toFixed(3)+'V':'-')+'</td></tr>';
+    h+='<tr><td>光敏ADC</td><td>'+(e.light_raw!=null?e.light_raw+' raw':'-')+'</td></tr>';
     h+='<tr><td>光敏 DO</td><td>'+(e.photo_do!=null?(e.photo_do===1?'正常':'报警'):'-')+'</td></tr>';
     h+='<tr><td>确认状态</td><td>'+(e.acknowledged?'✅ 已确认':'⚠️ 未确认')+'</td></tr>';
     h+='</table>';
@@ -1063,6 +1206,122 @@ async function clearAlarmRecords(){
 // 初始加载报警数据
 loadAlarmSummary();loadAlarmList(1);
 setInterval(function(){loadAlarmSummary()},10000);
+
+// ===== 报警配置面板 =====
+// 开关同步：checkbox checked=true → AO模式
+function onAlarmCfgToggle(sensor){
+  if(sensor==='mq'){
+    var ao=document.getElementById('cfgMqSrc').checked;
+    document.getElementById('cfgMqAoGroup').style.display=ao?'block':'none';
+    document.getElementById('cfgMqDoLab').className='cfg-tg-opt'+(ao?'':' active');
+    document.getElementById('cfgMqAoLab').className='cfg-tg-opt'+(ao?' active':'');
+    if(ao){
+      var dirOn=document.getElementById('cfgMqDir').checked;
+      document.getElementById('cfgMqDirAboveLab').className='cfg-tg-opt'+(dirOn?'':' active');
+      document.getElementById('cfgMqDirBelowLab').className='cfg-tg-opt'+(dirOn?' active':'');
+    }
+  }else if(sensor==='ph'){
+    var ao2=document.getElementById('cfgPhSrc').checked;
+    document.getElementById('cfgPhAoGroup').style.display=ao2?'block':'none';
+    document.getElementById('cfgPhDoLab').className='cfg-tg-opt'+(ao2?'':' active');
+    document.getElementById('cfgPhAoLab').className='cfg-tg-opt'+(ao2?' active':'');
+    if(ao2){
+      var dirOn2=document.getElementById('cfgPhDir').checked;
+      document.getElementById('cfgPhDirAboveLab').className='cfg-tg-opt'+(dirOn2?'':' active');
+      document.getElementById('cfgPhDirBelowLab').className='cfg-tg-opt'+(dirOn2?' active':'');
+    }
+  }else if(sensor==='th'){
+    var thOn=document.getElementById('cfgThEn').checked;
+    document.getElementById('cfgThGroup').style.display=thOn?'block':'none';
+    document.getElementById('cfgThOffLab').className='cfg-tg-opt'+(thOn?'':' active');
+    document.getElementById('cfgThOnLab').className='cfg-tg-opt'+(thOn?' active':'');
+  }
+}
+// 滑块 → 数值框同步
+function syncCfgSliderInput(sliderId,numId,decimals){
+  var s=document.getElementById(sliderId),n=document.getElementById(numId);
+  n.value=parseFloat(s.value).toFixed(decimals);
+}
+// 数值框 → 滑块同步
+function syncCfgNumToSlider(numId,sliderId,decimals){
+  var n=document.getElementById(numId),s=document.getElementById(sliderId);
+  var v=parseFloat(n.value);
+  if(isNaN(v)){n.value=s.value;return}
+  var stp=parseFloat(s.step)||1; v=Math.round(v/stp)*stp;
+  v=Math.min(parseFloat(s.max),Math.max(parseFloat(s.min),v));
+  s.value=v; n.value=v.toFixed(decimals);
+}
+
+async function loadAlarmConfigPanel(){
+  try{
+    var r=await fetch('/api/alarm/config');
+    if(!r.ok){showToast('error','加载配置失败');return}
+    var c=await r.json();
+    // MQ-135 报警源 (1=AO)
+    var mqAo=(c.mq135_alarm_src||0)===1;
+    document.getElementById('cfgMqSrc').checked=mqAo;
+    // MQ-135 触发方向 (1=低于)
+    var mqDir=(c.mq135_ao_dir||0)===1;
+    document.getElementById('cfgMqDir').checked=mqDir;
+    // MQ-135 阈值
+    var mqThr=c.mq135_ao_threshold||2.5;
+    document.getElementById('cfgMqAoThr').value=mqThr;
+    document.getElementById('cfgMqAoNum').value=mqThr.toFixed(2);
+    // Photo 报警源
+    var phAo=(c.photo_alarm_src||0)===1;
+    document.getElementById('cfgPhSrc').checked=phAo;
+    // Photo 触发方向 (默认1=低于)
+    var phDir=(c.photo_ao_dir!=null?c.photo_ao_dir:1)===1;
+    document.getElementById('cfgPhDir').checked=phDir;
+    // Photo 阈值
+    var phThr=c.photo_ao_threshold||1000;
+    document.getElementById('cfgPhAoThr').value=phThr;
+    document.getElementById('cfgPhAoNum').value=phThr;
+    // DHT / DS 阈值
+    var dhtT=c.dht11_temp_high||35;
+    document.getElementById('cfgDhtTHi').value=dhtT;
+    document.getElementById('cfgDhtTHiNum').value=dhtT;
+    var dhtH=c.dht11_humi_high||85;
+    document.getElementById('cfgDhtHHi').value=dhtH;
+    document.getElementById('cfgDhtHHiNum').value=dhtH;
+    var dsT=c.ds18b20_temp_high||35;
+    document.getElementById('cfgDsTHi').value=dsT;
+    document.getElementById('cfgDsTHiNum').value=dsT.toFixed(1);
+    // 温湿度报警开关
+    var thEn=(c.temp_humi_alarm_enabled!=null?c.temp_humi_alarm_enabled:1)===1;
+    document.getElementById('cfgThEn').checked=thEn;
+    // 更新开关样式
+    onAlarmCfgToggle('mq'); onAlarmCfgToggle('ph'); onAlarmCfgToggle('th');
+    document.getElementById('alarmCfgUpdated').textContent='上次更新: '+(c.updated_at||'--');
+    showToast('success','已加载当前报警配置');
+  }catch(e){showToast('error','加载配置失败: '+e.message)}
+}
+
+async function saveAlarmConfigPanel(){
+  var cfg={
+    mq135_alarm_src: document.getElementById('cfgMqSrc').checked?1:0,
+    photo_alarm_src: document.getElementById('cfgPhSrc').checked?1:0,
+    mq135_ao_dir: document.getElementById('cfgMqDir').checked?1:0,
+    photo_ao_dir: document.getElementById('cfgPhDir').checked?1:0,
+    mq135_ao_threshold: parseFloat(document.getElementById('cfgMqAoNum').value)||2.5,
+    photo_ao_threshold: parseInt(document.getElementById('cfgPhAoNum').value)||1000,
+    dht11_temp_high: parseInt(document.getElementById('cfgDhtTHiNum').value)||35,
+    dht11_humi_high: parseInt(document.getElementById('cfgDhtHHiNum').value)||85,
+    ds18b20_temp_high: parseFloat(document.getElementById('cfgDsTHiNum').value)||35.0,
+    temp_humi_alarm_enabled: document.getElementById('cfgThEn').checked?1:0
+  };
+  try{
+    var r=await fetch('/api/alarm/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(cfg)});
+    var rs=await r.json();
+    showToast(r.ok?'success':'error',rs.message||'配置已更新');
+    if(r.ok){
+      document.getElementById('alarmCfgUpdated').textContent='上次更新: '+(rs.updated_at||new Date().toLocaleTimeString('zh-CN',{hour12:false}));
+    }
+  }catch(e){showToast('error','下发失败: '+e.message)}
+}
+
+// 初始加载报警配置
+setTimeout(function(){loadAlarmConfigPanel()},1500);
 
 console.log('[SmartMonitor] Block3: 业务模块初始化完成');
 </script>

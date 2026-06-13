@@ -71,8 +71,19 @@ void setup() {
   // camera init
   esp_err_t err = esp_camera_init(&config);
   if (err != ESP_OK) {
-    Serial.printf("Camera init failed with error 0x%x", err);
-    return;
+    Serial.printf("Camera init failed with error 0x%x\n", err);
+    // ★ 闪烁板载 LED 指示故障（如果可用）
+  #if defined(LED_GPIO_NUM)
+    pinMode(LED_GPIO_NUM, OUTPUT);
+    for (;;) {
+      digitalWrite(LED_GPIO_NUM, HIGH);
+      delay(250);
+      digitalWrite(LED_GPIO_NUM, LOW);
+      delay(250);
+    }
+  #else
+    for (;;) { delay(1000); }
+  #endif
   }
 
   sensor_t *s = esp_camera_sensor_get();
@@ -100,9 +111,16 @@ void setup() {
   WiFi.setSleep(false);
 
   Serial.print("WiFi connecting");
+  unsigned long wifi_start = millis();
+  const unsigned long WIFI_TIMEOUT = 30000;  // ★ 30 秒超时，防止永久卡死
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
     Serial.print(".");
+    if (millis() - wifi_start > WIFI_TIMEOUT) {
+      Serial.println("\nWiFi 连接超时, 重启设备...");
+      delay(1000);
+      ESP.restart();
+    }
   }
   Serial.println("");
   Serial.println("WiFi connected");

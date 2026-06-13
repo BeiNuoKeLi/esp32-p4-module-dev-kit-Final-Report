@@ -213,7 +213,7 @@ main/
 | `dht11_sensor` | 3 | 4096 | 自动 | 每 2 秒 |
 | `photo_sensor` | 3 | 4096 | 自动 | 每 2 秒 |
 | `oled_display` | 2 | 4096 | 自动 | 每 1 秒 |
-| `buzzer_alarm` | 2 | 2048 | 自动 | 每 500ms |
+| `buzzer_alarm` | 2 | 5120 | 自动 | 每 500ms |
 | `Task_UDP_Send` | 2 | 4096 | Core 1 | 事件驱动（待实现） |
 
 ### 5.3 任务间数据同步
@@ -283,6 +283,60 @@ DHT11 和 DS18B20 使用不同的 GPIO，需分别实现驱动函数，不可混
 | MQ-135 ADC 异常 | 12 次采样全部为 0 或全部为 4095 | `err \|= 0x04` |
 | 光敏 ADC 异常 | 同上 | `err \|= 0x08` |
 
+### 5.5 运行时报警配置（v3.5 — AO/DO 双模式）
+
+系统支持在运行时动态切换每个传感器的报警判定模式，无需重新编译或重启：
+
+**报警源选择枚举（`alarm_source_t`）**：
+
+| 值 | 名称 | 说明 |
+|----|------|------|
+| 0 | `ALARM_SRC_DO` | **DO 数字量模式**：硬件比较器判定（工厂预设阈值），0=超阈值/1=正常 |
+| 1 | `ALARM_SRC_AO` | **AO 模拟量模式**：软件阈值判定，需配合 `ao_dir` + `ao_threshold` |
+
+**AO 触发方向（`ao_trigger_dir_t`）**：
+
+| 值 | 名称 | 适用传感器 | 含义 |
+|----|------|-----------|------|
+| 0 | `AO_TRIG_ABOVE` | MQ-135 | 电压 ≥ 阈值 → 报警（有毒气体浓度过高） |
+| 1 | `AO_TRIG_BELOW` | 光敏 | ADC ≤ 阈值 → 报警（光线过暗/遮挡） |
+
+**可配置参数列表**：
+
+| 参数 | 类型 | 默认值 | NVS Key | 说明 |
+|------|------|--------|---------|------|
+| `mq135_alarm_src` | int | 0 (DO) | `mq_mode` | MQ-135 报警源 |
+| `photo_alarm_src` | int | 0 (DO) | `ph_mode` | 光敏报警源 |
+| `mq135_ao_dir` | int | 0 (ABOVE) | `mq_ao_dir` | MQ-135 AO 触发方向 |
+| `photo_ao_dir` | int | 1 (BELOW) | `ph_ao_dir` | 光敏 AO 触发方向 |
+| `mq135_ao_threshold` | float (V) | 2.5 | `mq_ao_thr` | MQ-135 AO 电压阈值 |
+| `photo_ao_threshold` | int (ADC) | 1000 | `ph_ao_thr` | 光敏 AO ADC 阈值 |
+| `dht11_temp_high` | int (°C) | 35 | `dht_t_hi` | DHT11 高温阈值 |
+| `dht11_humi_high` | int (%RH) | 85 | `dht_h_hi` | DHT11 高湿阈值 |
+| `ds18b20_temp_high` | float (°C) | 35.0 | `ds_t_hi` | DS18B20 高温阈值 |
+| `temp_humi_alarm_enabled` | int | 1 | `temp_en` | 温湿度报警总开关 (1=启用, 0=关闭) |
+
+**NVS 持久化**：
+- 命名空间 `alarm_cfg`，使用 ESP-IDF NVS API
+- 启动时 `load_alarm_config_from_nvs()` 加载 → 写入 `g_sensor_data` 运行时结构体
+- 收到 config 命令后 `save_alarm_config_to_nvs()` 立即写回 NVS
+- 加载时进行**范围校验**（如 dht_t_hi 必须在 10~60°C），拒绝垃圾值并回退默认值
+
+**配置下发链路**：
+```
+Web 仪表盘 POST /api/alarm/config → Docker SQLite 镜像
+     └─ UDP "cmd:config" → ESP32 UDP 8081 → udp_sim_command_task()
+            ├─ 解析 JSON → 写入 g_sensor_data 运行时字段
+            ├─ save_alarm_config_to_nvs() 持久化
+            └─ 返回 OK 确认 → Docker → Web 仪表盘
+```
+
+### 5.6 报警升级定时
+
+| 参数 | 值 | 说明 |
+|------|-----|------|
+| `ALARM_ESCALATE_MS` | 30000 (30s) | 报警持续超过此时长，自动升级到 L3 紧急级别 |
+
 ---
 
 ## 六、通信协议规范
@@ -296,6 +350,37 @@ DHT11 和 DS18B20 使用不同的 GPIO，需分别实现驱动函数，不可混
 | 发送间隔 | 每 2 秒（跟随采集周期） |
 | 单包最大 | < 512 字节（避免 IP 分片） |
 
+### 6.1.2 UDP 配置命令（v3.5）
+
+MCU 监听 **UDP 8081** 接收仿真注入和报警配置命令。
+
+**命令类型**：
+
+| cmd 值 | 方向 | 说明 |
+|--------|------|------|
+| `config` | Docker → ESP32 | 下发报警配置 |
+| `reset` | Docker → ESP32 | 退出仿真模式 |
+
+**config 命令 JSON 格式**：
+
+```json
+{
+  "cmd": "config",
+  "mq135_alarm_src": 0,
+  "photo_alarm_src": 1,
+  "mq135_ao_dir": 0,
+  "photo_ao_dir": 1,
+  "mq135_ao_threshold": 2.5,
+  "photo_ao_threshold": 1000,
+  "dht11_temp_high": 35,
+  "dht11_humi_high": 85,
+  "ds18b20_temp_high": 35.0,
+  "temp_humi_alarm_enabled": 1
+}
+```
+
+所有字段均为可选，缺失字段 MCU 保留当前值不变。
+
 ### 6.2 JSON 报文格式
 
 ```json
@@ -305,7 +390,7 @@ DHT11 和 DS18B20 使用不同的 GPIO，需分别实现驱动函数，不可混
   "dht11_h": 62.0,
   "ds18b20_t": 28.3125,
   "mq135_v": 1.25,
-  "light_v": 0.85,
+  "light_raw": 1500,
   "alert": 0,
   "err": 0
 }
@@ -318,7 +403,7 @@ DHT11 和 DS18B20 使用不同的 GPIO，需分别实现驱动函数，不可混
 | `dht11_h` | float | 1 位小数 | DHT11 湿度（%RH），整数精度 |
 | `ds18b20_t` | float | **4 位小数** | DS18B20 高精度温度（0.0625°C 分辨率） |
 | `mq135_v` | float | 2 位小数 | MQ-135 AO 电压（V） |
-| `light_v` | float | 2 位小数 | 光敏 AO 电压（V） |
+| `light_raw` | int | — | 光敏 ADC 原始值（0~4095） |
 | `alert` | int | 0/1 | 0=正常，1=报警中（任一 DO 为低） |
 | `err` | int | 位掩码 | bit0=DHT11, bit1=DS18B20, bit2=MQ135, bit3=光敏 |
 
@@ -328,9 +413,9 @@ DHT11 和 DS18B20 使用不同的 GPIO，需分别实现驱动函数，不可混
 ```c
 snprintf(buf, sizeof(buf),
     "{\"ts\":%lu,\"dht11_t\":%.1f,\"dht11_h\":%.1f,"
-    "\"ds18b20_t\":%.4f,\"mq135_v\":%.2f,\"light_v\":%.2f,"
+    "\"ds18b20_t\":%.4f,\"mq135_v\":%.2f,\"light_raw\":%d,"
     "\"alert\":%d,\"err\":%d}",
-    ts, dht11_t, dht11_h, ds18b20_t, mq135_v, light_v, alert, err);
+    ts, dht11_t, dht11_h, ds18b20_t, mq135_v, light_raw, alert, err);
 ```
 
 ---

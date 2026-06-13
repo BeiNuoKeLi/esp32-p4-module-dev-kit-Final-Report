@@ -151,24 +151,41 @@ void camera_http_fetch_task(void *arg)
     ESP_LOGI(TAG, "HTTP 长连接就绪 (keep_alive)");
 
     /* ===== 6. 主循环: HTTP GET → 读 JPEG → UDP 分包发送 ===== */
+    int http_retry_count = 0;
+    const int HTTP_MAX_RETRIES = 5;  // ★ 最大重连次数，防止无限循环
     while (1) {
         TickType_t loop_start = xTaskGetTickCount();
+
+        /* ---- 6.0 守护: 确保 client 非空（防止 re-init 失败后 NULL 解引用）---- */
+        if (!client) {
+            ESP_LOGE(TAG, "HTTP client 为 NULL, 尝试重新初始化...");
+            client = esp_http_client_init(&http_cfg);
+            if (!client) {
+                ESP_LOGE(TAG, "HTTP re-init 持续失败, 3s 后重试");
+                vTaskDelay(pdMS_TO_TICKS(3000));
+                continue;
+            }
+        }
 
         /* ---- 6.1 发起 HTTP GET 请求 ---- */
         esp_err_t err = esp_http_client_open(client, 0);  /* write_len=0 → GET */
         if (err != ESP_OK) {
-            ESP_LOGE(TAG, "HTTP open 失败: %s (%d), 重连...", esp_err_to_name(err), err);
+            http_retry_count++;
+            ESP_LOGE(TAG, "HTTP open 失败 (%d/%d): %s (%d), 重连...",
+                     http_retry_count, HTTP_MAX_RETRIES, esp_err_to_name(err), err);
             esp_http_client_cleanup(client);
-            client = esp_http_client_init(&http_cfg);
-            if (!client) {
-                ESP_LOGE(TAG, "HTTP re-init 失败, 1s 后重试");
-                vTaskDelay(pdMS_TO_TICKS(1000));
-                continue;
+            client = NULL;  // ★ 先置 NULL，让 6.0 守护段在下轮重新 init
+            if (http_retry_count > HTTP_MAX_RETRIES) {
+                ESP_LOGE(TAG, "HTTP 重连超过上限 %d 次, 10s 冷却后重置计数",
+                         HTTP_MAX_RETRIES);
+                vTaskDelay(pdMS_TO_TICKS(10000));
+                http_retry_count = 0;
+            } else {
+                vTaskDelay(pdMS_TO_TICKS(500));
             }
-            ESP_LOGI(TAG, "HTTP 重连成功");
-            vTaskDelay(pdMS_TO_TICKS(500));
             continue;
         }
+        http_retry_count = 0;  // ★ 成功后重置计数
 
         int content_length = esp_http_client_fetch_headers(client);
         int status = esp_http_client_get_status_code(client);
@@ -182,7 +199,7 @@ void camera_http_fetch_task(void *arg)
 
         /* ---- 6.2 读取 JPEG 数据 ---- */
         int total_read = 0;
-        int read_len;
+        int read_len = 0;
 
         while (total_read < JPEG_BUF_SIZE &&
                (read_len = esp_http_client_read(client,
@@ -191,19 +208,22 @@ void camera_http_fetch_task(void *arg)
             total_read += read_len;
         }
 
-        if (read_len < 0) {
-            ESP_LOGW(TAG, "HTTP read 错误: errno=%d (已读 %d 字节)", errno, total_read);
-        } else if (read_len == 0 && total_read > 0) {
-            ESP_LOGI(TAG, "HTTP read 完成 (%d 字节)", total_read);
-        }
-
         esp_http_client_close(client);
+
+        if (read_len < 0) {
+            ESP_LOGW(TAG, "HTTP read 错误: errno=%d (已读 %d 字节), 丢弃不完整帧",
+                     errno, total_read);
+            vTaskDelay(pdMS_TO_TICKS(100));  // ★ 跳过发送，防止畸形 JPEG 传输
+            continue;
+        }
 
         if (total_read <= 0) {
             ESP_LOGW(TAG, "未收到 JPEG 数据 (status=%d)", status);
             vTaskDelay(pdMS_TO_TICKS(100));
             continue;
         }
+
+        ESP_LOGI(TAG, "HTTP read 完成 (%d 字节)", total_read);
 
         /* ---- 6.3 UDP 分包发送 ---- */
         uint16_t total_chunks = (uint16_t)((total_read + UDP_PAYLOAD_MAX - 1)

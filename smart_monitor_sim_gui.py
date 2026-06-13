@@ -764,7 +764,11 @@ class SimGUI:
 
             # 显示到独立窗口（如果已打开）
             if self.cam_window is not None and self.cam_window.winfo_exists():
-                self._set_cam_image(frame)
+                if self.warehouse_mode is None:
+                    black = np.zeros((480, 640, 3), dtype=np.uint8)
+                    self._set_cam_image(black)
+                else:
+                    self._set_cam_image(frame)
             mode_text = {"inbound": "入库模式", "outbound": "出库模式"}.get(self.warehouse_mode, "待机")
             self.lbl_cam_status.config(text=f"FPS:{fps:.1f} | 模式:{mode_text} | 帧#{self.total_frames}")
 

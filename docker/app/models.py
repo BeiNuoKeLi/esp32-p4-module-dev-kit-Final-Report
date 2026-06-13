@@ -167,3 +167,24 @@ class StreamStatus(BaseModel):
     """摄像头流控状态"""
     enabled: bool
     online: bool
+
+
+# ─── 仿真注入模型 (字段对齐 ESP32-P4 MCU) ─────────────────
+
+class SimInjectRequest(BaseModel):
+    """仿真数据注入请求 — 字段与 MCU (smart_monitor_main.c:549-553) 一致"""
+    dht11_t: int = 25              # DHT11 温度 (°C)
+    dht11_h: int = 60              # DHT11 湿度 (%RH)
+    ds18b20_t: float = 25.0        # DS18B20 温度 (°C)
+    mq135_v: float = 1.2           # MQ-135 电压 (V)
+    mq135_do: int = 1              # MQ-135 DO (0=超阈值, 1=正常)
+    photo_raw: int = 2000          # 光敏 AO 原始值 (0~4095)，MCU 内部转电压
+    photo_do: int = 1              # 光敏 DO (0=超阈值, 1=正常)
+    # 注意: level / reason 由 MCU 根据传感器值内部计算，不需要前端传入
+
+
+class SimStatus(BaseModel):
+    """仿真状态查询响应"""
+    active: bool
+    esp_ip: str = ""
+    message: str = ""

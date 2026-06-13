@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-危化品仓储管理 - SQLite 数据库操作模块
+农资化肥仓储管理 - SQLite 数据库操作模块
 =========================================
 提供 inventory（库存表）和 check_log（出入库流水表）的 CRUD 操作。
 
@@ -219,15 +219,15 @@ class WarehouseDB:
 if __name__ == "__main__":
     db = WarehouseDB()
 
-    # 测试入库
+    # 测试入库（每种化肥可有多份，序列号保证唯一性）
     test_item = {
-        "id": "CHEM-20260607-001",
-        "name": "工业酒精",
-        "category": "易燃液体",
-        "batch": "B2026-0501",
-        "spec": "500ml/瓶",
-        "mfg_date": "2026-05-01",
-        "exp_date": "2027-05-01",
+        "id": "FERT-20260611-001-01",
+        "name": "碳酸氢铵",
+        "category": "氮肥",
+        "batch": "B2026-0611",
+        "spec": "50kg/袋",
+        "mfg_date": "2026-06-01",
+        "exp_date": "2027-06-01",
     }
     test_env = {"temp": 25.0, "humi": 62.0, "level": 0}
 

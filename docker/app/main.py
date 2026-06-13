@@ -39,6 +39,7 @@ from .models import (
     CheckinRequest, CheckoutRequest, ScanResult,
     WarehouseResponse, CheckLogRecord,
     AlarmEvent, AlarmListResponse, AlarmDetailResponse, AlarmSummary, StreamStatus,
+    SimInjectRequest, SimStatus,
 )
 
 
@@ -118,21 +119,152 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 
+# ★ ESP32-P4 设备 IP（仿真注入目标）
+ESP32_IP = os.environ.get("ESP32_IP", "10.16.234.86")
+ESP32_CMD_PORT = 8081
+SIM_ACTIVE = False  # 轻量状态标志，仅用于前端显示，不再拦截数据
+
+
+# ==================== 内置 UDP 监听器 (MCU → Docker 直通) ====================
+
+class SensorUDPProtocol(asyncio.DatagramProtocol):
+    """
+    asyncio UDP 协议 — 监听 0.0.0.0:8080，直接接收 ESP32-P4 传感器 JSON。
+    替代 udp_to_web.py 桥接脚本，消除外部依赖。
+    """
+
+    def datagram_received(self, data: bytes, addr: tuple):
+        """收到 UDP 数据报 → 解析 JSON → 提交到传感器处理流水线"""
+        try:
+            raw = data.decode("utf-8").strip()
+        except UnicodeDecodeError:
+            return
+        if not raw:
+            return
+
+        try:
+            obj = json.loads(raw)
+        except json.JSONDecodeError:
+            return
+
+        # 仅处理 sensor data 类型（出入库仍通过 HTTP API 操作）
+        msg_type = obj.get("type", "data")
+        if msg_type == "data":
+            # 提交到事件循环中处理（避免阻塞 UDP 收包）
+            asyncio.get_event_loop().create_task(
+                _process_udp_sensor(obj)
+            )
+        elif msg_type in ("checkin", "checkout"):
+            # 出入库消息：转发到对应 HTTP API
+            asyncio.get_event_loop().create_task(
+                _process_udp_warehouse(obj, msg_type)
+            )
+
+
+async def _process_udp_sensor(obj: dict):
+    """异步处理 UDP 收到的传感器数据 — 复用 POST /api/sensors 逻辑"""
+    try:
+        data = SensorData(**obj)
+    except Exception:
+        return  # 字段不合法，静默丢弃
+
+    record = data.model_dump()
+
+    # Step 1: 滤波
+    sensor_filter.apply(record)
+
+    # Step 2: 写入数据库
+    row_id = await database.insert_sensor_data(record)
+
+    # Step 2.5: 报警去重检测
+    asyncio.create_task(_maybe_record_alarm(record))
+
+    # Step 3: WebSocket 广播（始终广播 MCU 回传的真实/仿真数据）
+    import datetime
+    broadcast_msg = {
+        "type": "sensor_update",
+        "id": row_id,
+        "data": {
+            "dht11_t": record.get("dht11_t"),
+            "dht11_h": record.get("dht11_h"),
+            "ds18b20_t": record.get("ds18b20_t"),
+            "mq135_v": record.get("mq135_v"),
+            "light_v": record.get("light_v"),
+            "mq135_do": record.get("mq135_do"),
+            "photo_do": record.get("photo_do"),
+            "level": record.get("level", 0),
+            "alert": record.get("alert", 0),
+            "reason": record.get("reason", ""),
+            "err": record.get("err", 0),
+        },
+        "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+    }
+    asyncio.create_task(manager.broadcast(broadcast_msg))
+
+
+async def _process_udp_warehouse(obj: dict, msg_type: str):
+    """异步处理 UDP 收到的出入库消息 → 转发到对应数据库操作"""
+    try:
+        if msg_type == "checkin":
+            item = {
+                "id": obj.get("item_id", ""),
+                "name": obj.get("name", ""),
+                "category": obj.get("category", ""),
+                "batch": obj.get("batch", ""),
+                "spec": obj.get("spec", ""),
+                "mfg_date": obj.get("mfg_date", ""),
+                "exp_date": obj.get("exp_date", ""),
+            }
+            env = {
+                "temp": obj.get("env_temp", 0),
+                "humi": obj.get("env_humi", 0),
+                "level": obj.get("env_level", 0),
+            }
+            await database.do_checkin(item, env)
+        elif msg_type == "checkout":
+            env = {
+                "temp": obj.get("env_temp", 0),
+                "humi": obj.get("env_humi", 0),
+                "level": obj.get("env_level", 0),
+            }
+            await database.do_checkout(obj.get("item_id", ""), env)
+    except Exception:
+        pass  # 静默丢弃格式不正确的出入库消息
+
 
 # ==================== 应用生命周期 ====================
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """启动时初始化数据库 + 启动摄像头 UDP 接收线程"""
+    """启动时初始化数据库 + 启动摄像头 UDP + 传感器 UDP 监听"""
     await database.init_db()
     print("[启动] 数据库初始化完成")
 
     # 启动摄像头服务
     cam.start()
 
+    # ★ 启动内置 UDP 传感器监听器（替代 udp_to_web.py 桥接）
+    loop = asyncio.get_event_loop()
+    _udp_transport = None
+    try:
+        _udp_transport, _ = await loop.create_datagram_endpoint(
+            lambda: SensorUDPProtocol(),
+            local_addr=("0.0.0.0", 8080),
+        )
+        print("[UDP] 传感器监听已启动 → 0.0.0.0:8080（容器内置，无需外部桥接）")
+    except OSError as e:
+        print(f"[UDP] 警告: 无法绑定 0.0.0.0:8080 — {e}")
+        print("  传感器数据将只能通过 HTTP POST /api/sensors 接收")
+
     yield
 
     # 关闭摄像头
     cam_module.stop_camera()
+    # 关闭 UDP 监听
+    if _udp_transport is not None:
+        try:
+            _udp_transport.close()
+        except Exception:
+            pass
     print("[关闭] 应用已停止")
 
 
@@ -212,9 +344,22 @@ async def get_inventory_api(status: str | None = Query(default=None)):
     return rows
 
 
+@app.get("/api/inventory/stats")
+async def inventory_stats():
+    """获取库存分类统计（氮肥/钾肥/复合肥）"""
+    stats = await database.get_inventory_stats()
+    # 构建总计
+    total_all = sum(s["total"] for s in stats)
+    in_stock_all = sum(s["in_stock"] for s in stats)
+    return {
+        "categories": stats,
+        "total": {"total": total_all, "in_stock": in_stock_all},
+    }
+
+
 @app.get("/api/status", response_model=StatusResponse)
 async def get_status():
-    """获取当前最新传感器状态"""
+    """获取当前最新传感器状态（始终从 DB 读 MCU 回传的真实/仿真数据）"""
     row = await database.get_latest_status()
     if row is None:
         return StatusResponse()
@@ -284,6 +429,37 @@ async def warehouse_log(limit: int = Query(default=20, ge=1, le=200)):
     return logs
 
 
+@app.delete("/api/warehouse/log")
+async def warehouse_log_clear():
+    """清空全部出入库流水记录"""
+    deleted = await database.clear_check_log()
+    return {"ok": True, "deleted": deleted, "message": f"已清空 {deleted} 条流水记录"}
+
+
+@app.delete("/api/alarms")
+async def alarm_clear():
+    """清空全部报警事件记录"""
+    deleted = await database.clear_alarm_events()
+    return {"ok": True, "deleted": deleted, "message": f"已清空 {deleted} 条报警记录"}
+
+
+@app.delete("/api/inventory/{item_id}")
+async def inventory_delete(item_id: str):
+    """删除库存中指定物料（同时删关联流水）"""
+    ok = await database.delete_inventory_item(item_id)
+    if ok:
+        return {"ok": True, "message": f"已删除: {item_id}"}
+    return {"ok": False, "message": f"物料 {item_id} 不存在"}
+
+
+@app.post("/api/inventory/add")
+async def inventory_add(item: InventoryItem):
+    """手动新增库存物料"""
+    item_dict = item.model_dump()
+    ok, msg = await database.add_inventory_item(item_dict)
+    return {"ok": ok, "message": msg}
+
+
 @app.get("/api/env-snapshot")
 async def env_snapshot_api():
     """返回当前环境快照（供前端扫码后自动填充）"""
@@ -291,6 +467,95 @@ async def env_snapshot_api():
     if env is None:
         return {"temp": None, "humi": None, "level": 0}
     return env
+
+
+# ==================== HTTP API — 仿真注入 (转发到 MCU) ====================
+
+@app.get("/api/sim/status", response_model=SimStatus)
+async def sim_status():
+    """查询仿真注入当前状态"""
+    return SimStatus(
+        active=SIM_ACTIVE,
+        esp_ip=ESP32_IP,
+        message="仿真模式: ESP32 将使用注入值替代真实传感器" if SIM_ACTIVE else "真实传感器模式",
+    )
+
+
+@app.post("/api/sim/inject")
+async def sim_inject(data: SimInjectRequest):
+    """
+    注入仿真传感器数据 → 转发到 ESP32-P4 UDP 8081。
+    MCU 收到后替代真实传感器读数，通过 UDP 8080 回传处理后数据。
+    Web 端通过正常的 UDP 8080 → DB → WebSocket 流程获取更新。
+    """
+    # 构建 MCU 期望的 JSON（与 smart_monitor_sim_gui.py _apply_sim 一致）
+    cmd = {
+        "dht11_t": data.dht11_t,
+        "dht11_h": data.dht11_h,
+        "ds18b20_t": round(data.ds18b20_t, 2),
+        "mq135_v": round(data.mq135_v, 2),
+        "mq135_do": data.mq135_do,
+        "photo_raw": data.photo_raw,
+        "photo_do": data.photo_do,
+    }
+    msg = json.dumps(cmd)
+
+    # 通过 UDP 发送到 ESP32 命令端口 8081
+    import socket
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.settimeout(3)
+        sock.sendto(msg.encode("utf-8"), (ESP32_IP, ESP32_CMD_PORT))
+        print(f"[Sim] → 发送仿真命令到 {ESP32_IP}:{ESP32_CMD_PORT} | {msg}")
+
+        # 等待 MCU 确认
+        try:
+            ack_data, _ = sock.recvfrom(512)
+            ack_text = ack_data.decode("utf-8").strip()
+            print(f"[Sim] ← MCU 确认: {ack_text}")
+        except socket.timeout:
+            print("[Sim] ⚠️ 未收到 MCU 确认 (超时)")
+
+        sock.close()
+    except OSError as e:
+        print(f"[Sim] ❌ UDP 发送失败: {e}")
+        return {"ok": False, "message": f"无法连接到 ESP32 ({ESP32_IP}:{ESP32_CMD_PORT}): {e}"}
+
+    global SIM_ACTIVE
+    SIM_ACTIVE = True
+    return {"ok": True, "message": f"仿真命令已发送到 ESP32 [{ESP32_IP}], MCU 将回传处理后的数据"}
+
+
+@app.post("/api/sim/reset")
+async def sim_reset():
+    """
+    发送 reset 命令到 ESP32-P4 UDP 8081。
+    MCU 收到后关闭仿真模式，恢复真实传感器读数。
+    """
+    msg = '{"cmd":"reset"}'
+
+    import socket
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.settimeout(3)
+        sock.sendto(msg.encode("utf-8"), (ESP32_IP, ESP32_CMD_PORT))
+        print(f"[Sim] → 发送 reset 到 {ESP32_IP}:{ESP32_CMD_PORT}")
+
+        try:
+            ack_data, _ = sock.recvfrom(512)
+            ack_text = ack_data.decode("utf-8").strip()
+            print(f"[Sim] ← MCU 确认: {ack_text}")
+        except socket.timeout:
+            print("[Sim] ⚠️ 未收到 MCU reset 确认 (超时)")
+
+        sock.close()
+    except OSError as e:
+        print(f"[Sim] ❌ Reset UDP 发送失败: {e}")
+        return {"ok": False, "message": f"无法连接到 ESP32: {e}"}
+
+    global SIM_ACTIVE
+    SIM_ACTIVE = False
+    return {"ok": True, "message": "已发送 reset 到 ESP32, MCU 恢复真实传感器模式"}
 
 
 # ==================== HTTP API — 摄像头 ====================

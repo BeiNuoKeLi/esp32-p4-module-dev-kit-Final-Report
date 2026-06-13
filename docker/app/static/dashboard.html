@@ -213,6 +213,54 @@ th{color:var(--text-dim);font-weight:600;white-space:nowrap}
 .btn-ack:disabled{opacity:.4;cursor:not-allowed}
 .btn-close-modal{background:var(--border);border:1px solid var(--border-light);color:var(--text-dim);padding:8px 20px;border-radius:8px;cursor:pointer;font-family:inherit;transition:all .2s}
 .btn-close-modal:hover{border-color:var(--accent);color:var(--text)}
+
+/* ===== 库存分类统计卡片 ===== */
+.cat-stats-row{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px}
+.cat-card{border-radius:10px;padding:14px 16px;text-align:center;border:1px solid var(--border);transition:all .25s}
+.cat-card:hover{border-color:var(--border-light);transform:translateY(-1px)}
+.cat-card .cat-label{font-size:.75rem;color:var(--text-dim);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px}
+.cat-card .cat-total{font-size:1.6rem;font-weight:700;line-height:1.2}
+.cat-card .cat-instock{font-size:.78rem;color:var(--text-dim);margin-top:2px}
+.cat-card-green{background:linear-gradient(135deg,rgba(76,175,80,.12),rgba(76,175,80,.04));border-color:rgba(76,175,80,.25)}.cat-card-green .cat-total{color:#66bb6a}
+.cat-card-blue{background:linear-gradient(135deg,rgba(66,165,245,.12),rgba(66,165,245,.04));border-color:rgba(66,165,245,.25)}.cat-card-blue .cat-total{color:#42a5f5}
+.cat-card-purple{background:linear-gradient(135deg,rgba(171,71,188,.12),rgba(171,71,188,.04));border-color:rgba(171,71,188,.25)}.cat-card-purple .cat-total{color:#ab47bc}
+.cat-card-gray{background:linear-gradient(135deg,rgba(255,255,255,.06),rgba(255,255,255,.02));border-color:rgba(255,255,255,.12)}.cat-card-gray .cat-total{color:var(--accent)}
+
+/* ===== 库存表格行着色 ===== */
+.tr-nitrogen{background:linear-gradient(90deg,rgba(76,175,80,.08),transparent);border-left:3px solid rgba(76,175,80,.5)}
+.tr-potash{background:linear-gradient(90deg,rgba(66,165,245,.08),transparent);border-left:3px solid rgba(66,165,245,.5)}
+.tr-compound{background:linear-gradient(90deg,rgba(171,71,188,.08),transparent);border-left:3px solid rgba(171,71,188,.5)}
+
+/* ===== 清空记录 & 手动新增按钮 ===== */
+.btn-danger-sm{background:rgba(244,67,54,.15);border:1px solid rgba(244,67,54,.3);color:#ef5350;padding:5px 12px;border-radius:6px;cursor:pointer;font-size:.72rem;font-weight:600;font-family:inherit;transition:all .2s;margin-left:auto}
+.btn-danger-sm:hover{background:rgba(244,67,54,.25);border-color:rgba(244,67,54,.5)}
+.btn-add{background:rgba(0,188,212,.12);border:1px solid rgba(0,188,212,.3);color:var(--accent);padding:6px 14px;border-radius:8px;cursor:pointer;font-size:.8rem;font-weight:600;font-family:inherit;transition:all .2s}
+.btn-add:hover{background:rgba(0,188,212,.22);border-color:var(--accent)}
+.btn-del-row{background:rgba(244,67,54,.15);border:1px solid rgba(244,67,54,.3);color:#ef5350;padding:3px 10px;border-radius:5px;cursor:pointer;font-size:.7rem;font-weight:600;font-family:inherit;transition:all .15s}
+.btn-del-row:hover{background:rgba(244,67,54,.35);border-color:rgba(244,67,54,.6)}
+.form-row{display:flex;gap:10px;margin-bottom:10px;flex-wrap:wrap}
+.form-row label{font-size:.78rem;color:var(--text-dim);min-width:60px;align-self:center}
+.form-row input,.form-row select{background:var(--border);border:1px solid var(--border-light);color:var(--text);padding:7px 10px;border-radius:6px;font-size:.82rem;font-family:inherit;flex:1;min-width:80px;transition:border-color .2s}
+.form-row input:focus,.form-row select:focus{outline:none;border-color:var(--accent)}
+.btn-submit{background:var(--accent);border:none;color:#000;padding:9px 22px;border-radius:8px;cursor:pointer;font-size:.85rem;font-weight:700;font-family:inherit;transition:all .2s}
+.btn-submit:hover{background:#00d5f0}
+
+/* ===== 仿真注入面板 ===== */
+.sim-panel{display:grid;grid-template-columns:repeat(6,1fr);gap:8px 12px;padding:8px 0}
+.sim-item{display:flex;flex-direction:column;gap:3px}
+.sim-item label{font-size:.7rem;color:var(--text-dim);text-transform:uppercase;letter-spacing:.3px}
+.sim-item input[type=range]{-webkit-appearance:none;width:100%;height:4px;background:var(--border);border-radius:2px;outline:none;cursor:pointer}
+.sim-item input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:16px;height:16px;border-radius:50%;background:var(--accent);cursor:pointer;border:2px solid var(--bg);transition:all .15s}
+.sim-item input[type=range]::-webkit-slider-thumb:hover{transform:scale(1.2);box-shadow:0 0 8px rgba(0,188,212,.4)}
+.sim-item .sim-val{font-size:.75rem;color:var(--accent);font-weight:600;font-family:'Courier New',monospace}
+.sim-preset-row{display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap}
+.btn-preset{padding:7px 14px;border-radius:8px;border:1px solid var(--border-light);background:var(--border);color:var(--text);cursor:pointer;font-size:.78rem;font-weight:600;font-family:inherit;transition:all .2s;white-space:nowrap}
+.btn-preset:hover{border-color:var(--accent);background:rgba(0,188,212,.1)}
+.btn-preset.l0{border-color:rgba(76,175,80,.3)}.btn-preset.l0:hover{background:rgba(76,175,80,.12);border-color:var(--green)}
+.btn-preset.l1{border-color:rgba(255,193,7,.3)}.btn-preset.l1:hover{background:rgba(255,193,7,.12);border-color:var(--yellow)}
+.btn-preset.l2{border-color:rgba(255,152,0,.3)}.btn-preset.l2:hover{background:rgba(255,152,0,.12);border-color:var(--orange)}
+.btn-preset.l3{border-color:rgba(244,67,54,.3)}.btn-preset.l3:hover{background:rgba(244,67,54,.12);border-color:var(--red)}
+.sim-debug{border:1px dashed var(--border);border-radius:8px;padding:8px 12px;margin-top:8px;font-family:'Courier New',monospace;font-size:.72rem;color:var(--text-dim);display:none;max-height:120px;overflow-y:auto;white-space:pre-wrap}
 </style>
 </head>
 
@@ -238,6 +286,45 @@ th{color:var(--text-dim);font-weight:600;white-space:nowrap}
     <div class="card sensor-card"><div class="value" id="valDhtH">--</div><span class="unit">%RH</span><div class="label">DHT11 湿度</div></div>
     <div class="card sensor-card"><div class="value" id="valLight">--</div><span class="unit">V</span><span class="do-tag" id="doPhotoTag">DO--</span><div class="label">光敏电压</div></div>
     <div class="card sensor-card"><div class="value" id="valMq135">--</div><span class="unit">V</span><span class="do-tag" id="doMq135Tag">DO--</span><div class="label">MQ-135 电压</div></div>
+  </div>
+
+  <!-- Simulation Injection Panel -->
+  <div class="card" id="simCard">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+      <h3 style="margin:0;">🎮 仿真注入</h3>
+      <div style="display:flex;align-items:center;gap:10px;">
+        <span style="font-size:.75rem;color:var(--text-dim);" id="simModeLabel">模式: 真实传感器</span>
+        <button class="btn-preset" onclick="toggleSimPanel()" title="展开/收起仿真面板" style="font-size:.7rem;padding:3px 10px;">🔽</button>
+      </div>
+    </div>
+    <div id="simContent">
+      <div class="sim-preset-row">
+        <button class="btn-preset l0" onclick="loadSimPreset('L0')">L0 正常</button>
+        <button class="btn-preset l1" onclick="loadSimPreset('L1')">L1 预警</button>
+        <button class="btn-preset l2" onclick="loadSimPreset('L2')">L2 严重</button>
+        <button class="btn-preset l3" onclick="loadSimPreset('L3')">L3 紧急</button>
+      </div>
+      <div class="sim-panel">
+        <div class="sim-item"><label>DHT11温度 °C</label><input type="range" id="simDht11T" min="0" max="50" value="25" step="1" oninput="updateSimVal('simDht11T','simVDht11T')"><span class="sim-val" id="simVDht11T">25</span></div>
+        <div class="sim-item"><label>DHT11湿度 %</label><input type="range" id="simDht11H" min="20" max="90" value="60" step="1" oninput="updateSimVal('simDht11H','simVDht11H')"><span class="sim-val" id="simVDht11H">60</span></div>
+        <div class="sim-item"><label>DS18B20 °C</label><input type="range" id="simDs18T" min="-10" max="50" value="25" step="0.1" oninput="updateSimVal('simDs18T','simVDs18T')"><span class="sim-val" id="simVDs18T">25</span></div>
+        <div class="sim-item"><label>MQ135电压 V</label><input type="range" id="simMq135V" min="0" max="3.3" value="1.2" step="0.1" oninput="updateSimVal('simMq135V','simVMq135V')"><span class="sim-val" id="simVMq135V">1.2</span></div>
+        <div class="sim-item"><label>光敏AO原始值</label><input type="range" id="simPhotoRaw" min="0" max="4095" value="2000" step="50" oninput="updateSimVal('simPhotoRaw','simVPhotoRaw')"><span class="sim-val" id="simVPhotoRaw">2000</span></div>
+        <div class="sim-item"><label style="color:var(--text-dim);font-style:italic">级别/MCU计算</label><span class="sim-val" style="color:var(--text-dim)">由ESP32决定</span></div>
+      </div>
+      <div style="display:flex;gap:10px;align-items:center;margin-top:8px;">
+        <label style="font-size:.75rem;color:var(--text-dim);display:flex;align-items:center;gap:4px;cursor:pointer;">
+          <input type="checkbox" id="simMq135Do" checked onchange="this.nextSibling.textContent=this.checked?'正常':'报警'"> <span>MQ135 DO: 正常</span>
+        </label>
+        <label style="font-size:.75rem;color:var(--text-dim);display:flex;align-items:center;gap:4px;cursor:pointer;">
+          <input type="checkbox" id="simPhotoDo" checked onchange="this.nextSibling.textContent=this.checked?'正常':'报警'"> <span>光敏 DO: 正常</span>
+        </label>
+        <span style="font-size:.7rem;color:var(--text-dim);flex:1;">报警级别/原因由 MCU 根据注入值自动判断</span>
+        <button class="btn-submit" onclick="applySimInject()" style="padding:7px 18px;font-size:.82rem;">▶ Apply 注入</button>
+        <button class="btn-close-modal" onclick="resetSimInject()" style="padding:7px 18px;">⟳ Reset 恢复</button>
+      </div>
+      <div class="sim-debug" id="simDebug"></div>
+    </div>
   </div>
 
   <!-- Camera + Warehouse Row -->
@@ -301,6 +388,10 @@ th{color:var(--text-dim);font-weight:600;white-space:nowrap}
       <div class="wh-log-area" id="whLogArea">
         <div class="log-entry"><span class="log-time">--:--:--</span><span class="log-msg" style="color:var(--text-dim)">等待操作...</span></div>
       </div>
+      <div style="display:flex;align-items:center;margin-top:4px;">
+        <span style="font-size:.72rem;color:var(--text-dim)">操作日志</span>
+        <button class="btn-danger-sm" onclick="clearCheckLog()" title="清空全部出入库流水记录">🗑 清空记录</button>
+      </div>
     </div>
   </div>
 
@@ -315,7 +406,20 @@ th{color:var(--text-dim);font-weight:600;white-space:nowrap}
   </div>
 
   <!-- Inventory Table -->
-  <div class="card"><h3>📦 库存清单</h3><div id="inventoryTable"><div class="empty-state">加载中...</div></div></div>
+  <div class="card">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+      <h3 style="margin:0;">📦 库存清单</h3>
+      <button class="btn-add" onclick="openAddInventoryModal()">＋ 手动新增物料</button>
+    </div>
+    <!-- 分类统计卡片 -->
+    <div class="cat-stats-row" id="catStatsRow">
+      <div class="cat-card cat-card-green"><div class="cat-label">🌱 氮肥</div><div class="cat-total" id="catNTotal">0</div><div class="cat-instock">在库: <span id="catNStock">0</span></div></div>
+      <div class="cat-card cat-card-blue"><div class="cat-label">🧂 钾肥</div><div class="cat-total" id="catKTotal">0</div><div class="cat-instock">在库: <span id="catKStock">0</span></div></div>
+      <div class="cat-card cat-card-purple"><div class="cat-label">⚗️ 复合肥</div><div class="cat-total" id="catCTotal">0</div><div class="cat-instock">在库: <span id="catCStock">0</span></div></div>
+      <div class="cat-card cat-card-gray"><div class="cat-label">📊 总计</div><div class="cat-total" id="catAllTotal">0</div><div class="cat-instock">在库: <span id="catAllStock">0</span></div></div>
+    </div>
+    <div id="inventoryTable"><div class="empty-state">加载中...</div></div>
+  </div>
 
   <!-- Alarm History Panel -->
   <div class="card">
@@ -329,6 +433,7 @@ th{color:var(--text-dim);font-weight:600;white-space:nowrap}
       </select>
       <button onclick="loadAlarmList(1)" class="btn-sm">🔄 刷新</button>
       <span style="font-size:.75rem;color:var(--text-dim);margin-left:auto;" id="alarmSummary">共 0 条，未确认 0</span>
+      <button class="btn-danger-sm" onclick="clearAlarmRecords()" title="清空全部报警记录">🗑 清空报警</button>
     </div>
     <div class="alarm-panel" id="alarmTableBody">
       <div class="empty-state">加载中...</div>
@@ -414,7 +519,11 @@ function connectWS(){
     ws._heartbeat=setInterval(function(){if(ws.readyState===WebSocket.OPEN){try{ws.send(JSON.stringify({type:'ping'}))}catch(e){}}},25000);
   };
   ws.onmessage=function(evt){
-    try{var m=JSON.parse(evt.data);if(m.type==='sensor_update')handleSensorData(m.data,m.timestamp,m.id,m.timestamp)}catch(e){console.warn('WS msg err:',e)}
+    try{
+      var m=JSON.parse(evt.data);
+      if(m.type==='sensor_update'){handleSensorData(m.data,m.timestamp,m.id,m.timestamp)}
+      else if(m.type==='sim_reset'){document.getElementById('simModeLabel').textContent='模式: 真实传感器';document.getElementById('simModeLabel').style.color='var(--text-dim)';document.getElementById('simDebug').style.display='none';showToast('success','MCU 已恢复真实传感器模式')}
+    }catch(e){console.warn('WS msg err:',e)}
   };
   ws.onclose=function(){
     if(ws._heartbeat){clearInterval(ws._heartbeat);ws._heartbeat=null}
@@ -525,15 +634,102 @@ loadInitialData();
 <script>
 console.log('[SmartMonitor] Block3: 业务模块初始化...');
 
+// ===== 仿真注入模块 (字段对齐 ESP32-P4 MCU 协议) =====
+var SIM_PRESETS={
+  'L0':{dht11_t:25,dht11_h:60,ds18b20_t:25.0,mq135_v:1.2,mq135_do:1,photo_raw:2000,photo_do:1,desc:'全部正常'},
+  'L1':{dht11_t:25,dht11_h:86,ds18b20_t:25.0,mq135_v:1.2,mq135_do:1,photo_raw:100,photo_do:0,desc:'光敏+湿度报警'},
+  'L2':{dht11_t:39,dht11_h:60,ds18b20_t:25.0,mq135_v:2.8,mq135_do:0,photo_raw:2000,photo_do:1,desc:'MQ135+高温'},
+  'L3':{dht11_t:39,dht11_h:60,ds18b20_t:38.5,mq135_v:2.8,mq135_do:0,photo_raw:2000,photo_do:1,desc:'多源紧急'},
+};
+function updateSimVal(sliderId,labelId){
+  var s=document.getElementById(sliderId),v=document.getElementById(labelId);
+  var step=parseFloat(s.step)||1;
+  v.textContent=(step>=1)?parseInt(s.value):parseFloat(s.value).toFixed(1);
+}
+function loadSimPreset(level){
+  var p=SIM_PRESETS[level];if(!p)return;
+  document.getElementById('simDht11T').value=p.dht11_t;updateSimVal('simDht11T','simVDht11T');
+  document.getElementById('simDht11H').value=p.dht11_h;updateSimVal('simDht11H','simVDht11H');
+  document.getElementById('simDs18T').value=p.ds18b20_t;updateSimVal('simDs18T','simVDs18T');
+  document.getElementById('simMq135V').value=p.mq135_v;updateSimVal('simMq135V','simVMq135V');
+  document.getElementById('simPhotoRaw').value=p.photo_raw;updateSimVal('simPhotoRaw','simVPhotoRaw');
+  document.getElementById('simMq135Do').checked=p.mq135_do===1;
+  document.getElementById('simPhotoDo').checked=p.photo_do===1;
+  showToast('success','已加载预设: '+level+' — '+p.desc);
+}
+async function applySimInject(){
+  var p={
+    dht11_t:parseInt(document.getElementById('simDht11T').value),
+    dht11_h:parseInt(document.getElementById('simDht11H').value),
+    ds18b20_t:parseFloat(document.getElementById('simDs18T').value),
+    mq135_v:parseFloat(document.getElementById('simMq135V').value),
+    photo_raw:parseInt(document.getElementById('simPhotoRaw').value),
+    mq135_do:document.getElementById('simMq135Do').checked?1:0,
+    photo_do:document.getElementById('simPhotoDo').checked?1:0
+    // level/reason 由 MCU 内部计算，前端不传
+  };
+  try{
+    var r=await fetch('/api/sim/inject',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(p)});
+    var rs=await r.json();
+    showToast(rs.ok?'success':'error',rs.message);
+    if(rs.ok){document.getElementById('simModeLabel').textContent='模式: 仿真注入 (MCU处理中...)';document.getElementById('simModeLabel').style.color='var(--red)';document.getElementById('simDebug').style.display='block';document.getElementById('simDebug').textContent='已发送到 MCU: '+JSON.stringify(p,null,2)+'\n等待 ESP32 回传数据...'}
+  }catch(e){showToast('error','仿真注入失败: '+e.message)}
+}
+async function resetSimInject(){
+  try{
+    var r=await fetch('/api/sim/reset',{method:'POST'});
+    var rs=await r.json();
+    showToast(rs.ok?'success':'error',rs.message);
+    if(rs.ok){document.getElementById('simModeLabel').textContent='模式: 真实传感器 (等待MCU恢复...)';document.getElementById('simModeLabel').style.color='var(--text-dim)';document.getElementById('simDebug').style.display='block';document.getElementById('simDebug').textContent='已发送 reset 到 MCU，等待真实数据回传...'}
+  }catch(e){showToast('error','恢复失败: '+e.message)}
+}
+function toggleSimPanel(){
+  var c=document.getElementById('simContent');c.style.display=c.style.display==='none'?'block':'none';
+}
+// 查询初始仿真状态
+(async function(){
+  try{var r=await fetch('/api/sim/status');if(r.ok){var s=await r.json();if(s.active){document.getElementById('simModeLabel').textContent='模式: 仿真注入 (MCU处理中...)';document.getElementById('simModeLabel').style.color='var(--red)';document.getElementById('simDebug').style.display='block';document.getElementById('simDebug').textContent='仿真模式已激活, ESP32 IP: '+s.esp_ip}}}catch(e){}
+})();
+
 function renderInventory(items){
   var c=document.getElementById('inventoryTable');
   if(!items||!items.length){c.innerHTML='<div class="empty-state">暂无库存数据</div>';return}
   var sc=function(s){return s==='在库'?'status-in':'status-out'};
-  var h='<table><thead><tr><th>编号</th><th>名称</th><th>类别</th><th>批号</th><th>规格</th><th>生产日期</th><th>有效期</th><th>入库时间</th><th>入库温度</th><th>入库湿度</th><th>状态</th></tr></thead><tbody>';
-  for(var i=0;i<items.length;i++){var it=items[i];h+='<tr><td>'+it.id+'</td><td>'+it.name+'</td><td>'+(it.category||'-')+'</td><td>'+(it.batch||'-')+'</td><td>'+(it.spec||'-')+'</td><td>'+(it.mfg_date||'-')+'</td><td>'+(it.exp_date||'-')+'</td><td>'+(it.checkin_time||'-')+'</td><td>'+(it.checkin_temp!=null?it.checkin_temp.toFixed(1):'-')+'°C</td><td>'+(it.checkin_humi!=null?it.checkin_humi.toFixed(1):'-')+'%</td><td><span class="status-badge '+sc(it.status)+'">'+it.status+'</span></td></tr>';}
+  // 分类 → 行样式映射
+  var rc=function(cat){
+    if(!cat)return'';
+    if(cat==='氮肥')return' tr-nitrogen';
+    if(cat==='钾肥')return' tr-potash';
+    if(cat==='复合肥')return' tr-compound';
+    return'';
+  };
+  var h='<table><thead><tr><th>编号</th><th>名称</th><th>类别</th><th>批号</th><th>规格</th><th>生产日期</th><th>有效期</th><th>入库时间</th><th>入库温度</th><th>入库湿度</th><th>状态</th><th style="width:60px">操作</th></tr></thead><tbody>';
+  for(var i=0;i<items.length;i++){var it=items[i];h+='<tr class="'+rc(it.category)+'"><td>'+it.id+'</td><td>'+it.name+'</td><td>'+(it.category||'-')+'</td><td>'+(it.batch||'-')+'</td><td>'+(it.spec||'-')+'</td><td>'+(it.mfg_date||'-')+'</td><td>'+(it.exp_date||'-')+'</td><td>'+(it.checkin_time||'-')+'</td><td>'+(it.checkin_temp!=null?it.checkin_temp.toFixed(1):'-')+'°C</td><td>'+(it.checkin_humi!=null?it.checkin_humi.toFixed(1):'-')+'%</td><td><span class="status-badge '+sc(it.status)+'">'+it.status+'</span></td><td><button class="btn-del-row" onclick="deleteInventoryItem(\''+it.id.replace(/'/g,"\\'")+'\')" title="删除此物料及关联流水">✕ 删除</button></td></tr>';}
   h+='</tbody></table>';c.innerHTML=h;
 }
-setInterval(async function(){try{var r=await fetch('/api/inventory');if(r.ok)renderInventory(await r.json())}catch(e){}},10000);
+setInterval(async function(){try{var r=await fetch('/api/inventory');if(r.ok)renderInventory(await r.json());loadInventoryStats()}catch(e){}},10000);
+
+// ===== 库存分类统计 =====
+async function loadInventoryStats(){
+  try{
+    var r=await fetch('/api/inventory/stats');
+    if(!r.ok)return;
+    var d=await r.json();
+    var map={'氮肥':{t:'catNTotal',s:'catNStock'},'钾肥':{t:'catKTotal',s:'catKStock'},'复合肥':{t:'catCTotal',s:'catCStock'}};
+    (d.categories||[]).forEach(function(c){
+      var m=map[c.category];
+      if(m){document.getElementById(m.t).textContent=c.total;document.getElementById(m.s).textContent=c.in_stock}
+    });
+    // 未出现的分类归零
+    ['氮肥','钾肥','复合肥'].forEach(function(k){
+      var found=(d.categories||[]).some(function(c){return c.category===k});
+      if(!found){var m=map[k];document.getElementById(m.t).textContent='0';document.getElementById(m.s).textContent='0'}
+    });
+    document.getElementById('catAllTotal').textContent=d.total.total;
+    document.getElementById('catAllStock').textContent=d.total.in_stock;
+  }catch(e){}
+}
+loadInventoryStats();
 
 // ===== 摄像头模块 (Canvas 快照轮询, 消除 Chrome MJPEG 缓冲延迟) =====
 var _camPollTimer=null,_camPollInterval=200,_camLastW=0,_camLastH=0,_camPolling=false;
@@ -543,6 +739,19 @@ function startCam(){
   pollCam();setInterval(pollCam,3000);
 }
 function updateCamSnapshot(){
+  // 视频流关闭时：显示黑屏，不请求摄像头
+  if(!document.getElementById('camToggle').checked){
+    var canvas=document.getElementById('camCanvas');
+    var vp=document.getElementById('camViewport');
+    var ctx=canvas.getContext('2d');
+    var w=vp.clientWidth,h=vp.clientHeight;
+    if(w!==_camLastW||h!==_camLastH){canvas.width=w;canvas.height=h;_camLastW=w;_camLastH=h}
+    ctx.fillStyle='#000';ctx.fillRect(0,0,canvas.width,canvas.height);
+    canvas.style.display='block';
+    document.getElementById('camPlaceholder').style.display='none';
+    if(_camPolling)_camPollTimer=setTimeout(updateCamSnapshot,_camPollInterval);
+    return;
+  }
   fetch('/api/camera/snapshot?'+Date.now(),{cache:'no-store'})
     .then(function(r){if(!r.ok)throw new Error('status '+r.status);return r.blob()})
     .then(function(blob){
@@ -644,7 +853,7 @@ async function execWH(){
     var rs2=await r2.json();addWL(rs2.ok?'out':'warn',rs2.message);showToast(rs2.ok?'success':'error',rs2.message);if(rs2.ok)refreshWH()
   }
 }
-async function refreshWH(){try{var r=await fetch('/api/inventory');if(r.ok)renderInventory(await r.json())}catch(e){}await loadCheckLog()}
+async function refreshWH(){try{var r=await fetch('/api/inventory');if(r.ok)renderInventory(await r.json());loadInventoryStats()}catch(e){}await loadCheckLog()}
 
 function addWL(t,msg){
   var a=document.getElementById('whLogArea');
@@ -660,6 +869,69 @@ function addWL(t,msg){
 }
 async function loadCheckLog(){
   try{var r=await fetch('/api/warehouse/log?limit=10');if(r.ok){var logs=await r.json();var a=document.getElementById('whLogArea');a.innerHTML='';for(var i=0;i<logs.length;i++){var l=logs[i];addWL(l.action==='入库'?'in':(l.action==='出库'?'out':'info'),l.item_id+' | '+l.action+(l.timestamp?' @ '+l.timestamp:''))}}}catch(e){}
+}
+
+// ===== 清空全部出入库流水 =====
+async function clearCheckLog(){
+  if(!confirm('确定要清空全部出入库流水记录吗？此操作不可撤销。'))return;
+  try{
+    var r=await fetch('/api/warehouse/log',{method:'DELETE'});
+    var rs=await r.json();
+    showToast(rs.ok?'success':'error',rs.message);
+    if(rs.ok){var a=document.getElementById('whLogArea');a.innerHTML='<div class="log-entry"><span class="log-time">--:--:--</span><span class="log-msg" style="color:var(--text-dim)">等待操作...</span></div>'}
+  }catch(e){showToast('error','清空失败: '+e.message)}
+}
+
+// ===== 删除库存物料 =====
+async function deleteInventoryItem(id){
+  if(!confirm('确定删除物料 '+id+' 吗？关联的流水记录也会一并删除。'))return;
+  try{
+    var r=await fetch('/api/inventory/'+encodeURIComponent(id),{method:'DELETE'});
+    var rs=await r.json();
+    showToast(rs.ok?'success':'error',rs.message);
+    if(rs.ok){refreshWH()}
+  }catch(e){showToast('error','删除失败: '+e.message)}
+}
+
+// ===== 手动新增物料弹窗 =====
+function openAddInventoryModal(){
+  var cls=document.getElementById('addInvModal');if(cls){cls.remove();return}
+  var h='<div class="modal-overlay" id="addInvModal" onclick="if(event.target===this)this.remove()">';
+  h+='<div class="modal-box" style="max-width:520px">';
+  h+='<h3>📦 手动新增库存物料</h3>';
+  h+='<div class="form-row"><label>物料编号＊</label><input id="addInvId" placeholder="例如: FERT-20260611-999-01"></div>';
+  h+='<div class="form-row"><label>品名＊</label><input id="addInvName" placeholder="例如: 碳酸氢铵"></div>';
+  h+='<div class="form-row"><label>类别</label><select id="addInvCat"><option value="氮肥">氮肥</option><option value="钾肥">钾肥</option><option value="复合肥">复合肥</option></select></div>';
+  h+='<div class="form-row"><label>批次</label><input id="addInvBatch" placeholder="例如: B2026-0611"></div>';
+  h+='<div class="form-row"><label>规格</label><input id="addInvSpec" placeholder="例如: 50kg/袋" value="50kg/袋"></div>';
+  h+='<div class="form-row"><label>生产日期</label><input id="addInvMfg" type="date" value="2026-06-01"></div>';
+  h+='<div class="form-row"><label>有效期</label><input id="addInvExp" type="date" value="2027-06-01"></div>';
+  h+='<div class="modal-actions">';
+  h+='<button class="btn-submit" onclick="submitAddInventory()">✅ 确认新增</button>';
+  h+='<button class="btn-close-modal" onclick="document.getElementById(\'addInvModal\').remove()">取消</button>';
+  h+='</div></div></div>';
+  document.body.insertAdjacentHTML('beforeend',h);
+}
+
+async function submitAddInventory(){
+  var id=document.getElementById('addInvId').value.trim();
+  var name=document.getElementById('addInvName').value.trim();
+  if(!id||!name){showToast('warn','物料编号和品名为必填项');return}
+  var p={
+    id:id, name:name,
+    category:document.getElementById('addInvCat').value,
+    batch:document.getElementById('addInvBatch').value.trim(),
+    spec:document.getElementById('addInvSpec').value.trim(),
+    mfg_date:document.getElementById('addInvMfg').value,
+    exp_date:document.getElementById('addInvExp').value,
+    checkin_time:'', checkin_temp:0, checkin_humi:0, status:'在库'
+  };
+  try{
+    var r=await fetch('/api/inventory/add',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(p)});
+    var rs=await r.json();
+    showToast(rs.ok?'success':'error',rs.message);
+    if(rs.ok){document.getElementById('addInvModal').remove();refreshWH()}
+  }catch(e){showToast('error','新增失败: '+e.message)}
 }
 
 // Toast 通知
@@ -678,6 +950,9 @@ async function toggleCameraStream(){
     document.getElementById('camToggle').checked=s.enabled;
     document.getElementById('camToggleLabel').textContent=s.enabled?'视频流':'已暂停';
     showToast('success',s.enabled?'视频流已开启':'视频流已关闭');
+    // 立即刷新画面：关闭时切黑屏，开启时恢复拉流
+    if(_camPollTimer){clearTimeout(_camPollTimer);_camPollTimer=null}
+    updateCamSnapshot();
   }catch(e){showToast('error','切换失败: '+e.message);}
 }
 
@@ -772,6 +1047,17 @@ async function ackAlarm(id){
     if(res.ok){showToast('success','报警已确认');loadAlarmList();loadAlarmSummary()}
     else showToast('error','确认失败')
   }catch(e){showToast('error','确认失败: '+e.message)}
+}
+
+// ===== 清空全部报警记录 =====
+async function clearAlarmRecords(){
+  if(!confirm('确定要清空全部报警记录吗？此操作不可撤销。'))return;
+  try{
+    var r=await fetch('/api/alarms',{method:'DELETE'});
+    var rs=await r.json();
+    showToast(rs.ok?'success':'error',rs.message);
+    if(rs.ok){loadAlarmList(1);loadAlarmSummary()}
+  }catch(e){showToast('error','清空失败: '+e.message)}
 }
 
 // 初始加载报警数据

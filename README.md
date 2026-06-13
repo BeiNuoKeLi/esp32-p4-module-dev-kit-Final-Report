@@ -53,12 +53,12 @@ idf.py build flash monitor
 │  │                                   │   继电器控制           │       │  │
 │  │                                   └───────────┬───────────┘       │  │
 │  │                                               ↓                   │  │
-│  │                              UDP:8080 ──→ PC 上位机 / Docker 服务  │  │
+│  │              UDP:8080 ──→ Docker 内置监听器 (SensorUDPProtocol)    │  │
 │  └───────────────────────────────────────────────────────────────────┘  │
 └─────────────────────────────────────────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────────────────┐
-│                      Docker Web 仪表盘 (v3.0)                          │
+│                      Docker Web 仪表盘 (v3.4)                          │
 │  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────────┐    │
 │  │   FastAPI       │  │   AIOSQLite     │  │   WebSocket         │    │
 │  │   REST API      │  │   数据持久化    │  │   实时推送          │    │
@@ -96,12 +96,12 @@ ESP32-CAM ──HTTP/TCP──► Docker (camera_server.py)  ← 当前主模式
 - **`camera_capture_sender.py`**：~~USB 摄像头采集 + UDP 发送~~ **已弃用**，由 `CameraWebServer/` (ESP32-CAM) + `camera_http_fetch.c` 替代
 - **`smart_monitor_sim_gui.py`**：综合工具体 v3.0 — 仿真控制 (Tab 1) + 仓储管理 (Tab 2)，摄像头预览以独立 Toplevel 窗口显示
 - **`warehouse_db.py`**：SQLite 数据库模块 (inventory 库存表 + check_log 操作日志)
-- **`generate_qr_labels.py`**：二维码标签批量生成工具 (8 种与传感器匹配的危化品)
+- **`generate_qr_labels.py`**：二维码标签批量生成工具 (6 种与传感器匹配的化肥)
 - **`CameraWebServer/`**：ESP32-CAM Arduino 相机服务端源码（OV2640 QVGA JPEG 采集）
 
 ## 通信
 
-### Web 仪表盘 (v3.0)
+### Web 仪表盘 (v3.4)
 
 项目已支持 **Docker 容器化部署**，提供 Web 可视化仪表盘：
 
@@ -122,8 +122,11 @@ docker-compose up -d
 - 分级报警状态徽章（L0~L3），L3 紧急时页面红色闪烁
 - **报警历史系统**：事件列表/详情/统计/确认，去重窗口 30s，级别变化即时触发
 - 历史数据折线图（温度/湿度趋势）
-- 摄像头 MJPEG 实时流预览 + **视频流开关**（暂停/恢复 UDP 接收）
-- 仓储管理（二维码扫码入库/出库）
+- 摄像头 MJPEG 实时流预览 + **视频流开关**（关闭即切黑屏节省带宽，开启恢复拉流）
+- 仓储管理（二维码扫码入库/出库 + 手动新增 + 库存分类统计 + 流水清空）
+- **仿真注入面板**：前端一键注入 L1/L2/L3 预设报警或自定义传感器数值
+- **报警管理**：一键清空全部报警记录（DELETE /api/alarms）
+- **内置 UDP 监听器**：Docker 服务直接监听 :8080，无需外部 udp_to_web.py 桥接脚本
 - SQLite 数据持久化（aiosqlite 异步引擎）
 
 ### 传感器数据 (ESP32 → PC)
@@ -176,7 +179,7 @@ D:\Anaconda3\envs\ForAgents\python.exe smart_monitor_sim_gui.py
 | 文件 | 说明 |
 |------|------|
 | `warehouse_db.py` | SQLite 数据库 (inventory + check_log 表) |
-| `generate_qr_labels.py` | 生成 8 种危化品二维码标签到 `qr_labels/` |
+| `generate_qr_labels.py` | 生成 6 种化肥二维码标签到 `qr_labels/` |
 | `smart_monitor_sim_gui.py` Tab 2 | 摄像头拉流 → pyzbar 扫码 → 入库/出库 → TreeView 表格
 | 摄像头预览 | 点击顶部「打开摄像头预览」按钮，独立窗口 640×480+ 展示画面
 

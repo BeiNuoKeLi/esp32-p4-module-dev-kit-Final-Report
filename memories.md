@@ -2,7 +2,7 @@
 
 > **文档目的**：记录项目当前状态、规范和已实现功能，方便后续 Agent 理解和继续开发
 >
-> **最后更新**：2026-06-07（Camera HTTP Relay 上线，ENOMEM/Wi-Fi 等待修复）
+> **最后更新**：2026-06-13（v3.4 仿真注入系统上线；内置UDP监听器；报警/库存管理增强；化肥场景迁移）
 
 ---
 
@@ -52,7 +52,7 @@
 
 #### MQ-135 空气质量传感器
 - **模块供电**：5V（传感器加热）或 3.3V（灵敏度略低）
-- **检测气体**：氨气、硫化物、苯系蒸气、烟雾
+- **检测气体**：氨气、硫化物、烟雾
 - **检测浓度**：10 ~ 1000 ppm
 - **预热时间**：上电后 ≥ 3 分钟读数稳定（技术手册）
 - **AO 特性**：浓度越高 → 电压越高（模块基础参数）
@@ -110,6 +110,17 @@ camera_capture_sender.py    # ✅ 摄像头采集 + Gamma校正/锐化 + JPEG编
 camera_display_receiver.py  # ✅ UDP接收 + 分片重组 + JPEG解码 + OpenCV实时显示
 camera_protocol.py          # ✅ Magic 0xAA55 协议头编解码 (大端序, 8字节头, 4096字节payload)
 CAMERA_DEBUG_LOG.md         # 摄像头调试历史 & 参数速查
+
+# Docker Web 仪表盘 v3.4 (2026-06-13 更新)
+docker/
+├── docker-compose.yml      # ✅ 容器编排 (UDP 8080 端口暴露 + ESP32_IP 环境变量)
+├── app/
+│   ├── main.py            # ✅ FastAPI + WebSocket + 内置 UDP 监听器 + 仿真注入 API
+│   ├── database.py        # ✅ AIOSQLite (清空报警/清空流水/新增物料/删除物料)
+│   ├── models.py          # ✅ Pydantic 模型 (SimInjectRequest, SimStatus)
+│   └── static/
+│       └── dashboard.html # ✅ Chart.js 仪表盘 (仿真面板 + 库存统计 + 报警清空)
+└── ...
 ```
 
 ### 2.4 OLED 显示内容（8行布局）
@@ -517,6 +528,10 @@ portENABLE_INTERRUPTS();
 | 2026-06-06 | 摄像头图像流模块 | Agent | KYT-U400 USB 摄像头, DirectShow + MJPG, Gamma/Sharpen 画质处理, UDP 分包, 接收显示, 8个阶段调试完成 |
 | 2026-06-07 | Camera HTTP Relay | Agent | 新增 camera_http_fetch.c/h, ESP32-CAM HTTP 拉图 → UDP 0xAA55 分包转发, Kconfig 可配置, Task_Cam_HTTP 任务 |
 | 2026-06-07 | UDP 稳定性修复 | Agent | ENOMEM(errno=12) 退避重试; Camera 每包 5ms 微延迟; 移除 lwIP 不支持的 SO_SNDBUF; Wi-Fi 等待改用 esp_netif 轮询 |
+| 2026-06-08 | Docker Web 仪表盘 v3.0 上线 | Agent | FastAPI + WebSocket + AIOSQLite + Chart.js, 传感器卡片/报警历史/趋势曲线/仓储管理, Docker 容器化 |
+| 2026-06-10 | 农资化肥场景迁移 v3.3 | Agent | 危化品 → 化肥场景全面迁移; QR 标签 FERT-xxx; 库存分类统计; generate_qr_labels.py --copies 参数 |
+| 2026-06-12 | 摄像头架构重构 v3.3 | Agent | Docker 直连 ESP32-CAM (HVGA 480×320); Canvas 快照轮询替代 MJPEG <img>; CameraWebServer Arduino 工程 |
+| 2026-06-13 | 仿真注入系统 v3.4 | Agent | 内置 UDP 监听器 SensorUDPProtocol:8080 替代外部桥接; POST /api/sim/inject + 前端预设面板; DELETE /api/alarms 报警清空; 库存管理增强 (手动新增/流水清空/物料删除); 视频流关闭→黑屏; 文档全面更新至 v3.4 |
 
 ---
 

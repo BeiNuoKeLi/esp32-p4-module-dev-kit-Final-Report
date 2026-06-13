@@ -287,6 +287,85 @@ async def get_check_log(limit: int = 20) -> list[dict]:
         return [dict(r) for r in rows]
 
 
+async def clear_check_log() -> int:
+    """清空全部出入库流水记录，返回删除条数"""
+    _ensure_dir()
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute("DELETE FROM check_log")
+        await db.commit()
+        return cursor.rowcount
+
+
+async def clear_alarm_events() -> int:
+    """清空全部报警事件记录，返回删除条数"""
+    _ensure_dir()
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute("DELETE FROM alarm_events")
+        await db.commit()
+        return cursor.rowcount
+
+
+async def delete_inventory_item(item_id: str) -> bool:
+    """删除库存中指定物料（同时删关联流水），返回是否成功"""
+    _ensure_dir()
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute("DELETE FROM inventory WHERE id = ?", (item_id,))
+        await db.execute("DELETE FROM check_log WHERE item_id = ?", (item_id,))
+        await db.commit()
+        return cursor.rowcount > 0
+
+
+async def add_inventory_item(item: dict) -> tuple[bool, str]:
+    """
+    手动新增库存物料
+    Returns: (True/False, message)
+    """
+    _ensure_dir()
+    now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        # 检查是否已存在
+        cursor = await db.execute(
+            "SELECT id FROM inventory WHERE id = ?", (item["id"],)
+        )
+        if await cursor.fetchone():
+            return False, f"物料 {item['id']} 已存在，请使用不同 ID"
+        await db.execute("""
+            INSERT INTO inventory
+                (id, name, category, batch, spec, mfg_date, exp_date,
+                 checkin_time, checkin_temp, checkin_humi, status)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '在库')
+        """, (
+            item["id"], item.get("name", ""), item.get("category", ""),
+            item.get("batch", ""), item.get("spec", ""),
+            item.get("mfg_date", ""), item.get("exp_date", ""),
+            now, item.get("checkin_temp", 0), item.get("checkin_humi", 0)
+        ))
+        await db.execute("""
+            INSERT INTO check_log (item_id, action, timestamp, env_temp, env_humi, env_level)
+            VALUES (?, '入库', ?, ?, ?, ?)
+        """, (item["id"], now, item.get("checkin_temp", 0), item.get("checkin_humi", 0), 0))
+        await db.commit()
+        return True, f"手动新增成功: {item['id']}"
+
+
+async def get_inventory_stats() -> list[dict]:
+    """按分类统计库存：总计/在库数量"""
+    _ensure_dir()
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute("""
+            SELECT category,
+                   COUNT(*) as total,
+                   SUM(CASE WHEN status='在库' THEN 1 ELSE 0 END) as in_stock
+            FROM inventory
+            GROUP BY category
+            ORDER BY category
+        """)
+        rows = await cursor.fetchall()
+        return [dict(r) for r in rows]
+
+
 async def get_latest_env_snapshot() -> dict | None:
     """
     从最新一条 sensor_data 获取当前环境快照。

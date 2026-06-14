@@ -8,7 +8,7 @@ services:
       - "8003:8082/udp"                   # ★ 摄像头 UDP 中继 (备用)
     environment:
       - ESP32_IP=10.16.234.86            # ESP32-P4 设备 IP（仿真注入时用）
-      - CAMERA_MODE=push                  # ★ ESP32-CAM 直推帧到 VPS
+      - CAMERA_MODE=udp                   # ★ ESP32-P4 UDP 分包转发摄像头数据
     volumes:
       - ./data:/app/data
       - ./app/static:/app/app/static:ro

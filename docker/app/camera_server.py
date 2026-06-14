@@ -222,6 +222,11 @@ class CameraServer:
         """外部推送 JPEG 帧 (ESP32-CAM 直推模式)"""
         self._try_set_jpeg(jpeg_data)
         self.total_frames += 1
+        # 更新 FPS 历史记录 (修复: push 模式之前缺失此逻辑, 导致前端一直显示 0)
+        t0 = time.time()
+        self.fps_history.append(t0)
+        if len(self.fps_history) > 30:
+            self.fps_history.pop(0)
 
     def start(self):
         """启动后台接收线程（根据 CAMERA_MODE 选择 push / MJPEG流 / UDP 中继）"""

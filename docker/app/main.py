@@ -134,6 +134,8 @@ class SensorUDPProtocol(asyncio.DatagramProtocol):
     替代 udp_to_web.py 桥接脚本，消除外部依赖。
     """
 
+    _count = 0
+
     def datagram_received(self, data: bytes, addr: tuple):
         """收到 UDP 数据报 → 解析 JSON → 提交到传感器处理流水线"""
         try:
@@ -147,6 +149,10 @@ class SensorUDPProtocol(asyncio.DatagramProtocol):
             obj = json.loads(raw)
         except json.JSONDecodeError:
             return
+
+        self._count += 1
+        if self._count <= 3 or self._count % 10 == 0:
+            print(f"[UDP] 收到 #{self._count} 来自 {addr} | type={obj.get('type','?')}")
 
         # 仅处理 sensor data 类型（出入库仍通过 HTTP API 操作）
         msg_type = obj.get("type", "data")
@@ -211,8 +217,8 @@ async def _process_udp_sensor(obj: dict):
     """异步处理 UDP 收到的传感器数据"""
     try:
         await _ingest_sensor_data(obj)
-    except Exception:
-        pass  # 字段不合法，静默丢弃
+    except Exception as e:
+        print(f"[UDP/Sensor] 处理失败: {type(e).__name__}: {e}")
 
 
 async def _process_udp_warehouse(obj: dict, msg_type: str):

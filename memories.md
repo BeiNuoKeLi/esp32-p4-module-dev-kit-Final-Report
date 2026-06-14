@@ -357,7 +357,7 @@ portENABLE_INTERRUPTS();
 |------|-----|
 | Kconfig 开关 | `CONFIG_CAMERA_HTTP_ENABLED` (默认 y) |
 | ESP32-CAM URL | `CONFIG_CAMERA_HTTP_ESP32CAM_URL` (默认 `http://10.16.234.23/capture`) |
-| 目标 IP | `CONFIG_CAMERA_HTTP_UDP_IP` (默认 `10.16.234.215`) |
+| 目标 IP | `CONFIG_CAMERA_HTTP_UDP_IP` (强制覆盖 `38.55.199.220`, 旧默认 `10.16.234.215`) |
 | 帧率 | `CONFIG_CAMERA_HTTP_FPS` (1-10, 默认 3) |
 | 缓冲区 | JPEG 128KB + UDP 64KB (PSRAM 分配) |
 | HTTP 超时 | 5000ms |

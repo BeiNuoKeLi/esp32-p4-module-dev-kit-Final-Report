@@ -28,10 +28,9 @@ static const char *TAG = "cam_http";
 #ifndef CONFIG_CAMERA_HTTP_ESP32CAM_URL
 #define CONFIG_CAMERA_HTTP_ESP32CAM_URL "http://10.16.234.23/capture"
 #endif
-#ifndef CONFIG_CAMERA_HTTP_UDP_IP
+/* 强制覆盖 Kconfig 默认值 (sdkconfig 可能缓存旧值) */
+#undef CONFIG_CAMERA_HTTP_UDP_IP
 #define CONFIG_CAMERA_HTTP_UDP_IP "38.55.199.220"
-#endif
-/* 强制覆盖 Kconfig 默认值 (sdkconfig 可能缓存旧值 3) */
 #undef CONFIG_CAMERA_HTTP_FPS
 #define CONFIG_CAMERA_HTTP_FPS 10
 

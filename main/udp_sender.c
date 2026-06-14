@@ -39,8 +39,8 @@
 static const char *TAG_UDP = "udp_sender";
 
 /* ==================== UDP 目标地址（REQUIREMENT.md 6.1）==================== */
-#define UDP_TARGET_IP     "10.16.234.215"  /*!< 上位机 IP (2026-06-04 通过 ipconfig 确认) */
-#define UDP_TARGET_PORT   8080           /*!< 通信端口 */
+#define UDP_TARGET_IP     "38.55.199.220"  /*!< VPS 公网 IP (benoc.top), 2026-06-13 */
+#define UDP_TARGET_PORT   8002           /*!< VPS UDP 端口 */
 #define UDP_SEND_INTERVAL 2000           /*!< 发送间隔, 毫秒（REQUIREMENT.md 6.1: 每2秒） */
 #define UDP_BUF_SIZE      512            /*!< 发送缓冲区（REQUIREMENT.md 6.1: 单包 < 512 字节） */
 

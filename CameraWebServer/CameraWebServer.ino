@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include "esp_camera.h"
 #include <WiFi.h>
+#include <HTTPClient.h>
 
 // ===========================
 // Select camera model in board_config.h
@@ -132,7 +133,34 @@ void setup() {
   Serial.println("' to connect");
 }
 
+// ★ 服务器版: ESP32-CAM 主动推帧到 VPS (CAM_PUSH_MODE)
+#define CAM_PUSH_URL     "http://38.55.199.220:8001/api/camera/push"
+#define CAM_PUSH_INTERVAL 200       // 推帧间隔 (ms), ~5fps
+
+static unsigned long last_push_ms = 0;
+
 void loop() {
-  // Do nothing. Everything is done in another task by the web server
-  delay(10000);
+  unsigned long now = millis();
+  if (now - last_push_ms < CAM_PUSH_INTERVAL) {
+    delay(10);
+    return;
+  }
+  last_push_ms = now;
+
+  camera_fb_t *fb = esp_camera_fb_get();
+  if (!fb || fb->len == 0) {
+    if (fb) esp_camera_fb_return(fb);
+    delay(10);
+    return;
+  }
+
+  HTTPClient http;
+  http.begin(CAM_PUSH_URL);
+  http.addHeader("Content-Type", "image/jpeg");
+  int code = http.POST(fb->buf, fb->len);
+  if (code != 200) {
+    Serial.printf("[PUSH] HTTP %d\n", code);
+  }
+  http.end();
+  esp_camera_fb_return(fb);
 }

@@ -75,13 +75,18 @@ idf.py build flash monitor
 ### 摄像头数据流
 
 ```
-ESP32-CAM ──HTTP/TCP──► Docker (camera_server.py)  ← 当前主模式 (零丢包)
-  │                                                    ↓
+ESP32-CAM ──HTTP POST──► VPS :8001 /api/camera/push  ← ★ 服务器部署 (CAMERA_MODE=push)
+  │   CameraWebServer.ino                                   ↓
+  │   每 200ms 推一帧 (~5fps)                         Docker camera_server
+  │   JPEG raw body                                        ↓
+  └─────────────────────────────               MJPEG 流 + Canvas 快照轮询
+
+ESP32-CAM ──HTTP/TCP──► Docker (camera_server.py)  ← 局域网模式 (CAMERA_MODE=http)
   │   HVGA 480×320, JPEG quality=12             MJPEG 流 + Canvas 快照轮询
   │   CameraWebServer.ino 提供 /capture + /stream      ↓
-  │                                              Web 仪表盘实时显示
-  └── [已弃用] ESP32-P4 UDP 中继 (camera_http_fetch.c)
-          ESP32-CAM → HTTP GET → P4 → UDP:8082 → Docker
+  └──────────────────────────────            Web 仪表盘实时显示
+
+ESP32-CAM → HTTP GET → P4 → UDP:8003 → Docker  ← 备用 (已弃用)
 ```
 
 ### 模块说明
@@ -111,11 +116,21 @@ cd docker
 docker-compose up -d
 ```
 
+#### 本地开发
+
 | 服务 | 地址 | 说明 |
 |------|------|------|
 | Web 仪表盘 | http://localhost:8000 | Chart.js 实时数据图表 |
 | API 文档 | http://localhost:8000/docs | FastAPI 交互式文档 |
 | WebSocket | ws://localhost:8000/ws | 实时数据推送 |
+
+#### VPS 部署 (公网端口映射)
+
+| 服务 | 容器内 | 对外 | 说明 |
+|------|--------|------|------|
+| Web + CAM 推帧 | :8000 | `:8001` (TCP) | FastAPI HTTP + `/api/camera/push` |
+| P4 传感器 UDP | :8080 | `:8002` (UDP) | SensorUDPProtocol |
+| CAM UDP 中继 | :8082 | `:8003` (UDP) | 备用，当前未激活 |
 
 **Web 仪表盘功能**：
 - 实时传感器数据卡片（温湿度、MQ-135、光敏）
@@ -129,15 +144,15 @@ docker-compose up -d
 - **内置 UDP 监听器**：Docker 服务直接监听 :8080，无需外部 udp_to_web.py 桥接脚本
 - SQLite 数据持久化（aiosqlite 异步引擎）
 
-### 传感器数据 (ESP32 → PC)
+### 传感器数据 (ESP32 → PC/VPS)
 
-| 参数 | 值 |
-|------|-----|
-| ESP32-P4 IP | DHCP 自动获取 (当前 10.16.234.86) |
-| 上位机 IP | 10.16.234.215 |
-| 端口 | 8080 UDP |
-| 间隔 | 每 2 秒 |
-| 格式 | JSON (12 字段: ts, dht11_t/h, ds18b20_t, mq135_v, light_raw, mq135_do, photo_do, level, alert, err, reason) |
+| 参数 | 本地开发 | VPS 部署 |
+|------|----------|----------|
+| ESP32-P4 IP | DHCP 自动获取 | 手机热点 DHCP |
+| 目标 IP | 10.16.234.215 | 38.55.199.220 |
+| 目标端口 | 8080 UDP | 8002 UDP |
+| 间隔 | 每 2 秒 | 每 2 秒 |
+| 格式 | JSON (12 字段) | JSON (12 字段) |
 
 ```bash
 # 启动上位机接收端
@@ -146,7 +161,17 @@ D:\Anaconda3\envs\ForAgents\python.exe pc_receiver.py
 
 ### 摄像头图像流
 
-#### 主模式：Docker 直连 ESP32-CAM (推荐)
+#### Push 模式：ESP32-CAM 直推 VPS (服务器部署)
+
+| 参数 | 值 |
+|------|-----|
+| 采集方式 | ESP32-CAM `loop()` 中 200ms 间隔拍摄 + HTTP POST 推帧 |
+| 目标 | `http://38.55.199.220:8001/api/camera/push` |
+| 环境变量 | `CAMERA_MODE=push` |
+| 帧率 | ~5 fps (200ms/帧) |
+| 前端显示 | Canvas 快照轮询 + MJPEG 流 |
+
+#### 主模式：Docker 直连 ESP32-CAM (局域网推荐)
 
 | 参数 | 值 |
 |------|-----|
@@ -163,7 +188,7 @@ D:\Anaconda3\envs\ForAgents\python.exe pc_receiver.py
 |------|-----|
 | 采集方式 | ESP32-P4 通过 HTTP GET `/capture` 拉取 JPEG，UDP 分包转发到 Docker |
 | 转发协议 | UDP 分包 (Magic 0xAA55, 4096 字节/包) |
-| 端口 | 8082 UDP |
+| 端口 | 8082 UDP (容器内) / 8003 UDP (对外) |
 | 配置项 | `CONFIG_CAMERA_HTTP_ENABLED=y` / `CONFIG_CAMERA_HTTP_FPS` |
 
 ### 仓储管理 (二维码扫码)
@@ -199,3 +224,4 @@ D:\Anaconda3\envs\ForAgents\python.exe smart_monitor_sim_gui.py
 - Camera HTTP 拉图与 Sensor UDP 共用 lwIP pbuf 池，已实现 ENOMEM(errno=12) 退避重试 + 1 tick 微延迟防止资源争抢
 - Camera UDP 端口 8082 与 Sensor 数据端口 8080 隔离
 - Docker 直连模式 (CAMERA_MODE=http) 绕过 P4 UDP 中继，TCP 协议保证帧完整性，无分片/丢包问题
+- VPS 部署模式 (CAMERA_MODE=push)：ESP32-CAM 主动 HTTP POST 推帧到 `/api/camera/push`，解决 NAT 穿透问题

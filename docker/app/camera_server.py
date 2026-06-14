@@ -218,12 +218,21 @@ class CameraServer:
         self._mjpeg_new_frame.set()
         return ok
 
+    def push_jpeg(self, jpeg_data: bytes):
+        """外部推送 JPEG 帧 (ESP32-CAM 直推模式)"""
+        self._try_set_jpeg(jpeg_data)
+        self.total_frames += 1
+
     def start(self):
-        """启动后台接收线程（根据 CAMERA_MODE 选择 MJPEG流 / UDP 中继）"""
+        """启动后台接收线程（根据 CAMERA_MODE 选择 push / MJPEG流 / UDP 中继）"""
         if self.running:
             return
         self.running = True
-        if CAMERA_MODE == "udp":
+        if CAMERA_MODE == "push":
+            self.thread = threading.Thread(target=self._push_dummy_loop, daemon=True, name="CameraPush")
+            self.thread.start()
+            print(f"[Camera] ✅ Push 模式 (等待 ESP32-CAM 直推) 端点 POST /api/camera/push")
+        elif CAMERA_MODE == "udp":
             self.thread = threading.Thread(target=self._recv_loop, daemon=True, name="CameraUDP")
             self.thread.start()
             print(f"[Camera] ✅ UDP 中继模式 监听 :{CAMERA_PORT}")
@@ -231,6 +240,12 @@ class CameraServer:
             self.thread = threading.Thread(target=self._mjpeg_stream_loop, daemon=True, name="CameraMJPEG")
             self.thread.start()
             print(f"[Camera] ✅ MJPEG 流模式 → {ESP32_CAM_STREAM_URL}")
+
+    def _push_dummy_loop(self):
+        """push 模式占位线程 — 保持 self.running=True, 帧由外部 push_jpeg() 注入"""
+        while self.running:
+            time.sleep(5)
+
 
     def stop(self):
         """停止接收线程并释放资源"""

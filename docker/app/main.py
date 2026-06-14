@@ -25,7 +25,7 @@ import json
 import asyncio
 import time as _time
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, StreamingResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -606,6 +606,19 @@ async def camera_snapshot():
             "Expires": "0",
         },
     )
+
+
+@app.post("/api/camera/push")
+async def camera_push(request: Request):
+    """
+    ESP32-CAM 直推 JPEG 帧 (服务器版)
+    接收 raw body → 写入 camera_server.latest_jpeg
+    """
+    jpeg_data = await request.body()
+    if jpeg_data:
+        cam.push_jpeg(jpeg_data)
+        return {"ok": True, "size": len(jpeg_data)}
+    return {"ok": False}
 
 
 @app.post("/api/camera/scan", response_model=ScanResult)

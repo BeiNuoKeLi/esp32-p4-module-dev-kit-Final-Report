@@ -69,7 +69,7 @@
 | **AIOSQLite** | 异步 SQLite 数据库，存储传感器数据、库存、操作日志、报警事件 |
 | **WebSocket** | 实时推送通道，传感器数据变更即时通知前端 |
 | **Chart.js** | 前端图表库，展示温度/湿度历史趋势曲线 |
-| **camera_server** | 摄像头服务：HTTP 直连 (主模式) 或 UDP 接收 (备选) → MJPEG 流转换 + Canvas 快照轮询 + pyzbar 二维码扫码，支持 stream 开关暂停/恢复，关闭时前端自动切黑屏 |
+| **camera_server** | 摄像头服务：HTTP 拉取 / Push 直推 (VPS) / UDP 中继 (备选) → MJPEG 流转换 + Canvas 快照轮询 + pyzbar 二维码扫码，支持 stream 开关暂停/恢复，关闭时前端自动切黑屏 |
 
 ### 2.3 后端 API 路由总览
 
@@ -101,10 +101,21 @@
 | `POST` | `/api/alarm/config` | 更新报警配置 → 写 SQLite + UDP 同步到 MCU |
 | `GET` | `/api/sim/status` | 查询仿真注入状态 |
 | `POST` | `/api/sim/inject` | 注入仿真传感器数据到 ESP32-P4 |
+| `POST` | `/api/camera/push` | ESP32-CAM 直推 JPEG 帧 (VPS 部署) |
 
 ### 2.4 摄像头数据流
 
-#### 主模式：Docker 直连 (推荐，TCP 零丢包)
+#### Push 模式：ESP32-CAM 直推 VPS (服务器部署推荐)
+
+```
+ESP32-CAM ──HTTP POST──► VPS :8001 /api/camera/push  (CAMERA_MODE=push)
+  │   每 200ms 推一帧 (~5fps)      ↓
+  │   JPEG raw body           Docker camera_server
+  │   CameraWebServer.ino          ↓
+  └──────────────────────  Web 仪表盘实时显示
+```
+
+#### 主模式：Docker 直连拉取 (局域网推荐，TCP 零丢包)
 
 ```
 ESP32-CAM ──HTTP/TCP──► Docker camera_server  (CAMERA_MODE=http)
@@ -117,8 +128,8 @@ ESP32-CAM ──HTTP/TCP──► Docker camera_server  (CAMERA_MODE=http)
 #### 备选模式：ESP32-P4 UDP 中继 (已弃用，默认关闭)
 
 ```
-ESP32-CAM ─HTTP:/capture─→ camera_http_fetch.c ─UDP:8082─→ Docker camera_server
-                                                             ↓
+ESP32-CAM ─HTTP:/capture─→ camera_http_fetch.c ─UDP:8003─→ Docker camera_server
+  (备用，端口 8003→8082/udp)                                    ↓
                                                     MJPEG 流 + 二维码解码
 ```
 

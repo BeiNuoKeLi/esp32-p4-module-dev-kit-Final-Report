@@ -75,22 +75,20 @@ idf.py build flash monitor
 ### 摄像头数据流
 
 ```
-ESP32-CAM ──HTTP POST──► VPS :8001 /api/camera/push  ← ★ 服务器部署 (CAMERA_MODE=push)
+ESP32-CAM ──TCP 二进制推流──► VPS :8003  ← ★ 服务器部署 (CAMERA_MODE=tcp, v3.8)
   │   CameraWebServer.ino                                   ↓
-  │   每 200ms 推一帧 (~5fps)                         Docker camera_server
-  │   JPEG raw body                                        ↓
-  │    ← 响应 {"push":bool} ── 无观看者时通知暂停     MJPEG `<img>` 原生渲染
-  │   
-  └── 暂停后 ──GET /api/camera/push_status──► 每 3s 心跳 (~30 bytes)
-         ← {"push":bool} ← 有观看者时恢复推送
+  │   WiFiClient 长连接, 帧格式 [2B len][JPEG]         Docker camera_server
+  │   帧驱动 ~10-16fps, 零 HTTP 开销                       ↓
+  │   每 3s 心跳 GET /api/camera/push_status          MJPEG `<img>` 原生渲染
+  │   无观看者自动降速 1fps (省带宽)
 ```
 
+ESP32-CAM ──HTTP POST──► VPS :8001 /api/camera/push  ← 备选 (CAMERA_MODE=push)
+  │   (每帧 HTTP 握手, ~1-3fps, 已由 tcp 模式替代)
+
 ESP32-CAM ──HTTP/TCP──► Docker (camera_server.py)  ← 局域网模式 (CAMERA_MODE=http)
-  │   HVGA 480×320, JPEG quality=12             MJPEG `<img>` 原生渲染
   │   CameraWebServer.ino 提供 /capture + /stream      ↓
   └──────────────────────────────            Web 仪表盘实时显示
-
-ESP32-CAM → HTTP GET → P4 → UDP:8003 → Docker  ← 备用 (已弃用)
 ```
 
 ### 模块说明
@@ -132,9 +130,9 @@ docker-compose up -d
 
 | 服务 | 容器内 | 对外 | 说明 |
 |------|--------|------|------|
-| Web + CAM 推帧 + 心跳 | :8000 | `:8001` (TCP) | FastAPI HTTP + `/api/camera/push` + `/api/camera/push_status` |
+| Web + CAM 推帧 + 心跳 | :8000 | `:8001` (TCP) | FastAPI HTTP + `/api/camera/push_status` |
 | P4 传感器 UDP | :8080 | `:8002` (UDP) | SensorUDPProtocol |
-| CAM UDP 中继 | :8082 | `:8003` (UDP) | 备用，当前未激活 |
+| CAM TCP 推流 | :8003 | `:8003` (TCP) | ★ ESP32-CAM 二进制推流 (v3.8, 零HTTP开销，替代旧UDP中继) |
 
 **Web 仪表盘功能**：
 - 实时传感器数据卡片（温湿度、MQ-135、光敏）
@@ -165,17 +163,18 @@ D:\Anaconda3\envs\ForAgents\python.exe pc_receiver.py
 
 ### 摄像头图像流
 
-#### Push 模式：ESP32-CAM 直推 VPS (服务器部署)
+#### TCP 二进制推流：ESP32-CAM 直推 VPS (服务器部署，v3.8 推荐)
 
 | 参数 | 值 |
 |------|-----|
-| 采集方式 | ESP32-CAM `loop()` 中 200ms 间隔拍摄 + HTTP POST 推帧 |
-| 目标 | `http://38.55.199.220:8001/api/camera/push` |
-| 环境变量 | `CAMERA_MODE=push` |
-| 帧率 | ~5 fps (200ms/帧) |
+| 采集方式 | ESP32-CAM `loop()` 帧驱动 + WiFiClient TCP 长连接推流 |
+| 目标 | `38.55.199.220:8003` (TCP raw) |
+| 帧格式 | `[2-byte big-endian length][JPEG data]` (无 HTTP 开销) |
+| 环境变量 | `CAMERA_MODE=tcp` |
+| 帧率 | ~10-16 fps (帧驱动, 无固定间隔) |
 | 前端显示 | MJPEG `<img>` 原生渲染 (零 JS 开销，GPU 合成) |
-| 心跳端点 | `GET /api/camera/push_status`（无观看者时每 3s 轮询，~30 bytes） |
-| 省带宽 | 无观看者时暂停 JPEG 推送，切心跳模式，节省 ~99.8% 带宽 |
+| 心跳端点 | `GET /api/camera/push_status`（无观看者时降速 1fps） |
+| 省带宽 | 无观看者时降为 1fps，节省 ~95% 带宽 |
 
 #### 主模式：Docker 直连 ESP32-CAM (局域网推荐)
 

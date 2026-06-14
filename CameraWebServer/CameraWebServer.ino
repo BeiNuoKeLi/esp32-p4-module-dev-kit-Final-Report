@@ -133,76 +133,86 @@ void setup() {
   Serial.println("' to connect");
 }
 
-// ★ 服务器版: ESP32-CAM 主动推帧到 VPS (CAM_PUSH_MODE)
-//    无观看者时自动暂停推送，改为轻量心跳轮询，节省服务器带宽 ~99.8%
-//    使用 X-Push 响应头判断推送状态（零 JSON 解析开销）
-#define CAM_PUSH_URL        "http://38.55.199.220:8001/api/camera/push"
-#define CAM_PUSH_STATUS_URL "http://38.55.199.220:8001/api/camera/push_status"
-#define CAM_PUSH_INTERVAL   200       // 推帧间隔 (ms), ~5fps
-#define CAM_HB_INTERVAL     3000      // 心跳间隔 (ms), 暂停时每3秒检查是否恢复
+// ★ v3.8 TCP 二进制推流: ESP32-CAM WiFiClient 直连 VPS:8004
+//    帧格式: [2-byte big-endian length][JPEG data]
+//    一条 TCP 长连接持续发送，零 HTTP 逐帧握手开销
+//    帧驱动模式: 摄像头出帧即推，不固定间隔
+#define CAM_STREAM_HOST    "38.55.199.220"
+#define CAM_STREAM_PORT    8003
+#define CAM_PUSH_MAX_FPS   16        // 最大推帧速率 (防止 WiFi 拥塞)
+#define CAM_PUSH_MIN_MS    (1000 / CAM_PUSH_MAX_FPS)
 
+// 观众心跳: 无观看者时降为 1fps (节省 VPS 带宽)
+#define CAM_HB_URL         "http://38.55.199.220:8001/api/camera/push_status"
+#define CAM_HB_INTERVAL    3000
+
+static WiFiClient streamClient;
 static unsigned long last_push_ms = 0;
 static unsigned long last_hb_ms = 0;
-static bool push_active = true;  // 默认主动推帧（启动时无人告知停止则继续）
+static bool viewer_active = true;          // 默认有观看者
+static unsigned long last_viewer_check = 0;
 
 void loop() {
   unsigned long now = millis();
 
-  // ─── 心跳模式: 无观看者时, 发轻量 GET 请求检查是否恢复推送 ───
-  if (!push_active) {
+  // ─── 速率限制 (防止空循环烧 CPU) ───
+  if (now - last_push_ms < CAM_PUSH_MIN_MS) return;
+  last_push_ms = now;
+
+  // ─── 观众心跳检查 (每 3s 发一次轻量 HTTP GET) ───
+  if (!viewer_active) {
     if (now - last_hb_ms < CAM_HB_INTERVAL) {
       delay(100);
       return;
     }
     last_hb_ms = now;
-
     HTTPClient http;
-    http.begin(CAM_PUSH_STATUS_URL);
-    http.setTimeout(3000);
+    http.begin(CAM_HB_URL);
+    http.setTimeout(2000);
     int code = http.GET();
-    if (code == 200) {
-      // ★ 读取 X-Push 响应头判断状态（无需解析 body）
-      if (http.header("X-Push") == "1") {
-        push_active = true;
-        last_push_ms = millis() - CAM_PUSH_INTERVAL;  // 立即开始推送
-        Serial.println("[PUSH] 恢复推送（有观看者连接）");
-      }
-    } else {
-      Serial.printf("[HB] HTTP %d\n", code);
+    if (code == 200 && http.header("X-Push") == "1") {
+      viewer_active = true;
+      Serial.println("[STREAM] 恢复推流（有观看者）");
     }
     http.end();
     return;
   }
 
-  // ─── 正常推送模式 ───
-  if (now - last_push_ms < CAM_PUSH_INTERVAL) {
-    delay(10);
-    return;
-  }
-  last_push_ms = now;
-
+  // ─── 抓帧 ───
   camera_fb_t *fb = esp_camera_fb_get();
   if (!fb || fb->len == 0) {
     if (fb) esp_camera_fb_return(fb);
-    delay(10);
     return;
   }
 
-  HTTPClient http;
-  http.begin(CAM_PUSH_URL);
-  http.addHeader("Content-Type", "image/jpeg");
-  http.setTimeout(5000);
-  int code = http.POST(fb->buf, fb->len);
-  if (code == 200) {
-    // ★ 读取 X-Push 响应头（已在 POST 时解析，零网络 I/O 开销）
-    if (http.header("X-Push") == "0") {
-      push_active = false;
-      Serial.println("[PUSH] 暂停推送（无观看者），进入心跳模式");
+  // ─── TCP 连接 (自动重连) ───
+  if (!streamClient.connected()) {
+    if (!streamClient.connect(CAM_STREAM_HOST, CAM_STREAM_PORT)) {
+      esp_camera_fb_return(fb);
+      return;  // 下次 loop 重试
     }
-    // 无需读取 body，end() 直接关闭连接
-  } else if (code > 0) {
-    Serial.printf("[PUSH] HTTP %d\n", code);
+    streamClient.setNoDelay(true);  // ★ 禁用 Nagle, 立即发送
+    Serial.println("[STREAM] TCP 已连接");
+    viewer_active = true;
   }
-  http.end();
+
+  // ─── 二进制帧推送: [2B big-endian len][JPEG] ───
+  uint16_t len_be = htons((uint16_t)fb->len);
+  streamClient.write((uint8_t*)&len_be, 2);
+  streamClient.write(fb->buf, fb->len);
+  streamClient.flush();
   esp_camera_fb_return(fb);
+
+  // ─── 定期检查观看者状态 ───
+  if (now - last_viewer_check > CAM_HB_INTERVAL) {
+    last_viewer_check = now;
+    HTTPClient hb;
+    hb.begin(CAM_HB_URL);
+    hb.setTimeout(1500);
+    int hb_code = hb.GET();
+    if (hb_code == 200 && hb.header("X-Push") == "0") {
+      viewer_active = false;
+    }
+    hb.end();
+  }
 }

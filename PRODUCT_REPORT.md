@@ -69,7 +69,7 @@
 | **AIOSQLite** | 异步 SQLite 数据库，存储传感器数据、库存、操作日志、报警事件 |
 | **WebSocket** | 实时推送通道，传感器数据变更即时通知前端 |
 | **Chart.js** | 前端图表库，展示温度/湿度历史趋势曲线 |
-| **camera_server** | 摄像头服务：HTTP 拉取 / Push 直推 (VPS) / UDP 中继 (备选) → MJPEG 流转换 + pyzbar 二维码扫码。前端使用 `<img>` MJPEG 原生渲染（零 JS 开销，GPU 合成）。支持 stream 开关暂停/恢复。**按需推送**：无观看者时 ESP32-CAM 自动切心跳模式（每 3s 轻量轮询），节省 ~99.8% 带宽。**v3.5 优化**：移除 `cv2.imdecode` 热路径 + Canvas JS 轮询，端到端延迟从 1-3s 降至 <200ms。 |
+| **camera_server** | 摄像头服务：**TCP 二进制推流 (v3.8 推荐)** / Push 直推 / HTTP 拉取 / UDP 中继 (备选) → MJPEG 流转换 + pyzbar 二维码扫码。前端使用 `<img>` MJPEG 原生渲染（零 JS 开销，GPU 合成）。支持 stream 开关暂停/恢复。**按需推送**：无观看者时 ESP32-CAM 自动降速 1fps（每 3s 轻量轮询），节省 ~95% 带宽。**v3.5 优化**：移除 `cv2.imdecode` 热路径 + Canvas JS 轮询，端到端延迟从 1-3s 降至 <200ms。**v3.8 优化**：TCP 二进制推流替代 HTTP POST，FPS 0.9→10-16，延迟 ~3s→<300ms。 |
 
 ### 2.3 后端 API 路由总览
 
@@ -103,23 +103,29 @@
 | `GET` | `/api/camera/push_status` | 摄像头推送心跳端点（ESP32-CAM 暂停时轮询恢复，~30 bytes） |
 | `GET` | `/api/sim/status` | 查询仿真注入状态 |
 | `POST` | `/api/sim/inject` | 注入仿真传感器数据到 ESP32-P4 |
-| `POST` | `/api/camera/push` | ESP32-CAM 直推 JPEG 帧 (VPS 部署)，响应含 `push` 字段告知是否继续推送 |
+| `POST` | `/api/camera/push` | [备选] ESP32-CAM HTTP POST 直推 JPEG 帧 (已由 TCP 推流替代) |
 
 ### 2.4 摄像头数据流
 
-#### Push 模式：ESP32-CAM 直推 VPS (服务器部署推荐)
+#### TCP 二进制推流：ESP32-CAM 直推 VPS (v3.8 服务器部署推荐)
+
+```
+ESP32-CAM ──TCP 长连接──► VPS :8003  (CAMERA_MODE=tcp)
+  │   WiFiClient 帧驱动           ↓
+  │   [2B len][JPEG] 格式    Docker camera_server
+  │   零 HTTP 逐帧开销            ↓
+  │   ~10-16fps, <300ms 延迟  Web 仪表盘实时显示
+  │
+  └── 每 3s GET /api/camera/push_status ──► 无观看者降速 1fps
+```
+
+#### Push 模式：ESP32-CAM HTTP POST 直推 (备选)
 
 ```
 ESP32-CAM ──HTTP POST──► VPS :8001 /api/camera/push  (CAMERA_MODE=push)
-  │   每 200ms 推一帧 (~5fps)      ↓
+  │   每帧 HTTP 握手 (~1-3fps)     ↓
   │   JPEG raw body           Docker camera_server
-  │   CameraWebServer.ino          ↓
   └──────────────────────  Web 仪表盘实时显示
-
-  ← 响应 {"push":true/false} ──────────────────────────┘
-    无观看者时 push=false → ESP32-CAM 切心跳模式
-         ──GET /api/camera/push_status──► 每 3s 轮询 (~30 bytes)
-         ← {"push":true/false} ←────── 有观看者时恢复推送
 ```
 
 #### 主模式：Docker 直连拉取 (局域网推荐，TCP 零丢包)
@@ -128,7 +134,6 @@ ESP32-CAM ──HTTP POST──► VPS :8001 /api/camera/push  (CAMERA_MODE=push
 ESP32-CAM ──HTTP/TCP──► Docker camera_server  (CAMERA_MODE=http)
   │   /capture + /stream           ↓
   │   HVGA 480×320, q=12      MJPEG `<img>` 原生渲染 + 二维码解码
-  │                                 ↓
   └──────────────────────  Web 仪表盘实时显示
 ```
 

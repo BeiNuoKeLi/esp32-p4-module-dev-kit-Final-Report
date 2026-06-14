@@ -47,6 +47,7 @@ FRAME_STALE_MS = 0.35
 MAX_FRAME_CACHE = 5
 MJPEG_FPS_LIMIT = 10
 JPEG_QUALITY = 85
+CAMERA_TCP_PORT = int(os.getenv("CAMERA_TCP_PORT", "8003"))  # ★ TCP 二进制推流端口
 
 
 class CameraServer:
@@ -267,11 +268,15 @@ class CameraServer:
         return False
 
     def start(self):
-        """启动后台接收线程（根据 CAMERA_MODE 选择 push / MJPEG流 / UDP 中继）"""
+        """启动后台接收线程（根据 CAMERA_MODE 选择 tcp / push / MJPEG流 / UDP 中继）"""
         if self.running:
             return
         self.running = True
-        if CAMERA_MODE == "push":
+        if CAMERA_MODE == "tcp":
+            self.thread = threading.Thread(target=self._tcp_stream_loop, daemon=True, name="CameraTCP")
+            self.thread.start()
+            print(f"[Camera] ✅ TCP 二进制推流模式 监听 :{CAMERA_TCP_PORT}")
+        elif CAMERA_MODE == "push":
             self.thread = threading.Thread(target=self._push_dummy_loop, daemon=True, name="CameraPush")
             self.thread.start()
             print(f"[Camera] ✅ Push 模式 (等待 ESP32-CAM 直推) 端点 POST /api/camera/push")
@@ -288,6 +293,109 @@ class CameraServer:
         """push 模式占位线程 — 保持 self.running=True, 帧由外部 push_jpeg() 注入"""
         while self.running:
             time.sleep(5)
+
+    # ─── TCP 二进制推流接收 (推荐, 零 HTTP 开销) ────────────
+
+    def _tcp_stream_loop(self):
+        """监听 TCP 端口，接收 ESP32-CAM 二进制推流
+
+        帧格式: [2-byte big-endian length][JPEG data]
+        一条 TCP 长连接持续接收所有帧，无 HTTP 逐帧握手开销。
+        """
+        import struct
+
+        server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            server.bind(("0.0.0.0", CAMERA_TCP_PORT))
+        except OSError as e:
+            print(f"[Camera] ❌ 无法绑定 TCP 端口 {CAMERA_TCP_PORT}: {e}")
+            self.running = False
+            return
+        server.listen(1)
+        server.settimeout(1.0)  # 1s 超时以检查 self.running
+        print(f"[Camera] 🔌 TCP 推流监听 :{CAMERA_TCP_PORT} (等待 ESP32-CAM 连接)")
+
+        while self.running:
+            client = None
+            try:
+                client, addr = server.accept()
+            except socket.timeout:
+                continue
+            except OSError:
+                break
+
+            print(f"[Camera] 🔗 ESP32-CAM 已连接 ({addr[0]}:{addr[1]})")
+            client.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            client.settimeout(5.0)
+            buffer = b""
+            timeout_count = 0
+
+            try:
+                while self.running:
+                    if self.paused:
+                        time.sleep(0.1)
+                        continue
+
+                    try:
+                        data = client.recv(65536)
+                    except socket.timeout:
+                        timeout_count += 1
+                        if timeout_count > 3:
+                            print("[Camera] ⚠️ TCP 读取超时, 断开")
+                            break
+                        continue
+
+                    if not data:
+                        print("[Camera] ⚠️ ESP32-CAM 断开 (EOF)")
+                        break
+
+                    timeout_count = 0
+                    buffer += data
+
+                    # 解析帧: [2B big-endian len][JPEG]
+                    while len(buffer) >= 2:
+                        frame_len = struct.unpack(">H", buffer[:2])[0]
+                        if frame_len == 0:          # 心跳/空帧, 跳过
+                            buffer = buffer[2:]
+                            continue
+                        total_needed = 2 + frame_len
+                        if len(buffer) >= total_needed:
+                            jpeg = buffer[2:total_needed]
+                            if len(jpeg) > 500:
+                                t0 = time.time()
+                                self._try_set_jpeg(jpeg)
+                                self.total_frames += 1
+                                self.fps_history.append(t0)
+                                if len(self.fps_history) > 30:
+                                    self.fps_history.pop(0)
+                            buffer = buffer[total_needed:]
+                        else:
+                            break  # 等下一个 recv
+
+                    # 周期诊断
+                    tnow = time.time()
+                    if tnow - self._last_debug_ts > 15:
+                        rate = self.fps
+                        print(f"[Camera] 📊 TCP推流 | fps={rate:.1f} | 总帧={self.total_frames} | buf={len(buffer)}B")
+                        self._last_debug_ts = tnow
+
+            except (ConnectionError, OSError) as e:
+                print(f"[Camera] ❌ TCP 异常: {e}")
+            finally:
+                if client:
+                    try:
+                        client.close()
+                    except Exception:
+                        pass
+
+            if self.running:
+                print("[Camera] 🔄 等待 ESP32-CAM 重连...")
+
+        try:
+            server.close()
+        except Exception:
+            pass
 
 
     def stop(self):

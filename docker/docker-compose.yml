@@ -3,12 +3,12 @@ services:
     build: .
     container_name: smart-monitor-dashboard
     ports:
-      - "8001:8000"                       # ★ Web 仪表盘 + 摄像头推帧
+      - "8001:8000"                       # ★ Web 仪表盘
       - "8002:8080/udp"                   # ★ ESP32-P4 传感器数据 UDP
-      - "8003:8082/udp"                   # ★ 摄像头 UDP 中继 (备用)
+      - "8003:8003/tcp"                   # ★ ESP32-CAM 二进制推流 (v3.8, 零HTTP开销)
     environment:
       - ESP32_IP=10.16.234.86            # ESP32-P4 设备 IP（仿真注入时用）
-      - CAMERA_MODE=udp                   # ★ ESP32-P4 UDP 中继 JPEG (匹配当前固件)
+      - CAMERA_MODE=tcp                   # ★ ESP32-CAM 二进制 TCP 推流 (raw framing, 8-15fps)
     volumes:
       - ./data:/app/data
       - ./app/static:/app/app/static:ro

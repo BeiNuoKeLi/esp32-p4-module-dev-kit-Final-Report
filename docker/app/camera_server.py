@@ -92,15 +92,35 @@ class CameraServer:
         # 占位 JPEG (黑色 320x240)
         self.placeholder_jpeg = self._make_placeholder()
 
-        # 视频流开关（默认开启）
-        self.stream_enabled = True
+        # 视频流开关（默认开启，线程安全）
+        self._stream_enabled = True
         # UDP 接收暂停标志（关闭视频流时暂停接收，节省带宽/CPU）
-        self.paused = False
+        self._paused = False
 
     @property
     def should_push(self) -> bool:
         """ESP32-CAM 是否需要继续推送帧（有观看者时为 True）"""
         return self.stream_enabled and self.running
+
+    @property
+    def stream_enabled(self) -> bool:
+        with self._frame_lock:
+            return self._stream_enabled
+
+    @stream_enabled.setter
+    def stream_enabled(self, val: bool):
+        with self._frame_lock:
+            self._stream_enabled = val
+
+    @property
+    def paused(self) -> bool:
+        with self._frame_lock:
+            return self._paused
+
+    @paused.setter
+    def paused(self, val: bool):
+        with self._frame_lock:
+            self._paused = val
 
     @property
     def online(self) -> bool:

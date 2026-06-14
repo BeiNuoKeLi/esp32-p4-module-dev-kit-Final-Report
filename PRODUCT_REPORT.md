@@ -98,7 +98,8 @@
 | `POST` | `/api/alarms/{id}/ack` | 确认单条报警 |
 | `DELETE` | `/api/alarms` | 清空全部报警记录 |
 | `GET` | `/api/alarm/config` | 获取当前报警配置（AO/DO 模式、阈值） |
-| `POST` | `/api/alarm/config` | 更新报警配置 → 写 SQLite + UDP 同步到 MCU |
+| `POST` | `/api/alarm/config` | 更新报警配置 → 写 SQLite + UDP 尝试 + HTTP 轮询暂存 |
+| `GET` | `/api/alarm/config/poll` | ESP32 HTTP 轮询拉取待下发报警配置（NAT 穿透可靠路径） |
 | `GET` | `/api/camera/push_status` | 摄像头推送心跳端点（ESP32-CAM 暂停时轮询恢复，~30 bytes） |
 | `GET` | `/api/sim/status` | 查询仿真注入状态 |
 | `POST` | `/api/sim/inject` | 注入仿真传感器数据到 ESP32-P4 |
@@ -195,7 +196,7 @@ ESP32-CAM ─HTTP:/capture─→ camera_http_fetch.c ─UDP:8003─→ Docker ca
 | **AO 阈值可调** | MQ-135 电压阈值（0~3.3V）、光敏 ADC 阈值（0~4095）通过滑块实时调整 |
 | **触发方向** | 支持"高于阈值"（MQ-135 毒气检测）或"低于阈值"（光敏遮挡检测）两种方向 |
 | **温湿度独立开关** | 温湿度报警可整体关闭，仅保留气体+光敏报警 |
-| **端到端同步** | Web → Docker SQLite → UDP 8081 → ESP32 NVS 持久化，断电不丢失 |
+| **端到端同步** | 双路径：UDP 8081 快速路径（局域网） + HTTP 轮询 `/api/alarm/config/poll`（公网/NAT 可靠）→ ESP32 NVS 持久化，断电不丢失 |
 | **范围保护** | 启动时 NVS 加载带范围校验，垃圾值自动回退默认值 |
 
 ---
@@ -213,13 +214,16 @@ Web 仪表盘                               ESP32-P4 (MCU)
   │                                          │
   │  POST /api/sim/inject                    │
   │  {"photo_raw":2000, "mq135_v":2.8, ...}  │
-  ├────────────────── UDP:8081 ──────────────►│
-  │                                          ├─ udp_sim_command_task() 解析
-  │                                          ├─ 写入 g_sensor_data.sim_xxx
-  │                                          ├─ sim_active = 1 (切换仿真模式)
-  │                                          │
-  │              ← UDP:8080 ──────────────── │ (仿真数据作为真实传感器值上报)
-  │  {"level":2, "mq135_do":0, ...}         │  传感器任务读取 sim_xxx → 报警逻辑正常运作
+  │  ──→ VPS 写入 _pending_sim_cmd 暂存 ──→  │
+  │                                    │     │
+  │                          GET /api/sim/poll?seq=N  (HTTP 轮询, 每 3s)
+  │                                    ├─────────────►│
+  │                                    │              ├─ sim_poll_task() 解析
+  │                                    │              ├─ 写入 g_sensor_data.sim_xxx
+  │                                    │              └─ sim_active = 1
+  │                                    │              │
+  │              ← UDP:8002 ──────────────────────── │ (仿真数据作为真实值上报)
+  │  {"level":2, "mq135_do":0, ...}                  │  传感器任务读取 sim_xxx → 报警逻辑运作
   │                                          │
   ▼                                          │
   前端自动更新报警状态 + 环境数据
@@ -230,7 +234,9 @@ Web 仪表盘                               ESP32-P4 (MCU)
 
 | 特性 | 说明 |
 |------|------|
-| **模式切换** | 发送 `{"reset":""}` 命令退出仿真，恢复真实传感器 |
+| **HTTP 反转轮询** | ESP32 主动 GET 拉取命令, 绕过 NAT 入站限制 (VPS 公网部署必需) |
+| **seq 去重** | 每次轮询带上次 seq, VPS 仅在 seq 更大时返回新命令, 避免重复执行 |
+| **模式切换** | VPS 暂存 `{"cmd":"reset"}` → ESP32 轮询拉取后退出仿真, 恢复真实传感器 |
 | **字段可选** | 注入命令中任意字段可省略，省略字段使用当前真实值 |
 | **无缝衔接** | 仿真数据走完整传感器→报警逻辑链路，模拟真实触发效果 |
 | **快速预设** | 前端内置 L1/L2/L3 三个预设按钮，一键注入典型报警场景 |

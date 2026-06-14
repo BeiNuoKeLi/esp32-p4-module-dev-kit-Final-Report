@@ -171,7 +171,7 @@ static void load_alarm_config_from_nvs(void)
 /**
  * @brief 将当前报警配置保存到 NVS（在收到 config 命令时调用）
  */
-static void save_alarm_config_to_nvs(void)
+void save_alarm_config_to_nvs(void)
 {
     nvs_handle_t h;
     esp_err_t ret = nvs_open(NVS_ALARM_NS, NVS_READWRITE, &h);

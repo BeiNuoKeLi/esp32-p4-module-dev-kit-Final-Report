@@ -1,9 +1,13 @@
 /**
  * @file sim_poll.c
- * @brief 仿真命令 HTTP 轮询实现 (反转通信方向)
+ * @brief 仿真命令 + 报警配置 HTTP 轮询实现 (反转通信方向)
  *
- * ESP32 主动 HTTP GET 拉取 VPS 上暂存的仿真命令，替代旧方案中
+ * ESP32 主动 HTTP GET 拉取 VPS 上暂存的命令，替代旧方案中
  * VPS → ESP32 的 UDP 入站（被 NAT 阻挡）。
+ *
+ * 轮询端点:
+ *   - /api/sim/poll          仿真注入 & reset
+ *   - /api/alarm/config/poll 报警阈值配置
  *
  * 依赖: esp_http_client (IDF 内置), sensors.h (共享数据)
  */
@@ -21,10 +25,12 @@
 static const char *TAG = "sim_poll";
 
 /* ==================== 配置（硬编码, 后续可移入 Kconfig）==================== */
-#define SIM_POLL_URL    "http://38.55.199.220:8001/api/sim/poll"
-#define SIM_POLL_MS     3000   /* 轮询间隔 3s */
+#define SIM_POLL_URL       "http://38.55.199.220:8001/api/sim/poll"
+#define ALARM_CFG_POLL_URL "http://38.55.199.220:8001/api/alarm/config/poll"
+#define SIM_POLL_MS        3000    /* 仿真注入 轮询间隔 3s */
+#define ALARM_CFG_POLL_MS  10000   /* 报警配置 轮询间隔 10s (低频) */
 
-/* HTTP 响应缓冲区 — 仿真命令很小 (<512B) */
+/* HTTP 响应缓冲区 — 命令很小 (<1KB) */
 #define SIM_RESP_BUF    1024
 
 /* ==================== 内部工具函数 ==================== */
@@ -152,6 +158,65 @@ static void apply_reset_command(void)
 }
 
 
+/**
+ * @brief 解析报警配置命令并更新 g_sensor_data + 持久化到 NVS
+ *
+ * JSON 格式: {"cmd":"config","mq135_alarm_src":0,"photo_alarm_src":0,
+ *              "mq135_ao_dir":0,"photo_ao_dir":1,"mq135_ao_threshold":2.5,
+ *              "photo_ao_threshold":1000,"dht11_temp_high":35,
+ *              "dht11_humi_high":85,"ds18b20_temp_high":35.0,
+ *              "temp_humi_alarm_enabled":1}
+ *
+ * 字段均为可选，提取到才更新。解析逻辑与 udp_sim_command_task 中的
+ * config 处理保持镜像一致。
+ */
+static void apply_alarm_config(const char *json)
+{
+    char *p;
+    int   tmp_i = 0;
+    float tmp_f = 0.0f;
+    int   updated = 0;
+
+    if (xSemaphoreTake(g_sensor_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+        if ((p = strstr(json, "\"mq135_alarm_src\":")))
+            { if (sscanf(p + 18, "%d", &tmp_i) == 1) { g_sensor_data.mq135_alarm_src = (alarm_source_t)tmp_i; updated++; } }
+        if ((p = strstr(json, "\"photo_alarm_src\":")))
+            { if (sscanf(p + 18, "%d", &tmp_i) == 1) { g_sensor_data.photo_alarm_src = (alarm_source_t)tmp_i; updated++; } }
+        if ((p = strstr(json, "\"mq135_ao_dir\":")))
+            { if (sscanf(p + 15, "%d", &tmp_i) == 1) { g_sensor_data.mq135_ao_dir = (ao_trigger_dir_t)tmp_i; updated++; } }
+        if ((p = strstr(json, "\"photo_ao_dir\":")))
+            { if (sscanf(p + 15, "%d", &tmp_i) == 1) { g_sensor_data.photo_ao_dir = (ao_trigger_dir_t)tmp_i; updated++; } }
+        if ((p = strstr(json, "\"mq135_ao_threshold\":")))
+            { if (sscanf(p + 21, "%f", &tmp_f) == 1) { g_sensor_data.mq135_ao_threshold = tmp_f; updated++; } }
+        if ((p = strstr(json, "\"photo_ao_threshold\":")))
+            { if (sscanf(p + 21, "%d", &tmp_i) == 1) { g_sensor_data.photo_ao_threshold = tmp_i; updated++; } }
+        if ((p = strstr(json, "\"dht11_temp_high\":")))
+            { if (sscanf(p + 18, "%d", &tmp_i) == 1) { g_sensor_data.dht11_temp_high = tmp_i; updated++; } }
+        if ((p = strstr(json, "\"dht11_humi_high\":")))
+            { if (sscanf(p + 18, "%d", &tmp_i) == 1) { g_sensor_data.dht11_humi_high = tmp_i; updated++; } }
+        if ((p = strstr(json, "\"ds18b20_temp_high\":")))
+            { if (sscanf(p + 20, "%f", &tmp_f) == 1) { g_sensor_data.ds18b20_temp_high = tmp_f; updated++; } }
+        if ((p = strstr(json, "\"temp_humi_alarm_enabled\":")))
+            { if (sscanf(p + 26, "%d", &tmp_i) == 1) { g_sensor_data.temp_humi_alarm_enabled = tmp_i; updated++; } }
+        xSemaphoreGive(g_sensor_mutex);
+    }
+
+    if (updated == 0) {
+        ESP_LOGW(TAG, "报警配置解析失败: %s", json);
+        return;
+    }
+
+    /* 异步持久化到 NVS */
+    save_alarm_config_to_nvs();
+
+    ESP_LOGI(TAG, "⚙️ 报警配置已更新: mq_src=%d mq_thr=%.2fV ph_src=%d ph_thr=%d dht_t=%d dht_h=%d ds_t=%.1f temp_en=%d",
+             g_sensor_data.mq135_alarm_src, g_sensor_data.mq135_ao_threshold,
+             g_sensor_data.photo_alarm_src, g_sensor_data.photo_ao_threshold,
+             g_sensor_data.dht11_temp_high, g_sensor_data.dht11_humi_high,
+             g_sensor_data.ds18b20_temp_high, g_sensor_data.temp_humi_alarm_enabled);
+}
+
+
 /* ==================== 主任务 ==================== */
 
 void sim_poll_task(void *arg)
@@ -178,59 +243,78 @@ void sim_poll_task(void *arg)
             return;
         }
     }
-    ESP_LOGI(TAG, "轮询就绪 → %s (间隔 %d ms)", SIM_POLL_URL, SIM_POLL_MS);
+    ESP_LOGI(TAG, "轮询就绪 → sim=%s (%dms) | cfg=%s (%dms)",
+             SIM_POLL_URL, SIM_POLL_MS, ALARM_CFG_POLL_URL, ALARM_CFG_POLL_MS);
 
     /* ===== 2. 主轮询循环 ===== */
-    int last_seq = 0;
+    int last_sim_seq = 0;
+    int last_cfg_seq = 0;
+    int tick = 0;  /* 循环计数，用于低频轮询 */
+
     while (1) {
-        /* 构建带 seq 的 URL */
-        char url[256];
-        snprintf(url, sizeof(url), "%s?seq=%d", SIM_POLL_URL, last_seq);
+        /* ── 2a. 仿真注入轮询 (每次循环) ── */
+        {
+            char url[256];
+            snprintf(url, sizeof(url), "%s?seq=%d", SIM_POLL_URL, last_sim_seq);
 
-        char *body = http_get_body(url);
-        if (!body) {
-            /* HTTP 失败, 等下一轮 */
-            vTaskDelay(pdMS_TO_TICKS(SIM_POLL_MS));
-            continue;
+            char *body = http_get_body(url);
+            if (body) {
+                /* 检查 seq 字段: {"seq":N,"data":{...}} */
+                int seq = 0;
+                char *seq_ptr = strstr(body, "\"seq\":");
+                if (seq_ptr) {
+                    sscanf(seq_ptr + 6, "%d", &seq);
+                }
+
+                /* 检查 data 是否为 null (无新命令) */
+                char *data_null = strstr(body, "\"data\":null");
+                if (!data_null && seq > last_sim_seq) {
+                    last_sim_seq = seq;
+
+                    /* 检查是否是 reset 命令 */
+                    if (strstr(body, "\"cmd\":\"reset\"") || strstr(body, "\"cmd\": \"reset\"")) {
+                        apply_reset_command();
+                    } else {
+                        apply_sim_command(body);
+                    }
+                } else {
+                    /* 无新命令 — 仅更新 seq 引用 */
+                    if (seq > last_sim_seq) last_sim_seq = seq;
+                }
+                free(body);
+            }
         }
 
-        /* 检查 seq 字段: {"seq":N,"data":{...}} */
-        int seq = 0;
-        char *seq_ptr = strstr(body, "\"seq\":");
-        if (seq_ptr) {
-            sscanf(seq_ptr + 6, "%d", &seq);
+        /* ── 2b. 报警配置轮询 (每 ALARM_CFG_POLL_MS / SIM_POLL_MS 次循环一次) ── */
+        int cfg_interval = ALARM_CFG_POLL_MS / SIM_POLL_MS;
+        if (cfg_interval < 1) cfg_interval = 1;
+        if (tick % cfg_interval == 0) {
+            char url[256];
+            snprintf(url, sizeof(url), "%s?seq=%d", ALARM_CFG_POLL_URL, last_cfg_seq);
+
+            char *body = http_get_body(url);
+            if (body) {
+                int seq = 0;
+                char *seq_ptr = strstr(body, "\"seq\":");
+                if (seq_ptr) {
+                    sscanf(seq_ptr + 6, "%d", &seq);
+                }
+
+                char *data_null = strstr(body, "\"data\":null");
+                if (!data_null && seq > last_cfg_seq) {
+                    last_cfg_seq = seq;
+                    /* 必须包含 cmd:config 才处理 */
+                    if (strstr(body, "\"cmd\":\"config\"") || strstr(body, "\"cmd\": \"config\"")) {
+                        apply_alarm_config(body);
+                    }
+                } else {
+                    if (seq > last_cfg_seq) last_cfg_seq = seq;
+                }
+                free(body);
+            }
         }
 
-        /* 检查 data 是否为 null (无新命令) */
-        char *data_null = strstr(body, "\"data\":null");
-        if (data_null) {
-            /* 无新命令 — 静默跳过 */
-            if (seq > last_seq) last_seq = seq;
-            free(body);
-            vTaskDelay(pdMS_TO_TICKS(SIM_POLL_MS));
-            continue;
-        }
-
-        /* 确认 seq 更新 */
-        if (seq <= last_seq) {
-            free(body);
-            vTaskDelay(pdMS_TO_TICKS(SIM_POLL_MS));
-            continue;
-        }
-        last_seq = seq;
-
-        /* 检查是否是 reset 命令 */
-        if (strstr(body, "\"cmd\":\"reset\"") || strstr(body, "\"cmd\": \"reset\"")) {
-            apply_reset_command();
-            free(body);
-            vTaskDelay(pdMS_TO_TICKS(SIM_POLL_MS));
-            continue;
-        }
-
-        /* 应用注入命令 */
-        apply_sim_command(body);
-        free(body);
-
+        tick++;
         vTaskDelay(pdMS_TO_TICKS(SIM_POLL_MS));
     }
 }

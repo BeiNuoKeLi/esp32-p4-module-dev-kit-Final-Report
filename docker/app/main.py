@@ -129,6 +129,10 @@ SIM_ACTIVE = False  # 轻量状态标志，仅用于前端显示，不再拦截�
 _pending_sim_cmd: dict = {"seq": 0, "data": None, "ts": 0.0}
 _sim_cmd_lock = asyncio.Lock()
 
+# ★ 报警配置暂存（反转轮询模式: ESP32 HTTP GET 拉取配置，替代 VPS→ESP32 UDP 入站）
+_pending_alarm_cfg: dict = {"seq": 0, "data": None, "ts": 0.0}
+_alarm_cfg_lock = asyncio.Lock()
+
 
 # ==================== 内置 UDP 监听器 (MCU → Docker 直通) ====================
 
@@ -819,25 +823,54 @@ async def post_alarm_config(data: AlarmConfigRequest):
     """
     更新报警配置：
     1. 写入 SQLite 镜像
-    2. 通过 UDP 转发到 ESP32 MCU
-    3. 返回更新后的配置
+    2. 通过 UDP 尝试发送（快速路径，可能因 NAT 失败）
+    3. 写入轮询暂存区（可靠路径，ESP32 HTTP 轮询拉取）
+    4. 返回更新后的配置
     """
     config_dict = data.model_dump()
 
     # Step 1: 写 SQLite
     updated = await database.set_alarm_config(config_dict)
 
-    # Step 2: UDP 转发到 MCU
+    # Step 2: UDP 快速路径（可能因 NAT 被阻断，静默失败）
     ok, reply = await _send_alarm_config_to_mcu(config_dict)
     if ok:
-        print(f"[AlarmConfig] 已发送到 ESP32, 回复: {reply or '(无回复)'}")
+        print(f"[AlarmConfig] UDP 已发送到 ESP32, 回复: {reply or '(无回复)'}")
     else:
-        print(f"[AlarmConfig] ⚠️ UDP 发送失败: {reply}")
+        print(f"[AlarmConfig] ⚠️ UDP 发送失败 (NAT?), 依赖轮询通道: {reply}")
+
+    # Step 3: 写入轮询暂存区（可靠路径，不受 NAT 影响）
+    cfg_cmd = {"cmd": "config", **config_dict}
+    async with _alarm_cfg_lock:
+        global _pending_alarm_cfg
+        _pending_alarm_cfg["seq"] += 1
+        _pending_alarm_cfg["data"] = cfg_cmd
+        _pending_alarm_cfg["ts"] = _time.time()
+        seq = _pending_alarm_cfg["seq"]
+    print(f"[AlarmConfig] 📝 配置已暂存 (seq={seq}), 等待 ESP32 HTTP 轮询拉取")
 
     return AlarmConfigResponse(
         **updated,
-        message="配置已更新" + (" (已同步到MCU)" if ok else " (MCU同步失败)")
+        message="配置已更新 (已暂存, 等待 ESP32 轮询同步)"
     )
+
+
+@app.get("/api/alarm/config/poll")
+async def alarm_config_poll(seq: int = 0):
+    """
+    ESP32 轮询端点 — 返回待下发的报警配置。
+
+    参数:
+        seq: ESP32 上一次收到的配置序号。仅当 VPS 端 seq 更大时返回新配置。
+
+    返回:
+        {"seq": N, "data": {"cmd":"config",...}}  — 有待下发配置
+        {"seq": N, "data": null}                   — 无新配置
+    """
+    async with _alarm_cfg_lock:
+        if _pending_alarm_cfg["data"] is not None and _pending_alarm_cfg["seq"] > seq:
+            return {"seq": _pending_alarm_cfg["seq"], "data": _pending_alarm_cfg["data"]}
+        return {"seq": _pending_alarm_cfg["seq"], "data": None}
 
 
 # ==================== WebSocket ====================

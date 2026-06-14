@@ -198,7 +198,7 @@ void sim_poll_task(void *arg)
         int seq = 0;
         char *seq_ptr = strstr(body, "\"seq\":");
         if (seq_ptr) {
-            sscanf(seq_ptr + 5, "%d", &seq);
+            sscanf(seq_ptr + 6, "%d", &seq);
         }
 
         /* 检查 data 是否为 null (无新命令) */

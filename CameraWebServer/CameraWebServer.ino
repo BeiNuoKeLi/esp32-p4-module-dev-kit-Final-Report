@@ -47,11 +47,10 @@ void setup() {
   config.fb_location = CAMERA_FB_IN_PSRAM;
 
   // ★ QVGA 320x240: 互联网推流文件小→FPS 稳定, 二维码近距离识别够用
-  // ★ fb_count=2: 连续 I2S DMA 模式，esp_camera_fb_get() 直接从队列取帧
-  // ★ jpeg_quality=20: q12→3fps | q20→6fps | q30→10fps | q40 块状伪影
+  // ★ jpeg_quality=25: q12→3fps | q20→6fps | q25→10fps 稳定 | q35 块状伪影
   if (psramFound()) {
-    config.frame_size = FRAMESIZE_QVGA;    // 320x240, ~3-6KB/帧, 稳定 8-12fps
-    config.jpeg_quality = 20;
+    config.frame_size = FRAMESIZE_QVGA;
+    config.jpeg_quality = 25;              // 进一步压缩, 目标 3-5KB/帧 稳定 10fps
     config.fb_count = 2;                   // ★ 双缓冲: 连续DMA，帧立即可取
     config.grab_mode = CAMERA_GRAB_LATEST; // 始终取最新帧
   } else {

@@ -874,24 +874,73 @@ async function loadInventoryStats(){
 }
 loadInventoryStats();
 
-// ===== 摄像头模块 (MJPEG <img> 流, 浏览器原生渲染 = 零JS开销) =====
-// ★ 方案A: 废弃 Canvas 快照轮询 (每帧 fetch→blob→Image.decode→drawImage, JS主线程高负载)
-//     改用 <img src="/api/camera/mjpeg">，浏览器原生处理 multipart/x-mixed-replace，
-//     零 JS 开销，GPU 合成，预期延迟 <200ms，FPS 15-25
-var _camStreamSrc = '/api/camera/mjpeg';
+// ===== 摄像头模块 (fetch + ReadableStream 手动解析 MJPEG) =====
+// ★ 废弃 <img src="/api/camera/mjpeg"> — Chrome MJPEG 解码器内部缓冲 2-4 帧，
+//    导致 400ms-1.6s 固定延迟，网络波动时积压 → 画面卡住不动。
+// ★ 新方案: fetch → ReadableStream → 拆 boundary → Blob → img.src=blobURL
+//    避开 Chrome 解码器缓冲，无需 Canvas drawImage (零 JS 渲染开销)。
+var _camCtrl = null;     // AbortController
+var _camBlobURL = null;  // 上一个 blob URL (用于释放)
+
 function startCam(){
   var img = document.getElementById('camImg');
+  var ph = document.getElementById('camPlaceholder');
   var toggle = document.getElementById('camToggle');
-  if (toggle.checked) {
-    img.src = _camStreamSrc;
-    img.style.display = 'block';
-    document.getElementById('camPlaceholder').style.display = 'none';
-  } else {
-    img.src = '';
-    img.style.display = 'none';
-    document.getElementById('camPlaceholder').style.display = 'flex';
+  if (!toggle.checked) {
+    stopCamFetch();
+    img.src = ''; img.style.display = 'none';
+    ph.style.display = 'flex';
+    pollCam(); setInterval(pollCam, 3000);
+    return;
   }
+  img.style.display = 'block'; ph.style.display = 'none';
+  startCamFetch();
   pollCam(); setInterval(pollCam, 3000);
+}
+
+function startCamFetch(){
+  stopCamFetch();
+  var img = document.getElementById('camImg');
+  _camCtrl = new AbortController();
+  // iso-8859-1: 每个字节(0-255)↔一个字符，无损往返
+  var B = '\r\n--frameboundary';
+  var buf = '';
+
+  fetch('/api/camera/mjpeg', {signal: _camCtrl.signal}).then(function(resp){
+    if (!resp.ok || !resp.body) return;
+    var reader = resp.body.getReader();
+    var td = new TextDecoder('iso-8859-1');
+    (function read(){
+      reader.read().then(function(v){
+        if (v.done) { stopCamFetch(); return; }
+        buf += td.decode(v.value, {stream: true});
+        var parts = buf.split(B); buf = parts.pop();
+        for (var i = 0; i < parts.length; i++) {
+          var hEnd = parts[i].indexOf('\r\n\r\n');
+          if (hEnd < 0) continue;
+          var body = parts[i].substring(hEnd + 4).replace(/[\r\n]+$/, '');
+          if (body.length < 500) continue;
+          var bytes = new Uint8Array(body.length);
+          for (var j = 0; j < body.length; j++) bytes[j] = body.charCodeAt(j) & 0xFF;
+          var url = URL.createObjectURL(new Blob([bytes], {type: 'image/jpeg'}));
+          img.src = url;
+          if (_camBlobURL) URL.revokeObjectURL(_camBlobURL);
+          _camBlobURL = url;
+        }
+        if (buf.length > 1e6) buf = '';
+        read();
+      }).catch(function(e){
+        if (e.name !== 'AbortError') console.warn('[Cam]', e);
+      });
+    })();
+  }).catch(function(e){
+    if (e.name !== 'AbortError') console.warn('[Cam]', e);
+  });
+}
+
+function stopCamFetch(){
+  if (_camCtrl) { _camCtrl.abort(); _camCtrl = null; }
+  if (_camBlobURL) { URL.revokeObjectURL(_camBlobURL); _camBlobURL = null; }
 }
 async function pollCam(){
   try{
@@ -1059,16 +1108,16 @@ async function toggleCameraStream(){
     document.getElementById('camToggle').checked=s.enabled;
     document.getElementById('camToggleLabel').textContent=s.enabled?'视频流':'已暂停';
     showToast('success',s.enabled?'视频流已开启':'视频流已关闭');
-    // 开/关 <img> MJPEG 流
+    // 开/关 fetch-based MJPEG 流
     var img = document.getElementById('camImg');
     var ph = document.getElementById('camPlaceholder');
     if (s.enabled) {
-      img.src = _camStreamSrc;
+      startCamFetch();
       img.style.display = 'block';
       ph.style.display = 'none';
     } else {
-      img.src = '';
-      img.style.display = 'none';
+      stopCamFetch();
+      img.src = ''; img.style.display = 'none';
       ph.style.display = 'flex';
     }
   }catch(e){showToast('error','切换失败: '+e.message);}

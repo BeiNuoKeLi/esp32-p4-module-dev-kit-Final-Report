@@ -714,18 +714,27 @@ class CameraServer:
 
         关键优化: 使用 Event 驱动，只在有新帧到达时才发送，
         避免重复帧堆积在浏览器缓冲区造成 7s+ 延迟。
-        若超过 15 秒无新帧则发送最后一帧保活连接（不再发送占位黑图）。
+        若超过 5 秒无新帧则发送最后一帧保活连接（不再发送占位黑图）。
+
+        ★ 竞态修复: wait()→clear() 之间存在窗口，push_jpeg() 若在此窗口 set()，
+           Event 已为 True → set() 无效 → clear() 清掉 → 事件丢失。
+           修复: clear() 后二次读 seq，若已变则重新 set() 唤醒下一次 wait()。
         """
         boundary = "--frameboundary"
         last_seq = -1
-        keepalive_interval = 2.0   # 无新帧时保活间隔（使用最后一帧），快速感知连接断开
+        keepalive_interval = 0.5   # ★ 从 2.0s 降到 0.5s，减少事件丢失后的冻结时长
 
         while self.running:
             # 等待新帧到达
             self._mjpeg_new_frame.wait(timeout=keepalive_interval)
-            self._mjpeg_new_frame.clear()
-
+            # ★ 竞态安全: 先读 seq，再 clear，再二次确认
             current_seq = self._mjpeg_frame_seq
+            self._mjpeg_new_frame.clear()
+            # ★ 二次读: 若 clear() 后 seq 已变，说明 push_jpeg() 在窗口内触发
+            #    但 Event 已被 clear 清掉 → 重新 set() 确保下一轮不阻塞
+            if self._mjpeg_frame_seq != current_seq:
+                self._mjpeg_new_frame.set()
+                current_seq = self._mjpeg_frame_seq
 
             if self.stream_enabled:
                 if current_seq != last_seq:

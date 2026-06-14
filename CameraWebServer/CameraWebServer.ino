@@ -46,13 +46,12 @@ void setup() {
   //config.pixel_format = PIXFORMAT_RGB565; // for face detection/recognition
   config.fb_location = CAMERA_FB_IN_PSRAM;
 
-  // ★ HVGA 480x320: 二维码识别需要足够像素密度
+  // ★ QVGA 320x240: 互联网推流文件小→FPS 稳定, 二维码近距离识别够用
   // ★ fb_count=2: 连续 I2S DMA 模式，esp_camera_fb_get() 直接从队列取帧
-  // ★ jpeg_quality=20: 互联网 TCP 推流瓶颈是文件大小而非压缩时间
-  //    q12→13KB→2fps | q20→7KB→5fps | q35→4KB 但块状伪影→二维码识别失败
+  // ★ jpeg_quality=20: q12→3fps | q20→6fps | q30→10fps | q40 块状伪影
   if (psramFound()) {
-    config.frame_size = FRAMESIZE_HVGA;    // 480x320, 二维码识别最低需求
-    config.jpeg_quality = 20;              // 平衡画质与互联网推流吞吐
+    config.frame_size = FRAMESIZE_QVGA;    // 320x240, ~3-6KB/帧, 稳定 8-12fps
+    config.jpeg_quality = 20;
     config.fb_count = 2;                   // ★ 双缓冲: 连续DMA，帧立即可取
     config.grab_mode = CAMERA_GRAB_LATEST; // 始终取最新帧
   } else {

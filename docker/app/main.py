@@ -653,6 +653,11 @@ async def camera_scan():
     if not cam.cv2_ok:
         return ScanResult(success=False, message="OpenCV 未安装，扫码不可用")
 
+    # ★ 按需解码 JPEG → OpenCV frame（在线程池中执行，不阻塞事件循环）
+    ok = await asyncio.to_thread(cam.try_decode_frame)
+    if not ok:
+        return ScanResult(success=False, message="无可用画面（摄像头可能未连接）")
+
     frame = cam.latest_frame
     if frame is None:
         return ScanResult(success=False, message="无可用画面（摄像头可能未连接）")

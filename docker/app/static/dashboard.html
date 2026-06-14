@@ -875,16 +875,20 @@ async function loadInventoryStats(){
 loadInventoryStats();
 
 // ===== 摄像头模块 (Canvas 快照轮询, 消除 Chrome MJPEG 缓冲延迟) =====
-var _camPollTimer=null,_camPollInterval=200,_camLastW=0,_camLastH=0,_camPolling=false,_camFetching=false;
+var _camPollTimer=null,_camPollInterval=50,_camLastW=0,_camLastH=0,_camPolling=false,_camFetching=false;
 function startCam(){
   if(_camPolling)return;_camPolling=true;  // 防止重复启动
   updateCamSnapshot();
   pollCam();setInterval(pollCam,3000);
 }
+function _scheduleNextCamFrame(){
+  if(!_camPolling)return;
+  _camPollTimer=setTimeout(updateCamSnapshot,_camPollInterval);
+}
 function updateCamSnapshot(){
   // 视频流关闭时：显示黑屏，不请求摄像头
   if(!document.getElementById('camToggle').checked){
-    _camFetching=false;  // 重置标志（toggle关闭时中止等待）
+    _camFetching=false;
     var canvas=document.getElementById('camCanvas');
     var vp=document.getElementById('camViewport');
     var ctx=canvas.getContext('2d');
@@ -893,11 +897,11 @@ function updateCamSnapshot(){
     ctx.fillStyle='#000';ctx.fillRect(0,0,canvas.width,canvas.height);
     canvas.style.display='block';
     document.getElementById('camPlaceholder').style.display='none';
-    if(_camPolling)_camPollTimer=setTimeout(updateCamSnapshot,_camPollInterval);
+    _scheduleNextCamFrame();
     return;
   }
-  // ★ 背压控制：上一帧 Image 还没解码完，跳过本轮 fetch 避免请求堆积
-  if(_camFetching){_camPollTimer=setTimeout(updateCamSnapshot,_camPollInterval);return;}
+  // ★ 背压控制：上一帧处理中，跳过（不重调度，由回调中的 _scheduleNextCamFrame 驱动）
+  if(_camFetching)return;
   _camFetching=true;
   fetch('/api/camera/snapshot?'+Date.now(),{cache:'no-store'})
     .then(function(r){if(!r.ok)throw new Error('status '+r.status);return r.blob()})
@@ -917,21 +921,23 @@ function updateCamSnapshot(){
         ctx.drawImage(img,dx,dy,dw,dh);
         canvas.style.display='block';
         document.getElementById('camPlaceholder').style.display='none';
-        _camFetching=false;  // ★ 解码完成，允许下一帧
+        _camFetching=false;
+        _scheduleNextCamFrame();  // ★ 解码+绘制完成后才调度下一帧
       };
       img.onerror=function(){
         URL.revokeObjectURL(_objUrl);
-        _camFetching=false;  // ★ 解码失败也释放标志
+        _camFetching=false;
+        _scheduleNextCamFrame();  // ★ 解码失败也继续（可能下一帧 OK）
       };
       img.src=_objUrl;
     }).catch(function(e){
       console.warn('[Cam] snapshot fail:',e.message||e);
       document.getElementById('camCanvas').style.display='none';
       document.getElementById('camPlaceholder').style.display='flex';
-      _camFetching=false;  // ★ fetch 失败直接释放
+      _camFetching=false;
+      _scheduleNextCamFrame();  // ★ 网络失败后继续轮询
     });
-  // 调度下一轮（不再依赖 .finally()，由 onload/onerror/catch 各自释放 _camFetching）
-  if(_camPolling)_camPollTimer=setTimeout(updateCamSnapshot,_camPollInterval);
+  // 不再在函数末尾调度 — 由各个完成回调（onload/onerror/catch）中的 _scheduleNextCamFrame 统一驱动
 }
 async function pollCam(){
   try{

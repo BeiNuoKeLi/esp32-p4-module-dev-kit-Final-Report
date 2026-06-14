@@ -244,14 +244,39 @@ class CameraServer:
         return ok
 
     def push_jpeg(self, jpeg_data: bytes):
-        """外部推送 JPEG 帧 (ESP32-CAM 直推模式)"""
-        self._try_set_jpeg(jpeg_data)
+        """外部推送 JPEG 帧 (ESP32-CAM 直推模式) — ★ 轻量路径，不阻塞事件循环
+
+        关键优化：不做 cv2.imdecode（50-200ms CPU 密集），只保存原始 JPEG bytes。
+        latest_frame 按需在 scan 端点解码，不在热路径执行。
+        """
+        # 直接保存 JPEG bytes — 加锁保护（与其他线程竞争）
+        self.latest_jpeg = jpeg_data
+        # 通知 MJPEG 输出端有新帧
+        self._mjpeg_frame_seq += 1
+        self._mjpeg_new_frame.set()
         self.total_frames += 1
-        # 更新 FPS 历史记录 (修复: push 模式之前缺失此逻辑, 导致前端一直显示 0)
+        # 更新 FPS 统计
         t0 = time.time()
         self.fps_history.append(t0)
         if len(self.fps_history) > 30:
             self.fps_history.pop(0)
+
+    def try_decode_frame(self) -> bool:
+        """按需解码 latest_jpeg → latest_frame（用于 QR 扫码等场景）。
+        返回 True 表示解码成功。此调用是同步 CPU 密集操作，仅应在低频场景（按需）调用。"""
+        jpeg_data = self.latest_jpeg
+        if not jpeg_data or not self.cv2_ok:
+            return False
+        try:
+            import numpy as np
+            arr = np.frombuffer(jpeg_data, dtype=np.uint8)
+            frame = self._cv2.imdecode(arr, self._cv2.IMREAD_COLOR)
+            if frame is not None:
+                self.latest_frame = frame
+                return True
+        except Exception:
+            pass
+        return False
 
     def start(self):
         """启动后台接收线程（根据 CAMERA_MODE 选择 push / MJPEG流 / UDP 中继）"""

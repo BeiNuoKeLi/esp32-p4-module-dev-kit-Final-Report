@@ -58,7 +58,7 @@ idf.py build flash monitor
 └─────────────────────────────────────────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────────────────┐
-│                      Docker Web 仪表盘 (v3.4)                          │
+│                      Docker Web 仪表盘 (v3.5)                          │
 │  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────────┐    │
 │  │   FastAPI       │  │   AIOSQLite     │  │   WebSocket         │    │
 │  │   REST API      │  │   数据持久化    │  │   实时推送          │    │
@@ -79,7 +79,11 @@ ESP32-CAM ──HTTP POST──► VPS :8001 /api/camera/push  ← ★ 服务器
   │   CameraWebServer.ino                                   ↓
   │   每 200ms 推一帧 (~5fps)                         Docker camera_server
   │   JPEG raw body                                        ↓
-  └─────────────────────────────               MJPEG 流 + Canvas 快照轮询
+  │    ← 响应 {"push":bool} ── 无观看者时通知暂停     MJPEG 流 + Canvas 快照轮询
+  │   
+  └── 暂停后 ──GET /api/camera/push_status──► 每 3s 心跳 (~30 bytes)
+         ← {"push":bool} ← 有观看者时恢复推送
+```
 
 ESP32-CAM ──HTTP/TCP──► Docker (camera_server.py)  ← 局域网模式 (CAMERA_MODE=http)
   │   HVGA 480×320, JPEG quality=12             MJPEG 流 + Canvas 快照轮询
@@ -106,7 +110,7 @@ ESP32-CAM → HTTP GET → P4 → UDP:8003 → Docker  ← 备用 (已弃用)
 
 ## 通信
 
-### Web 仪表盘 (v3.4)
+### Web 仪表盘 (v3.5)
 
 项目已支持 **Docker 容器化部署**，提供 Web 可视化仪表盘：
 
@@ -128,7 +132,7 @@ docker-compose up -d
 
 | 服务 | 容器内 | 对外 | 说明 |
 |------|--------|------|------|
-| Web + CAM 推帧 | :8000 | `:8001` (TCP) | FastAPI HTTP + `/api/camera/push` |
+| Web + CAM 推帧 + 心跳 | :8000 | `:8001` (TCP) | FastAPI HTTP + `/api/camera/push` + `/api/camera/push_status` |
 | P4 传感器 UDP | :8080 | `:8002` (UDP) | SensorUDPProtocol |
 | CAM UDP 中继 | :8082 | `:8003` (UDP) | 备用，当前未激活 |
 
@@ -137,7 +141,7 @@ docker-compose up -d
 - 分级报警状态徽章（L0~L3），L3 紧急时页面红色闪烁
 - **报警历史系统**：事件列表/详情/统计/确认，去重窗口 30s，级别变化即时触发
 - 历史数据折线图（温度/湿度趋势）
-- 摄像头 MJPEG 实时流预览 + **视频流开关**（关闭即切黑屏节省带宽，开启恢复拉流）
+- 摄像头 MJPEG 实时流预览 + **视频流开关**（关闭即切黑屏节省带宽，开启恢复拉流；无观看者时 ESP32-CAM 自动切心跳模式省带宽 ~99.8%）
 - 仓储管理（二维码扫码入库/出库 + 手动新增 + 库存分类统计 + 流水清空）
 - **仿真注入面板**：前端一键注入 L1/L2/L3 预设报警或自定义传感器数值
 - **报警管理**：一键清空全部报警记录（DELETE /api/alarms）
@@ -170,6 +174,8 @@ D:\Anaconda3\envs\ForAgents\python.exe pc_receiver.py
 | 环境变量 | `CAMERA_MODE=push` |
 | 帧率 | ~5 fps (200ms/帧) |
 | 前端显示 | Canvas 快照轮询 + MJPEG 流 |
+| 心跳端点 | `GET /api/camera/push_status`（无观看者时每 3s 轮询，~30 bytes） |
+| 省带宽 | 无观看者时暂停 JPEG 推送，切心跳模式，节省 ~99.8% 带宽 |
 
 #### 主模式：Docker 直连 ESP32-CAM (局域网推荐)
 

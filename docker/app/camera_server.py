@@ -98,6 +98,11 @@ class CameraServer:
         self.paused = False
 
     @property
+    def should_push(self) -> bool:
+        """ESP32-CAM 是否需要继续推送帧（有观看者时为 True）"""
+        return self.stream_enabled and self.running
+
+    @property
     def online(self) -> bool:
         """摄像头是否有真实数据流入"""
         return self.running and self._latest_jpeg is not None

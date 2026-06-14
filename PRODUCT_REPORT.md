@@ -69,7 +69,7 @@
 | **AIOSQLite** | 异步 SQLite 数据库，存储传感器数据、库存、操作日志、报警事件 |
 | **WebSocket** | 实时推送通道，传感器数据变更即时通知前端 |
 | **Chart.js** | 前端图表库，展示温度/湿度历史趋势曲线 |
-| **camera_server** | 摄像头服务：HTTP 拉取 / Push 直推 (VPS) / UDP 中继 (备选) → MJPEG 流转换 + Canvas 快照轮询 + pyzbar 二维码扫码，支持 stream 开关暂停/恢复，关闭时前端自动切黑屏 |
+| **camera_server** | 摄像头服务：HTTP 拉取 / Push 直推 (VPS) / UDP 中继 (备选) → MJPEG 流转换 + Canvas 快照轮询 + pyzbar 二维码扫码。支持 stream 开关暂停/恢复，关闭时前端自动切黑屏。**v3.5 新增按需推送**：无观看者时 ESP32-CAM 自动切心跳模式（每 3s 轻量轮询），节省 ~99.8% 带宽。 |
 
 ### 2.3 后端 API 路由总览
 
@@ -99,9 +99,10 @@
 | `DELETE` | `/api/alarms` | 清空全部报警记录 |
 | `GET` | `/api/alarm/config` | 获取当前报警配置（AO/DO 模式、阈值） |
 | `POST` | `/api/alarm/config` | 更新报警配置 → 写 SQLite + UDP 同步到 MCU |
+| `GET` | `/api/camera/push_status` | 摄像头推送心跳端点（ESP32-CAM 暂停时轮询恢复，~30 bytes） |
 | `GET` | `/api/sim/status` | 查询仿真注入状态 |
 | `POST` | `/api/sim/inject` | 注入仿真传感器数据到 ESP32-P4 |
-| `POST` | `/api/camera/push` | ESP32-CAM 直推 JPEG 帧 (VPS 部署) |
+| `POST` | `/api/camera/push` | ESP32-CAM 直推 JPEG 帧 (VPS 部署)，响应含 `push` 字段告知是否继续推送 |
 
 ### 2.4 摄像头数据流
 
@@ -113,6 +114,11 @@ ESP32-CAM ──HTTP POST──► VPS :8001 /api/camera/push  (CAMERA_MODE=push
   │   JPEG raw body           Docker camera_server
   │   CameraWebServer.ino          ↓
   └──────────────────────  Web 仪表盘实时显示
+
+  ← 响应 {"push":true/false} ──────────────────────────┘
+    无观看者时 push=false → ESP32-CAM 切心跳模式
+         ──GET /api/camera/push_status──► 每 3s 轮询 (~30 bytes)
+         ← {"push":true/false} ←────── 有观看者时恢复推送
 ```
 
 #### 主模式：Docker 直连拉取 (局域网推荐，TCP 零丢包)
@@ -366,6 +372,7 @@ L3 (紧急):    红色闪烁  [🚨 紧急] 多重危险 - 立即排风
 | 阶段七 | 多仓库节点集中管理平台 | ⏳ | 规划中 |
 | 阶段八 | 摄像头帧率优化 → HVGA 480×320 + Docker 直连 TCP 架构 | ✅ | 2026-06-11 |
 | 阶段九 | 仿真注入 + 报警管理增强 + 前端交互优化 | ✅ | 2026-06-13 |
+| 阶段十 | Camera 按需推送/心跳模式（省带宽 ~99.8%） | ✅ | 2026-06-14 |
 
 ### 9.1 已完成功能清单（v3.4）
 
@@ -393,6 +400,7 @@ L3 (紧急):    红色闪烁  [🚨 紧急] 多重危险 - 立即排风
 - ✅ 工业摄像头 KYT-U400 支持
 - ✅ 独立预览窗口 (Toplevel)
 - ✅ 视频流关闭后 Canvas 立即黑屏（节省带宽 + 隐私保护）
+- ✅ **相机按需推送/心跳模式**（无观看者自动暂停 JPEG 推送，ESP32-CAM 切为每 3s 轻量心跳 GET `/api/camera/push_status`，节省服务器带宽 ~99.8%）
 
 **稳定性优化**：
 - ✅ DHT11 时序修复（脉冲宽度测量，解决 ~95% 失败率）
@@ -404,5 +412,5 @@ L3 (紧急):    红色闪烁  [🚨 紧急] 多重危险 - 立即排风
 
 ---
 
-> **最后更新**：2026-06-13
+> **最后更新**：2026-06-14
 > **作者**：SmartMonitor Team

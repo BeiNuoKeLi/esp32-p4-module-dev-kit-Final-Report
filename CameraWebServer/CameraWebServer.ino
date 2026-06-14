@@ -140,11 +140,12 @@ void setup() {
 #define CAM_STREAM_PORT    8003
 
 static WiFiClient streamClient;
+static unsigned long frame_cnt = 0;
+static unsigned long drop_cnt = 0;
+static unsigned long reconnect_cnt = 0;
+static unsigned long last_diag_ms = 0;
 
 void loop() {
-  // ─── 帧驱动推流: 仿 MJPEG stream handler 架构 ───
-  //   无心率阻塞、无速率限制、无 flush()
-  //   摄像头出帧即推，lwIP 自行决定发送时机
   camera_fb_t *fb = esp_camera_fb_get();
   if (!fb || fb->len == 0) {
     if (fb) esp_camera_fb_return(fb);
@@ -153,21 +154,38 @@ void loop() {
 
   // TCP 自动重连
   if (!streamClient.connected()) {
-    streamClient.connect(CAM_STREAM_HOST, CAM_STREAM_PORT);
-    if (streamClient.connected()) {
-      streamClient.setNoDelay(true);
-      Serial.println("[STREAM] TCP 已连接");
+    reconnect_cnt++;
+    bool ok = streamClient.connect(CAM_STREAM_HOST, CAM_STREAM_PORT);
+    Serial.printf("[TCP] 连接 %s (重连#%lu)\n", ok ? "成功" : "失败", reconnect_cnt);
+    if (ok) streamClient.setNoDelay(true);
+  }
+
+  // 推帧并检查写入结果
+  if (streamClient.connected()) {
+    uint16_t len_be = htons((uint16_t)fb->len);
+    size_t w1 = streamClient.write((uint8_t*)&len_be, 2);
+    size_t w2 = streamClient.write(fb->buf, fb->len);
+    streamClient.flush();  // ★ 必须 flush, 否则 lwIP 缓冲区满后帧堆积→黑屏
+    frame_cnt++;
+
+    if (w1 != 2 || w2 != fb->len) {
+      drop_cnt++;
     }
   }
 
-  // 推帧: [2B big-endian len][JPEG]
-  if (streamClient.connected()) {
-    uint16_t len_be = htons((uint16_t)fb->len);
-    streamClient.write((uint8_t*)&len_be, 2);
-    streamClient.write(fb->buf, fb->len);
-    // ★ 不调 flush(): 与 app_httpd.cpp MJPEG handler 一致,
-    //    让 lwIP TCP 栈自行决定发送时机，避免阻塞等 ACK
-  }
-
   esp_camera_fb_return(fb);
+
+  // 每 3s 输出诊断 (不阻塞 loop)
+  unsigned long now = millis();
+  if (now - last_diag_ms > 3000) {
+    last_diag_ms = now;
+    float fps = frame_cnt / 3.0;
+    Serial.printf("[DIAG] 帧=%lu | FPS≈%.1f | 丢=%lu | 重连=%lu | WiFi=%d | TCP=%d | JPEG=%uB\n",
+                  frame_cnt, fps, drop_cnt, reconnect_cnt,
+                  WiFi.status() == WL_CONNECTED,
+                  streamClient.connected(),
+                  fb->len);
+    frame_cnt = 0;
+    drop_cnt = 0;
+  }
 }

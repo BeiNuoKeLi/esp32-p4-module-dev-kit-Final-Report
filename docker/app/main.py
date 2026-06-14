@@ -619,22 +619,29 @@ async def camera_push(request: Request):
     """
     ESP32-CAM 直推 JPEG 帧 (服务器版)
     接收 raw body → 写入 camera_server.latest_jpeg
-    返回 push 字段告知 ESP32-CAM 是否继续推送（无观看者时节省带宽）
+    通过 X-Push 响应头告知 ESP32-CAM 是否继续推送（零额外解析开销）
     """
+    from fastapi.responses import JSONResponse
     jpeg_data = await request.body()
     if jpeg_data:
         cam.push_jpeg(jpeg_data)
-        return {"ok": True, "push": cam.should_push, "size": len(jpeg_data)}
-    return {"ok": False, "push": cam.should_push}
+        resp = JSONResponse({"ok": True, "size": len(jpeg_data)})
+    else:
+        resp = JSONResponse({"ok": False})
+    resp.headers["X-Push"] = "1" if cam.should_push else "0"
+    return resp
 
 
 @app.get("/api/camera/push_status")
 async def camera_push_status():
     """
     轻量心跳端点: ESP32-CAM 暂停后定期检查是否需要恢复推送
-    返回 ~30 bytes JSON, 替代 ~20KB JPEG 推送, 节省 99.8% 带宽
+    通过 X-Push 响应头传递状态，ESP32 无需解析 body，~30 bytes
     """
-    return {"push": cam.should_push}
+    from fastapi.responses import JSONResponse
+    resp = JSONResponse({"push": cam.should_push})
+    resp.headers["X-Push"] = "1" if cam.should_push else "0"
+    return resp
 
 
 @app.post("/api/camera/scan", response_model=ScanResult)

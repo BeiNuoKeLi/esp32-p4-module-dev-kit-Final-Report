@@ -135,6 +135,7 @@ void setup() {
 
 // ★ 服务器版: ESP32-CAM 主动推帧到 VPS (CAM_PUSH_MODE)
 //    无观看者时自动暂停推送，改为轻量心跳轮询，节省服务器带宽 ~99.8%
+//    使用 X-Push 响应头判断推送状态（零 JSON 解析开销）
 #define CAM_PUSH_URL        "http://38.55.199.220:8001/api/camera/push"
 #define CAM_PUSH_STATUS_URL "http://38.55.199.220:8001/api/camera/push_status"
 #define CAM_PUSH_INTERVAL   200       // 推帧间隔 (ms), ~5fps
@@ -160,8 +161,8 @@ void loop() {
     http.setTimeout(3000);
     int code = http.GET();
     if (code == 200) {
-      String resp = http.getString();
-      if (resp.indexOf("\"push\":true") >= 0) {
+      // ★ 读取 X-Push 响应头判断状态（无需解析 body）
+      if (http.header("X-Push") == "1") {
         push_active = true;
         last_push_ms = millis() - CAM_PUSH_INTERVAL;  // 立即开始推送
         Serial.println("[PUSH] 恢复推送（有观看者连接）");
@@ -193,12 +194,12 @@ void loop() {
   http.setTimeout(5000);
   int code = http.POST(fb->buf, fb->len);
   if (code == 200) {
-    // 检查服务器响应: 是否需要停止推送（无观看者）
-    String resp = http.getString();
-    if (resp.indexOf("\"push\":false") >= 0) {
+    // ★ 读取 X-Push 响应头（已在 POST 时解析，零网络 I/O 开销）
+    if (http.header("X-Push") == "0") {
       push_active = false;
       Serial.println("[PUSH] 暂停推送（无观看者），进入心跳模式");
     }
+    // 无需读取 body，end() 直接关闭连接
   } else if (code > 0) {
     Serial.printf("[PUSH] HTTP %d\n", code);
   }

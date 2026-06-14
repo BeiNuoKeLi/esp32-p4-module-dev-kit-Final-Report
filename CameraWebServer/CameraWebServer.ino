@@ -46,13 +46,13 @@ void setup() {
   //config.pixel_format = PIXFORMAT_RGB565; // for face detection/recognition
   config.fb_location = CAMERA_FB_IN_PSRAM;
 
-  // ★ QVGA 320x240: 延迟最低, 够二维码/条码识别
+  // ★ HVGA 480x320: 二维码识别需要足够像素密度
   // ★ fb_count=2: 连续 I2S DMA 模式，esp_camera_fb_get() 直接从队列取帧
-  // ★ jpeg_quality=12: ESP32-CAM 默认画质，二维码/条码识别必需清晰边界
-  //    (QVGA@q12 ≈ 15-25KB, WiFi 传输 <50ms; q35 虽小但块状伪影导致识别失败)
+  // ★ jpeg_quality=20: 互联网 TCP 推流瓶颈是文件大小而非压缩时间
+  //    q12→13KB→2fps | q20→7KB→5fps | q35→4KB 但块状伪影→二维码识别失败
   if (psramFound()) {
-    config.frame_size = FRAMESIZE_HVGA;    // 320x240 → 延迟最低
-    config.jpeg_quality = 12;              // 默认画质，识别更可靠
+    config.frame_size = FRAMESIZE_HVGA;    // 480x320, 二维码识别最低需求
+    config.jpeg_quality = 20;              // 平衡画质与互联网推流吞吐
     config.fb_count = 2;                   // ★ 双缓冲: 连续DMA，帧立即可取
     config.grab_mode = CAMERA_GRAB_LATEST; // 始终取最新帧
   } else {

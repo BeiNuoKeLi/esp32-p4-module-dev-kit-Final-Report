@@ -99,7 +99,7 @@
 | `DELETE` | `/api/alarms` | 清空全部报警记录 |
 | `GET` | `/api/alarm/config` | 获取当前报警配置（AO/DO 模式、阈值） |
 | `POST` | `/api/alarm/config` | 更新报警配置 → 写 SQLite + UDP 尝试 + HTTP 轮询暂存 |
-| `GET` | `/api/alarm/config/poll` | ESP32 HTTP 轮询拉取待下发报警配置（NAT 穿透可靠路径） |
+| `GET` | `/api/alarm/config/poll?seq=N` | ESP32 HTTP 轮询拉取待下发报警配置（NAT 穿透可靠路径）。**v3.7**：seq=0 时自动从 SQLite 返回当前配置作为启动同步，确保 ESP32 不依赖过期 NVS 值 |
 | `GET` | `/api/camera/push_status` | 摄像头推送心跳端点（ESP32-CAM 暂停时轮询恢复，~30 bytes） |
 | `GET` | `/api/sim/status` | 查询仿真注入状态 |
 | `POST` | `/api/sim/inject` | 注入仿真传感器数据到 ESP32-P4 |
@@ -196,7 +196,7 @@ ESP32-CAM ─HTTP:/capture─→ camera_http_fetch.c ─UDP:8003─→ Docker ca
 | **AO 阈值可调** | MQ-135 电压阈值（0~3.3V）、光敏 ADC 阈值（0~4095）通过滑块实时调整 |
 | **触发方向** | 支持"高于阈值"（MQ-135 毒气检测）或"低于阈值"（光敏遮挡检测）两种方向 |
 | **温湿度独立开关** | 温湿度报警可整体关闭，仅保留气体+光敏报警 |
-| **端到端同步** | 双路径：UDP 8081 快速路径（局域网） + HTTP 轮询 `/api/alarm/config/poll`（公网/NAT 可靠）→ ESP32 NVS 持久化，断电不丢失 |
+| **端到端同步** | 三路径：UDP 8081 快速路径（局域网） + HTTP 轮询 `/api/alarm/config/poll`（公网/NAT 可靠） + **启动同步**（seq=0 时从 VPS SQLite 拉取当前配置，解决 Docker 重启后内存队列清空问题）→ ESP32 NVS 持久化，断电不丢失 |
 | **范围保护** | 启动时 NVS 加载带范围校验，垃圾值自动回退默认值 |
 
 ---

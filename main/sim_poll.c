@@ -289,6 +289,8 @@ void sim_poll_task(void *arg)
         int cfg_interval = ALARM_CFG_POLL_MS / SIM_POLL_MS;
         if (cfg_interval < 1) cfg_interval = 1;
         if (tick % cfg_interval == 0) {
+            static int cfg_first_poll = 1;  /* 首次轮询诊断标记 */
+
             char url[256];
             snprintf(url, sizeof(url), "%s?seq=%d", ALARM_CFG_POLL_URL, last_cfg_seq);
 
@@ -301,16 +303,34 @@ void sim_poll_task(void *arg)
                 }
 
                 char *data_null = strstr(body, "\"data\":null");
-                if (!data_null && seq > last_cfg_seq) {
+                /* ★ v3.7 启动同步: last_cfg_seq==0 时允许 seq==0（首次从 SQLite 同步） */
+                int is_new = (last_cfg_seq == 0) ? (seq >= last_cfg_seq)
+                                                 : (seq > last_cfg_seq);
+                if (!data_null && is_new) {
                     last_cfg_seq = seq;
+                    cfg_first_poll = 0;
                     /* 必须包含 cmd:config 才处理 */
                     if (strstr(body, "\"cmd\":\"config\"") || strstr(body, "\"cmd\": \"config\"")) {
                         apply_alarm_config(body);
                     }
                 } else {
                     if (seq > last_cfg_seq) last_cfg_seq = seq;
+                    /* 首次轮询诊断: 打一次日志确认链路通畅 */
+                    if (cfg_first_poll) {
+                        if (data_null) {
+                            ESP_LOGI(TAG, "报警配置轮询: 无新配置 (seq=%d), 链路正常, 后续静默", seq);
+                        } else {
+                            ESP_LOGI(TAG, "报警配置轮询就绪 (seq=%d, 等待配置变更)", seq);
+                        }
+                        cfg_first_poll = 0;
+                    }
                 }
                 free(body);
+            } else {
+                /* HTTP 请求失败时仅首次打一次警告 */
+                if (cfg_first_poll) {
+                    ESP_LOGW(TAG, "报警配置轮询: 首次 HTTP 请求失败, %dms 后重试", ALARM_CFG_POLL_MS);
+                }
             }
         }
 

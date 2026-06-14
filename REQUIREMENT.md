@@ -336,6 +336,7 @@ Web 仪表盘 POST /api/alarm/config → Docker SQLite 镜像
      └─ 写入 _pending_alarm_cfg 暂存区 → ESP32 HTTP GET /api/alarm/config/poll?seq=N (可靠路径, NAT 穿透)
            └─ sim_poll_task() 每 10s 轮询 → apply_alarm_config() → save_alarm_config_to_nvs() 持久化
 ```
+- **v3.7 启动同步**：seq=0 且无待下发配置时，VPS 从 SQLite 返回当前完整配置作为初始同步，解决 Docker 重启后 `_pending_alarm_cfg` 内存队列丢失导致 ESP32 拿不到配置的问题。
 
 ### 5.6 报警升级定时
 

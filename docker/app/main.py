@@ -866,10 +866,22 @@ async def alarm_config_poll(seq: int = 0):
     返回:
         {"seq": N, "data": {"cmd":"config",...}}  — 有待下发配置
         {"seq": N, "data": null}                   — 无新配置
+
+    启动同步 (v3.7):
+        当 seq=0 且无待下发配置时（ESP32 刚启动 / Docker 刚重启），
+        从 SQLite 返回当前完整配置作为初始同步，确保 ESP32 不依赖过期的 NVS 值。
     """
     async with _alarm_cfg_lock:
         if _pending_alarm_cfg["data"] is not None and _pending_alarm_cfg["seq"] > seq:
             return {"seq": _pending_alarm_cfg["seq"], "data": _pending_alarm_cfg["data"]}
+
+        # ★ 启动同步: seq=0 且无新下发命令 → 返回 SQLite 当前配置
+        if seq == 0 and _pending_alarm_cfg["data"] is None:
+            current_cfg = await database.get_alarm_config()
+            sync_data = {"cmd": "config", **current_cfg}
+            print(f"[AlarmConfig] 🔄 启动同步 → ESP32 (seq={_pending_alarm_cfg['seq']})")
+            return {"seq": _pending_alarm_cfg["seq"], "data": sync_data}
+
         return {"seq": _pending_alarm_cfg["seq"], "data": None}
 
 

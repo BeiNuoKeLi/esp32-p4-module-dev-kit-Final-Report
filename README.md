@@ -79,14 +79,14 @@ ESP32-CAM ──HTTP POST──► VPS :8001 /api/camera/push  ← ★ 服务器
   │   CameraWebServer.ino                                   ↓
   │   每 200ms 推一帧 (~5fps)                         Docker camera_server
   │   JPEG raw body                                        ↓
-  │    ← 响应 {"push":bool} ── 无观看者时通知暂停     MJPEG 流 + Canvas 快照轮询
+  │    ← 响应 {"push":bool} ── 无观看者时通知暂停     MJPEG `<img>` 原生渲染
   │   
   └── 暂停后 ──GET /api/camera/push_status──► 每 3s 心跳 (~30 bytes)
          ← {"push":bool} ← 有观看者时恢复推送
 ```
 
 ESP32-CAM ──HTTP/TCP──► Docker (camera_server.py)  ← 局域网模式 (CAMERA_MODE=http)
-  │   HVGA 480×320, JPEG quality=12             MJPEG 流 + Canvas 快照轮询
+  │   HVGA 480×320, JPEG quality=12             MJPEG `<img>` 原生渲染
   │   CameraWebServer.ino 提供 /capture + /stream      ↓
   └──────────────────────────────            Web 仪表盘实时显示
 
@@ -173,7 +173,7 @@ D:\Anaconda3\envs\ForAgents\python.exe pc_receiver.py
 | 目标 | `http://38.55.199.220:8001/api/camera/push` |
 | 环境变量 | `CAMERA_MODE=push` |
 | 帧率 | ~5 fps (200ms/帧) |
-| 前端显示 | Canvas 快照轮询 + MJPEG 流 |
+| 前端显示 | MJPEG `<img>` 原生渲染 (零 JS 开销，GPU 合成) |
 | 心跳端点 | `GET /api/camera/push_status`（无观看者时每 3s 轮询，~30 bytes） |
 | 省带宽 | 无观看者时暂停 JPEG 推送，切心跳模式，节省 ~99.8% 带宽 |
 
@@ -186,7 +186,7 @@ D:\Anaconda3\envs\ForAgents\python.exe pc_receiver.py
 | 采集方式 | Docker `camera_server.py` 直接 HTTP GET `/capture` 拉取 JPEG (TCP 零丢包) |
 | 环境变量 | `CAMERA_MODE=http`, `ESP32_CAM_URL`, `CAMERA_HTTP_FPS` |
 | 默认帧率 | 5 fps |
-| 前端显示 | Canvas 快照轮询 (替代 MJPEG `<img>`，消除 Chrome 缓冲延迟) |
+| 前端显示 | MJPEG `<img>` 原生渲染 (零 JS 开销，GPU 合成) |
 
 #### 备选模式：ESP32-P4 UDP 中继 (已弃用，默认关闭)
 

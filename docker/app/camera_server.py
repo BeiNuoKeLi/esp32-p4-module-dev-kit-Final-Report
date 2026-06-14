@@ -218,30 +218,18 @@ class CameraServer:
     # ─── 生命周期 ──────────────────────────────────────────
 
     def _try_set_jpeg(self, jpeg_data: bytes) -> bool:
-        """尝试设置 JPEG 帧。成功返回 True，失败时仍保存原始字节供浏览器尝试渲染。"""
-        ok = False
-        if self.cv2_ok:
-            import numpy as np
-            arr = np.frombuffer(jpeg_data, dtype=np.uint8)
-            frame = self._cv2.imdecode(arr, self._cv2.IMREAD_COLOR)
-            if frame is not None:
-                self.latest_frame = frame
-                self.latest_jpeg = jpeg_data
-                ok = True
-            else:
-                # OpenCV 解码失败（残缺JPEG），但仍保存原始字节
-                self.latest_jpeg = jpeg_data
-        else:
-            # 无 cv2 时直接信任 JPEG bytes
-            self.latest_jpeg = jpeg_data
-            ok = True
+        """保存 JPEG 原始字节并通知 MJPEG 输出端（轻量路径，不做 cv2.imdecode）。
 
-        # ★ 关键修复: 只要收到了新的 JPEG 数据就通知，不再依赖 OpenCV 解码结果
-        # 旧逻辑 (if ok or self.latest_frame is None) 在 OpenCV 解码失败时不会触发 Event，
-        # 导致 MJPEG 输出端收不到通知 → 帧丢失 → 浏览器显示全黑
+        imdecode 是 CPU 密集操作（50-200ms），在 VPS 弱 CPU 上会阻塞接收线程，
+        导致后续帧积压 → 延迟雪崩。改为仅存储原始字节，latest_frame 按需在
+        try_decode_frame() 中解码（扫码等低频场景使用）。
+        """
+        if not jpeg_data:
+            return False
+        self.latest_jpeg = jpeg_data
         self._mjpeg_frame_seq += 1
         self._mjpeg_new_frame.set()
-        return ok
+        return True
 
     def push_jpeg(self, jpeg_data: bytes):
         """外部推送 JPEG 帧 (ESP32-CAM 直推模式) — ★ 轻量路径，不阻塞事件循环

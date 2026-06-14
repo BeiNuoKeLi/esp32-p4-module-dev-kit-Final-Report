@@ -120,10 +120,14 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 
-# ★ ESP32-P4 设备 IP（仿真注入目标）
+# ★ ESP32-P4 设备 IP（仿真注入目标，UDP 模式不可达时由轮询模式接管）
 ESP32_IP = os.environ.get("ESP32_IP", "10.16.234.86")
 ESP32_CMD_PORT = 8081
 SIM_ACTIVE = False  # 轻量状态标志，仅用于前端显示，不再拦截数据
+
+# ★ 仿真命令暂存（反转轮询模式: ESP32 HTTP GET 拉取命令，替代 VPS→ESP32 UDP 入站）
+_pending_sim_cmd: dict = {"seq": 0, "data": None, "ts": 0.0}
+_sim_cmd_lock = asyncio.Lock()
 
 
 # ==================== 内置 UDP 监听器 (MCU → Docker 直通) ====================
@@ -526,11 +530,9 @@ class _SimResponseProtocol(asyncio.DatagramProtocol):
 @app.post("/api/sim/inject")
 async def sim_inject(data: SimInjectRequest):
     """
-    注入仿真传感器数据 → 转发到 ESP32-P4 UDP 8081。
-    MCU 收到后替代真实传感器读数，通过 UDP 8080 回传处理后数据。
-    Web 端通过正常的 UDP 8080 → DB → WebSocket 流程获取更新。
+    注入仿真传感器数据 → 写入暂存区，等待 ESP32 HTTP 轮询拉取。
+    ESP32 通过 GET /api/sim/poll 每 3s 拉取一次待执行命令。
     """
-    # 构建 MCU 期望的 JSON（与 smart_monitor_sim_gui.py _apply_sim 一致）
     cmd = {
         "dht11_t": data.dht11_t,
         "dht11_h": data.dht11_h,
@@ -540,46 +542,57 @@ async def sim_inject(data: SimInjectRequest):
         "photo_raw": data.photo_raw,
         "photo_do": data.photo_do,
     }
-    msg = json.dumps(cmd)
-
-    ok, reply = await _udp_send_cmd(msg)
-    if not ok:
-        print(f"[Sim] ❌ UDP 发送失败: {reply}")
-        return {"ok": False, "message": reply}
-
-    if reply:
-        print(f"[Sim] ← MCU 确认: {reply}")
-    else:
-        print("[Sim] ⚠️ 未收到 MCU 确认 (超时)")
+    async with _sim_cmd_lock:
+        global _pending_sim_cmd
+        _pending_sim_cmd["seq"] += 1
+        _pending_sim_cmd["data"] = cmd
+        _pending_sim_cmd["ts"] = _time.time()
+        seq = _pending_sim_cmd["seq"]
 
     async with _sim_lock:
         global SIM_ACTIVE
         SIM_ACTIVE = True
-    return {"ok": True, "message": f"仿真命令已发送到 ESP32 [{ESP32_IP}], MCU 将回传处理后的数据"}
+    print(f"[Sim] 📝 仿真命令已暂存 (seq={seq}), 等待 ESP32 轮询拉取")
+    return {"ok": True, "message": f"仿真命令已暂存 (seq={seq}), 等待 ESP32 拉取后生效"}
+
+
+@app.get("/api/sim/poll")
+async def sim_poll(seq: int = 0):
+    """
+    ESP32 轮询端点 — 返回当前待执行的仿真命令。
+
+    参数:
+        seq: ESP32 上一次收到的命令序号。仅当 VPS 端 seq 更大时返回新命令。
+             避免重复执行同一命令。
+
+    返回:
+        {"seq": N, "data": {...}}  — 有待执行命令
+        {"seq": N, "data": null}   — 无新命令
+    """
+    async with _sim_cmd_lock:
+        if _pending_sim_cmd["data"] is not None and _pending_sim_cmd["seq"] > seq:
+            return {"seq": _pending_sim_cmd["seq"], "data": _pending_sim_cmd["data"]}
+        return {"seq": _pending_sim_cmd["seq"], "data": None}
 
 
 @app.post("/api/sim/reset")
 async def sim_reset():
     """
-    发送 reset 命令到 ESP32-P4 UDP 8081。
+    暂存 reset 命令 → 等待 ESP32 轮询拉取。
     MCU 收到后关闭仿真模式，恢复真实传感器读数。
     """
-    msg = '{"cmd":"reset"}'
-
-    ok, reply = await _udp_send_cmd(msg)
-    if not ok:
-        print(f"[Sim] ❌ Reset UDP 发送失败: {reply}")
-        return {"ok": False, "message": reply}
-
-    if reply:
-        print(f"[Sim] ← MCU reset 确认: {reply}")
-    else:
-        print("[Sim] ⚠️ 未收到 MCU reset 确认 (超时)")
+    async with _sim_cmd_lock:
+        global _pending_sim_cmd
+        _pending_sim_cmd["seq"] += 1
+        _pending_sim_cmd["data"] = {"cmd": "reset"}
+        _pending_sim_cmd["ts"] = _time.time()
+        seq = _pending_sim_cmd["seq"]
 
     async with _sim_lock:
         global SIM_ACTIVE
         SIM_ACTIVE = False
-    return {"ok": True, "message": "已发送 reset 到 ESP32, MCU 恢复真实传感器模式"}
+    print(f"[Sim] 📝 Reset 命令已暂存 (seq={seq}), 等待 ESP32 拉取")
+    return {"ok": True, "message": "Reset 命令已暂存, 等待 ESP32 拉取后恢复真实传感器模式"}
 
 
 # ==================== HTTP API — 摄像头 ====================

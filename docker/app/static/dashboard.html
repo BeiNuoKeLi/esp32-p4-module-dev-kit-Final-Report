@@ -815,7 +815,7 @@ async function applySimInject(){
     var r=await fetch('/api/sim/inject',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(p)});
     var rs=await r.json();
     showToast(rs.ok?'success':'error',rs.message);
-    if(rs.ok){document.getElementById('simModeLabel').textContent='模式: 仿真注入 (MCU处理中...)';document.getElementById('simModeLabel').style.color='var(--red)';document.getElementById('simDebug').style.display='block';document.getElementById('simDebug').textContent='已发送到 MCU: '+JSON.stringify(p,null,2)+'\n等待 ESP32 回传数据...'}
+    if(rs.ok){document.getElementById('simModeLabel').textContent='模式: 仿真注入 (等待ESP32拉取...)';document.getElementById('simModeLabel').style.color='var(--red)';document.getElementById('simDebug').style.display='block';document.getElementById('simDebug').textContent='命令已暂存到 VPS: '+JSON.stringify(p,null,2)+'\nESP32 每3秒轮询拉取，数据将在下一轮上报时更新...'}
   }catch(e){showToast('error','仿真注入失败: '+e.message)}
 }
 async function resetSimInject(){
@@ -823,7 +823,7 @@ async function resetSimInject(){
     var r=await fetch('/api/sim/reset',{method:'POST'});
     var rs=await r.json();
     showToast(rs.ok?'success':'error',rs.message);
-    if(rs.ok){document.getElementById('simModeLabel').textContent='模式: 真实传感器 (等待MCU恢复...)';document.getElementById('simModeLabel').style.color='var(--text-dim)';document.getElementById('simDebug').style.display='block';document.getElementById('simDebug').textContent='已发送 reset 到 MCU，等待真实数据回传...'}
+    if(rs.ok){document.getElementById('simModeLabel').textContent='模式: 真实传感器 (等待ESP32恢复...)';document.getElementById('simModeLabel').style.color='var(--text-dim)';document.getElementById('simDebug').style.display='block';document.getElementById('simDebug').textContent='Reset 命令已暂存，等待 ESP32 下一次轮询拉取...'}
   }catch(e){showToast('error','恢复失败: '+e.message)}
 }
 function toggleSimPanel(){

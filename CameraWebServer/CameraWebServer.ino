@@ -49,8 +49,8 @@ void setup() {
   // ★ QVGA 320x240: 互联网推流文件小→FPS 稳定, 二维码近距离识别够用
   // ★ jpeg_quality=25: q12→3fps | q20→6fps | q25→10fps 稳定 | q35 块状伪影
   if (psramFound()) {
-    config.frame_size = FRAMESIZE_QVGA;
-    config.jpeg_quality = 25;              // 进一步压缩, 目标 3-5KB/帧 稳定 10fps
+    config.frame_size = FRAMESIZE_VGA;     // ★ 640x480 高清推流
+    config.jpeg_quality = 15;              // ★ 平衡画质/抗丢包 (0=最佳, 63=最差), 目标 ~12fps/25-30KB
     config.fb_count = 2;                   // ★ 双缓冲: 连续DMA，帧立即可取
     config.grab_mode = CAMERA_GRAB_LATEST; // 始终取最新帧
   } else {
@@ -137,7 +137,7 @@ void setup() {
 //    UDP 吞吐量实测 238Mbps vs TCP 2Mbps (119x)，不受跨海 RTT 影响
 #define CAM_STREAM_HOST    "38.55.199.220"
 #define CAM_STREAM_PORT    8003
-#define UDP_CHUNK_SIZE     1024  // ★ 下调至 1024：跨互联网 MTU 黑洞（1400B大包被中间路由丢弃，仅273B小包到达）
+#define UDP_CHUNK_SIZE     1280  // ★ VGA高画质优化: 1280B(IP包1316B) 减少分片→降低丢包率
 
 #include <WiFiUdp.h>
 
@@ -178,6 +178,7 @@ void loop() {
     if (!udpClient.endPacket()) {
       all_ok = false; break;
     }
+    delay(2);  // ★ WiFi栈退避: 防16分片连续发送冲爆缓冲区
   }
 
   frame_id++;

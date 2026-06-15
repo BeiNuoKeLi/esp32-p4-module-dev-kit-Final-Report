@@ -148,6 +148,21 @@ docker-compose up -d
 - **报警管理**：一键清空全部报警记录（DELETE /api/alarms）
 - **内置 UDP 监听器**：Docker 服务直接监听 :8080，无需外部 udp_to_web.py 桥接脚本
 - SQLite 数据持久化（aiosqlite 异步引擎）
+- **演示锁定机制**：Cookie 独立锁，每浏览器需密码解锁后才能执行写操作，只读数据不受限
+
+#### 演示锁定配置
+
+| 环境变量 | 默认值 | 说明 |
+|---------|--------|------|
+| `DEMO_PASSWORD` | (空/未设置) | 演示密码，留空则不启用锁定功能 |
+
+**工作原理**：
+1. 设置 `DEMO_PASSWORD` 后，Docker 启动时仪表盘自动进入只读模式
+2. 所有 POST/PUT/DELETE 写操作需浏览器持有 `demo_unlock` Cookie（HMAC-SHA256 签名，防伪造）
+3. 点击 Header 的 🛡️ 锁定指示器 → 弹出密码框 → 输入密码解锁
+4. 每个浏览器独立锁定：你的浏览器解锁后，别人的浏览器仍然锁定
+5. 关闭浏览器即自动失效（会话级 Cookie），点击 🛡️ 可主动重新锁定
+6. ESP32 设备通信端点（`/api/sensors`、`/api/camera/push` 等）白名单放行，不受锁定影响
 
 ### 传感器数据 (ESP32 → PC/VPS)
 

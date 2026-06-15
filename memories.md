@@ -2,7 +2,7 @@
 
 > **文档目的**：记录项目当前状态、规范和已实现功能，方便后续 Agent 理解和继续开发
 >
-> **最后更新**：2026-06-13（v3.4 仿真注入系统上线；内置UDP监听器；报警/库存管理增强；化肥场景迁移）
+> **最后更新**：2026-06-16（v3.5 演示锁定机制上线；每浏览器独立 Cookie 认证；写操作全量守卫）
 
 ---
 
@@ -111,15 +111,15 @@ camera_display_receiver.py  # ✅ UDP接收 + 分片重组 + JPEG解码 + OpenCV
 camera_protocol.py          # ✅ Magic 0xAA55 协议头编解码 (大端序, 8字节头, 4096字节payload)
 CAMERA_DEBUG_LOG.md         # 摄像头调试历史 & 参数速查
 
-# Docker Web 仪表盘 v3.4 (2026-06-13 更新)
+# Docker Web 仪表盘 v3.5 (2026-06-16 更新)
 docker/
-├── docker-compose.yml      # ✅ 容器编排 (UDP 8080 端口暴露 + ESP32_IP 环境变量)
+├── docker-compose.yml      # ✅ 容器编排 (UDP 8080 端口暴露 + ESP32_IP + DEMO_PASSWORD 环境变量)
 ├── app/
-│   ├── main.py            # ✅ FastAPI + WebSocket + 内置 UDP 监听器 + 仿真注入 API
+│   ├── main.py            # ✅ FastAPI + WebSocket + 内置 UDP 监听器 + 仿真注入 API + 演示锁定中间件
 │   ├── database.py        # ✅ AIOSQLite (清空报警/清空流水/新增物料/删除物料)
 │   ├── models.py          # ✅ Pydantic 模型 (SimInjectRequest, SimStatus)
 │   └── static/
-│       └── dashboard.html # ✅ Chart.js 仪表盘 (仿真面板 + 库存统计 + 报警清空)
+│       └── dashboard.html # ✅ Chart.js 仪表盘 (仿真面板 + 库存统计 + 报警清空 + 🛡️锁定指示器)
 └── ...
 ```
 
@@ -443,6 +443,18 @@ portENABLE_INTERRUPTS();
 
 ## 八、待实现功能 📋
 
+### 8.0 演示锁定机制 ✅ 2026-06-16
+
+> 每浏览器独立 Cookie 锁，保护演示环境不被误操作。
+
+| 组件 | 说明 |
+|------|------|
+| Cookie 签名 | `demo_unlock` Cookie 值 = HMAC-SHA256(salt, "unlocked") |
+| 中间件 | `demo_lock_middleware` 拦截 POST/PUT/DELETE，ESP32 白名单放行 |
+| 认证端点 | `POST /api/auth/unlock` (验证密码), `POST /api/auth/lock`, `GET /api/auth/status` |
+| 前端守卫 | 14 个写操作函数均调用 `checkUnlock()` + 输错震屏动画 |
+| 环境变量 | `DEMO_PASSWORD=111` (留空关闭锁定), `DEMO_SALT` (HMAC 盐) |
+
 ### 8.1 传感器驱动
 
 - [x] **DS18B20** - 高精度温度传感器（0.0625°C分辨率）✅ 2026-05-27
@@ -573,6 +585,7 @@ portENABLE_INTERRUPTS();
 | 2026-06-12 | 摄像头架构重构 v3.3 | Agent | Docker 直连 ESP32-CAM (HVGA 480×320); Canvas 快照轮询替代 MJPEG <img>; CameraWebServer Arduino 工程 |
 | 2026-06-13 | 仿真注入系统 v3.4 | Agent | 内置 UDP 监听器 SensorUDPProtocol:8080 替代外部桥接; POST /api/sim/inject + 前端预设面板; DELETE /api/alarms 报警清空; 库存管理增强 (手动新增/流水清空/物料删除); 视频流关闭→黑屏; 文档全面更新至 v3.4 |
 | 2026-06-15 | 前端 MJPEG 解析修复 | Agent | 黑屏根因定位：服务端数据正常但前端 JS 两个 bug — (1) `\r\n--frameboundary`无法匹配流首裸boundary导致首帧跳过；(2) `buf.length-2`硬裁切在多帧共缓冲时夹带下一帧数据致JPEG损坏。修复：改用`--frameboundary`(15B)搜索 + 下一boundary精确定界帧尾。前端渲染方案为`fetch`→ReadableStream→boundary二进制切分→BlobURL; 替代了 v3.3的Canvas轮询和v3.5的`<img>`原生渲染。VGA_DEBUG_LOG.md 补充最终根因。PRODUCT_REPORT.md/README.md 同步前端渲染描述。**总结为 DEBUG_GUIDE.md 数据流分界实验法。** |
+| 2026-06-16 | 演示锁定机制 v3.5 | Agent | HMAC-SHA256 Cookie 签名 + HTTP 中间件写操作拦截 + ESP32 白名单放行; 前端 🛡️锁定指示器 + 密码弹窗 + 14 个 checkUnlock() 守卫; DEMO_PASSWORD 环境变量控制开关; 每浏览器独立锁定 |
 
 ---
 

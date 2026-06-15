@@ -277,6 +277,48 @@ th{color:var(--text-dim);font-weight:600;white-space:nowrap}
 .cfg-num-input:focus{outline:none;border-color:var(--accent)}
 .cfg-num-input:hover{border-color:var(--border-light)}
 .cfg-section-title{font-size:.78rem;font-weight:600;margin-bottom:10px;display:flex;align-items:center;gap:6px}
+
+/* ===== 演示锁定 ===== */
+.lock-indicator{
+  display:flex;align-items:center;gap:6px;
+  padding:6px 14px;border-radius:20px;font-size:.82rem;font-weight:600;
+  cursor:pointer;transition:all .2s;border:1px solid transparent;user-select:none
+}
+.lock-indicator.lock-locked{background:rgba(244,67,54,.12);color:var(--red);border-color:rgba(244,67,54,.25)}
+.lock-indicator.lock-locked:hover{background:rgba(244,67,54,.2)}
+.lock-indicator.lock-unlocked{background:rgba(76,175,80,.12);color:var(--green);border-color:rgba(76,175,80,.25)}
+.lock-indicator.lock-unlocked:hover{background:rgba(76,175,80,.2)}
+.lock-password-input{
+  width:100%;background:var(--border);border:1px solid var(--border-light);
+  color:var(--text);padding:10px 14px;border-radius:8px;font-size:.9rem;
+  font-family:inherit;transition:border-color .2s;margin-bottom:4px
+}
+.lock-password-input:focus{outline:none;border-color:var(--accent)}
+.lock-password-input.shake{animation:lock-shake .4s ease}
+@keyframes lock-shake{0%,100%{transform:translateX(0)}25%{transform:translateX(-6px)}75%{transform:translateX(6px)}}
+.lock-modal-overlay{
+  position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:400;
+  display:flex;align-items:center;justify-content:center;animation:lock-fade-in .2s
+}
+@keyframes lock-fade-in{from{opacity:0}}
+.lock-modal-box{
+  background:var(--card);border:1px solid var(--border-light);border-radius:14px;
+  padding:28px 32px;width:380px;box-shadow:0 12px 48px rgba(0,0,0,.6)
+}
+.lock-modal-box h3{font-size:1.05rem;margin-bottom:6px;display:flex;align-items:center;gap:8px}
+.lock-modal-box p{font-size:.78rem;color:var(--text-dim);margin-bottom:20px}
+.lock-error-msg{color:var(--red);font-size:.75rem;margin-bottom:12px;display:none}
+.btn-lock-unlock{
+  background:var(--accent);border:none;color:#000;padding:9px 24px;border-radius:8px;
+  cursor:pointer;font-size:.85rem;font-weight:700;font-family:inherit;transition:all .2s
+}
+.btn-lock-unlock:hover{background:#00d5f0}
+.btn-lock-cancel{
+  background:var(--border);border:1px solid var(--border-light);color:var(--text-dim);
+  padding:9px 20px;border-radius:8px;cursor:pointer;font-size:.85rem;
+  font-family:inherit;transition:all .2s
+}
+.btn-lock-cancel:hover{border-color:var(--accent);color:var(--text)}
 </style>
 </head>
 
@@ -288,6 +330,9 @@ th{color:var(--text-dim);font-weight:600;white-space:nowrap}
   <div style="display:flex;align-items:center;gap:16px;">
     <span class="alert-badge" id="alertBadge">L0 正常</span>
     <span id="reasonLabel" class="alert-reason"></span>
+    <span class="lock-indicator lock-locked" id="lockIndicator" onclick="toggleLock()" title="点击解锁/锁定操作功能">
+      🛡 <span id="lockStatusText">已锁定</span>
+    </span>
     <button id="btnRawData" onclick="toggleRawPanel()" title="显示/隐藏原始传感器数据"
       style="background:var(--border);border:1px solid var(--border-light);color:var(--text-dim);cursor:pointer;padding:6px 14px;border-radius:8px;font-size:.8rem;font-family:inherit;transition:all .2s;"
       onmouseover="this.style.borderColor='var(--accent)';this.style.color='var(--accent)'"
@@ -585,6 +630,20 @@ th{color:var(--text-dim);font-weight:600;white-space:nowrap}
   <div id="jsErr" style="display:none;background:#c62828;color:#fff;padding:8px 16px;font-size:13px;margin:0;"></div>
 </main>
 
+<!-- ====== Lock Password Modal ====== -->
+<div id="lockModal" class="lock-modal-overlay" style="display:none;" onclick="if(event.target===this)closeUnlockModal()">
+  <div class="lock-modal-box">
+    <h3>🛡 演示模式已锁定</h3>
+    <p>输入密码以解锁操作功能</p>
+    <input type="password" id="lockPasswordInput" class="lock-password-input" placeholder="输入演示密码" onkeydown="if(event.key==='Enter')doUnlock()">
+    <div class="lock-error-msg" id="lockErrorMsg"></div>
+    <div style="display:flex;gap:10px;justify-content:flex-end;">
+      <button class="btn-lock-cancel" onclick="closeUnlockModal()">取消</button>
+      <button class="btn-lock-unlock" onclick="doUnlock()">🔓 解锁</button>
+    </div>
+  </div>
+</div>
+
 <!-- ====== Block 1: 核心数据层 ====== 最先执行，不依赖 Chart.js -->
 <script>
 // 全局JS错误捕获
@@ -595,6 +654,54 @@ window.onerror=function(msg,src,line,col,err){
   return false;
 };
 console.log('[SmartMonitor] Block1 开始执行...');
+
+// ===== 演示锁定 =====
+var _demoLocked=true,_demoEnabled=false;
+async function checkLockStatus(){
+  try{
+    var r=await fetch('/api/auth/status');
+    if(r.ok){var s=await r.json();_demoEnabled=s.feature_enabled;_demoLocked=s.locked;updateLockIndicator()}
+  }catch(e){_demoEnabled=false;_demoLocked=false}
+}
+function updateLockIndicator(){
+  var el=document.getElementById('lockIndicator');if(!el)return;
+  if(!_demoEnabled){el.style.display='none';return}
+  el.style.display='flex';el.className='lock-indicator '+(_demoLocked?'lock-locked':'lock-unlocked');
+  document.getElementById('lockStatusText').textContent=_demoLocked?'已锁定':'已解锁'
+}
+function checkUnlock(){
+  if(!_demoEnabled||!_demoLocked)return true;
+  showUnlockModal();return false
+}
+function toggleLock(){
+  if(!_demoEnabled)return;
+  if(_demoLocked){showUnlockModal()}else{doLock()}
+}
+function showUnlockModal(){
+  var m=document.getElementById('lockModal'),inp=document.getElementById('lockPasswordInput');
+  if(m){m.style.display='flex';inp.value='';inp.focus();document.getElementById('lockErrorMsg').style.display='none'}
+}
+function closeUnlockModal(){
+  var m=document.getElementById('lockModal');if(m)m.style.display='none'
+}
+async function doUnlock(){
+  var pw=document.getElementById('lockPasswordInput').value;
+  if(!pw){var er=document.getElementById('lockErrorMsg');er.textContent='请输入密码';er.style.display='block';return}
+  try{
+    var r=await fetch('/api/auth/unlock',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:pw})});
+    var s=await r.json();
+    if(s.ok){_demoLocked=false;updateLockIndicator();closeUnlockModal();showToast('success','已解锁，可执行操作')}
+    else{var er2=document.getElementById('lockErrorMsg');er2.textContent=s.message||'密码错误';er2.style.display='block';var inp=document.getElementById('lockPasswordInput');inp.classList.add('shake');inp.value='';inp.focus();setTimeout(function(){inp.classList.remove('shake')},400)}
+  }catch(e){showToast('error','解锁失败: '+e.message)}
+}
+async function doLock(){
+  try{
+    var r=await fetch('/api/auth/lock',{method:'POST'});var s=await r.json();
+    if(s.ok){_demoLocked=true;updateLockIndicator();showToast('success','已重新锁定')}
+  }catch(e){showToast('error','锁定失败: '+e.message)}
+}
+// 页面加载时查询锁定状态
+checkLockStatus();
 
 // 常量 & 数据数组
 var MAX_POINTS=60;
@@ -793,6 +900,7 @@ function updateSimVal(sliderId,labelId){
   v.textContent=(step>=1)?parseInt(s.value):parseFloat(s.value).toFixed(1);
 }
 function loadSimPreset(level){
+  if(!checkUnlock())return;
   var p=SIM_PRESETS[level];if(!p)return;
   document.getElementById('simDht11T').value=p.dht11_t;updateSimVal('simDht11T','simVDht11T');
   document.getElementById('simDht11H').value=p.dht11_h;updateSimVal('simDht11H','simVDht11H');
@@ -804,6 +912,7 @@ function loadSimPreset(level){
   showToast('success','已加载预设: '+level+' — '+p.desc);
 }
 async function applySimInject(){
+  if(!checkUnlock())return;
   var p={
     dht11_t:parseInt(document.getElementById('simDht11T').value),
     dht11_h:parseInt(document.getElementById('simDht11H').value),
@@ -822,6 +931,7 @@ async function applySimInject(){
   }catch(e){showToast('error','仿真注入失败: '+e.message)}
 }
 async function resetSimInject(){
+  if(!checkUnlock())return;
   try{
     var r=await fetch('/api/sim/reset',{method:'POST'});
     var rs=await r.json();
@@ -1003,6 +1113,7 @@ startCam();
 var whMode=null,lastScanItem=null;
 
 function setMode(m){
+  if(!checkUnlock())return;
   if(whMode===m){whMode=null;
     ['Inbound','Outbound'].forEach(function(k){var b=document.getElementById('btn'+k);b.classList.remove('active');b.classList.add('btn-idle')});
     document.getElementById('camModeTag').className='cam-mode-tag mode-tag-idle';document.getElementById('camModeTag').textContent='待机模式';document.getElementById('btnScan').disabled=true;return}
@@ -1015,6 +1126,7 @@ function setMode(m){
 }
 
 async function doScan(){
+  if(!checkUnlock())return;
   var btn=document.getElementById('btnScan');btn.disabled=true;btn.innerHTML='<span class="spinner"></span> 正在扫码...';
   try{
     var r=await fetch('/api/camera/scan',{method:'POST'});
@@ -1071,6 +1183,7 @@ async function loadCheckLog(){
 
 // ===== 清空全部出入库流水 =====
 async function clearCheckLog(){
+  if(!checkUnlock())return;
   if(!confirm('确定要清空全部出入库流水记录吗？此操作不可撤销。'))return;
   try{
     var r=await fetch('/api/warehouse/log',{method:'DELETE'});
@@ -1082,6 +1195,7 @@ async function clearCheckLog(){
 
 // ===== 一键清除全部库存 =====
 async function clearAllInventory(){
+  if(!checkUnlock())return;
   if(!confirm('⚠️ 确定要一键清除全部库存吗？\n\n此操作将清空库存清单和出入库流水记录，不可撤销！'))return;
   try{
     var r=await fetch('/api/inventory',{method:'DELETE'});
@@ -1097,6 +1211,7 @@ async function clearAllInventory(){
 
 // ===== 删除库存物料 =====
 async function deleteInventoryItem(id){
+  if(!checkUnlock())return;
   if(!confirm('确定删除物料 '+id+' 吗？关联的流水记录也会一并删除。'))return;
   try{
     var r=await fetch('/api/inventory/'+encodeURIComponent(id),{method:'DELETE'});
@@ -1108,6 +1223,7 @@ async function deleteInventoryItem(id){
 
 // ===== 手动新增物料弹窗 =====
 function openAddInventoryModal(){
+  if(!checkUnlock())return;
   var cls=document.getElementById('addInvModal');if(cls){cls.remove();return}
   var h='<div class="modal-overlay" id="addInvModal" onclick="if(event.target===this)this.remove()">';
   h+='<div class="modal-box" style="max-width:520px">';
@@ -1127,6 +1243,7 @@ function openAddInventoryModal(){
 }
 
 async function submitAddInventory(){
+  if(!checkUnlock())return;
   var id=document.getElementById('addInvId').value.trim();
   var name=document.getElementById('addInvName').value.trim();
   if(!id||!name){showToast('warn','物料编号和品名为必填项');return}
@@ -1157,6 +1274,7 @@ function showToast(type,msg,dur){
 
 // ===== 摄像头视频流开关 =====
 async function toggleCameraStream(){
+  if(!checkUnlock())return;
   try{
     var r=await fetch('/api/camera/stream',{method:'POST'});
     var s=await r.json();
@@ -1263,6 +1381,7 @@ function closeAlarmModal(){
 }
 
 async function ackAlarm(id){
+  if(!checkUnlock())return;
   try{
     var r=await fetch('/api/alarms/'+id+'/ack',{method:'POST'});
     var res=await r.json();
@@ -1273,6 +1392,7 @@ async function ackAlarm(id){
 
 // ===== 清空全部报警记录 =====
 async function clearAlarmRecords(){
+  if(!checkUnlock())return;
   if(!confirm('确定要清空全部报警记录吗？此操作不可撤销。'))return;
   try{
     var r=await fetch('/api/alarms',{method:'DELETE'});
@@ -1377,6 +1497,7 @@ async function loadAlarmConfigPanel(){
 }
 
 async function saveAlarmConfigPanel(){
+  if(!checkUnlock())return;
   var cfg={
     mq135_alarm_src: document.getElementById('cfgMqSrc').checked?1:0,
     photo_alarm_src: document.getElementById('cfgPhSrc').checked?1:0,

@@ -31,6 +31,8 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, StreamingResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 import os
+import hmac
+import hashlib
 
 from . import database
 from . import filter as filt_module
@@ -316,6 +318,98 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# ==================== 演示锁定机制 (Cookie 独立锁) ====================
+DEMO_PASSWORD = os.environ.get("DEMO_PASSWORD", "")
+DEMO_SALT = b"smartmonitor_salt_v1"
+
+# ESP32 设备通信端点白名单 — 不校验 Cookie
+_LOCK_WHITELIST = {
+    "/api/sensors",
+    "/api/camera/push",
+    "/api/camera/push_status",
+    "/api/sim/poll",
+    "/api/alarm/config/poll",
+}
+
+
+def _make_cookie_value(password: str) -> str:
+    """生成 HMAC-SHA256 签名字符串"""
+    return hmac.new(DEMO_SALT, password.encode(), hashlib.sha256).hexdigest()
+
+
+def _verify_cookie(cookie_val: str | None) -> bool:
+    """防时序攻击比对 Cookie 签名"""
+    if not cookie_val or not DEMO_PASSWORD:
+        return False
+    expected = _make_cookie_value(DEMO_PASSWORD)
+    return hmac.compare_digest(cookie_val, expected)
+
+
+@app.middleware("http")
+async def demo_lock_middleware(request: Request, call_next):
+    """演示模式 Cookie 锁：无有效 demo_unlock Cookie 则拦截写操作"""
+    # 未启用锁定功能 → 放行
+    if not DEMO_PASSWORD:
+        return await call_next(request)
+    # GET/HEAD/OPTIONS 只读 → 放行
+    if request.method in ("GET", "HEAD", "OPTIONS"):
+        return await call_next(request)
+    # ESP32 设备通信白名单 → 放行
+    if request.url.path in _LOCK_WHITELIST:
+        return await call_next(request)
+    # 校验 demo_unlock Cookie 签名
+    if not _verify_cookie(request.cookies.get("demo_unlock")):
+        return JSONResponse(
+            status_code=403,
+            content={"ok": False, "locked": True, "message": "演示模式已锁定，请点击🛡️图标输入密码解锁"},
+        )
+    return await call_next(request)
+
+
+# ==================== 认证端点 ====================
+
+
+@app.post("/api/auth/unlock")
+async def auth_unlock(request: Request):
+    """验证密码并下发 demo_unlock Cookie"""
+    body = await request.json()
+    password = body.get("password", "")
+    if not DEMO_PASSWORD:
+        return {"ok": False, "message": "演示锁定未启用（DEMO_PASSWORD 未配置）"}
+    if password != DEMO_PASSWORD:
+        return JSONResponse(
+            status_code=401, content={"ok": False, "message": "密码错误"}
+        )
+    cookie_val = _make_cookie_value(DEMO_PASSWORD)
+    resp = JSONResponse({"ok": True, "message": "已解锁", "locked": False})
+    # 使用 raw_headers 兼容 uvloop（避免 set_cookie 静默失败）
+    resp.raw_headers.append(
+        (b"set-cookie", f"demo_unlock={cookie_val}; HttpOnly; Path=/; SameSite=Lax".encode())
+    )
+    return resp
+
+
+@app.post("/api/auth/lock")
+async def auth_lock():
+    """主动锁定：清除 demo_unlock Cookie"""
+    resp = JSONResponse({"ok": True, "message": "已重新锁定", "locked": True})
+    resp.raw_headers.append(
+        (b"set-cookie", b"demo_unlock=; Max-Age=0; Path=/")
+    )
+    return resp
+
+
+@app.get("/api/auth/status")
+async def auth_status(request: Request):
+    """查询当前浏览器锁定状态"""
+    locked = (
+        not _verify_cookie(request.cookies.get("demo_unlock"))
+        if DEMO_PASSWORD
+        else False
+    )
+    return {"feature_enabled": bool(DEMO_PASSWORD), "locked": locked}
 
 
 # ==================== HTTP API — 传感器 ====================

@@ -104,6 +104,9 @@
 | `GET` | `/api/sim/status` | 查询仿真注入状态 |
 | `POST` | `/api/sim/inject` | 注入仿真传感器数据到 ESP32-P4 |
 | `POST` | `/api/camera/push` | [备选] ESP32-CAM HTTP POST 直推 JPEG 帧 (已由 TCP 推流替代) |
+| `POST` | `/api/auth/unlock` | 演示模式解锁，验证密码并下发 `demo_unlock` Cookie (HMAC-SHA256 签名) |
+| `POST` | `/api/auth/lock` | 主动锁定当前浏览器，清除 `demo_unlock` Cookie |
+| `GET` | `/api/auth/status` | 查询当前浏览器锁定状态 (`feature_enabled` + `locked`) |
 
 ### 2.4 摄像头数据流
 

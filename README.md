@@ -119,6 +119,9 @@ ESP32-CAM ──HTTP/TCP──► Docker (camera_server.py)  ← 局域网模式
 # 启动方式
 cd docker
 docker-compose up -d
+
+# 拉取最新代码 + 重建容器（服务器部署一键更新）
+cd /opt/esp32-p4-module-dev-kit-Final-Report && git checkout main && git pull && docker-compose -f docker/docker-compose.yml up -d --build
 ```
 
 #### 本地开发

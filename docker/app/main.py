@@ -374,7 +374,13 @@ async def demo_lock_middleware(request: Request, call_next):
 @app.post("/api/auth/unlock")
 async def auth_unlock(request: Request):
     """验证密码并下发 demo_unlock Cookie"""
-    body = await request.json()
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse(
+            status_code=400,
+            content={"ok": False, "message": "请求格式错误"},
+        )
     password = body.get("password", "")
     if not DEMO_PASSWORD:
         return {"ok": False, "message": "演示锁定未启用（DEMO_PASSWORD 未配置）"}

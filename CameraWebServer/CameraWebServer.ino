@@ -137,7 +137,7 @@ void setup() {
 //    UDP 吞吐量实测 238Mbps vs TCP 2Mbps (119x)，不受跨海 RTT 影响
 #define CAM_STREAM_HOST    "38.55.199.220"
 #define CAM_STREAM_PORT    8003
-#define UDP_CHUNK_SIZE     1400  // 安全互联网 MTU (1500 - IP(20) - UDP(8) = 1472, 预留 72B)
+#define UDP_CHUNK_SIZE     1024  // ★ 下调至 1024：跨互联网 MTU 黑洞（1400B大包被中间路由丢弃，仅273B小包到达）
 
 #include <WiFiUdp.h>
 

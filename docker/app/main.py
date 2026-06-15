@@ -324,13 +324,16 @@ app.add_middleware(
 DEMO_PASSWORD = os.environ.get("DEMO_PASSWORD", "")
 DEMO_SALT = b"smartmonitor_salt_v1"
 
-# ESP32 设备通信端点白名单 — 不校验 Cookie
+# ESP32 设备通信端点 + 认证端点 白名单 — 不校验 Cookie
 _LOCK_WHITELIST = {
     "/api/sensors",
     "/api/camera/push",
     "/api/camera/push_status",
     "/api/sim/poll",
     "/api/alarm/config/poll",
+    "/api/auth/unlock",
+    "/api/auth/lock",
+    "/api/auth/status",
 }
 
 

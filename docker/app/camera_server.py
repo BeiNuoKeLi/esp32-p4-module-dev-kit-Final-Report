@@ -862,9 +862,15 @@ class CameraServer:
                     print("[Camera] ⚠️ UDP Socket 异常")
                 break
 
+            # ▲ DEBUG: 打印收到的原始字节，确认格式
+            if len(data) >= 8:
+                print(f"[Camera] 🔍 收到 {len(data)}B | {addr[0]}:{addr[1]} | head={data[:16].hex()} | "
+                      f"magic={data[:2].hex()} {'✅' if data[:2]==b'\xaa\x55' else '❌'}")
+
             # 解析协议头
             result = proto.unpack_header(data)
             if result is None:
+                print(f"[Camera] ❌ 头解析失败 | len={len(data)} | head={data[:16].hex()}")
                 continue
 
             frame_id, chunk_idx, total_chunks = result

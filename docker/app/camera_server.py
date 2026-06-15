@@ -967,10 +967,14 @@ class CameraServer:
             for fid in completed_fids:
                 cache_entry = self.frame_cache.pop(fid)
                 jpeg_data = b"".join(cache_entry["chunks"])
-                # ★ JPEG完整性校验: 缺失 SOI(FFD8) → 编码坏帧 → 浏览器渲染黑屏
+                # ★ JPEG完整性校验: SOI(FFD8) + EOI(FFD9) 双重检查
                 if jpeg_data[:2] != b'\xff\xd8':
                     self.timeout_count += 1
-                    print(f"[Camera] 💔 帧 {fid} JPEG头损坏 SOI={jpeg_data[:2].hex()}, {len(jpeg_data)}B")
+                    print(f"[Camera] 💔 帧 {fid} 缺SOI header={jpeg_data[:2].hex()}, {len(jpeg_data)}B")
+                    continue
+                if jpeg_data[-2:] != b'\xff\xd9' and b'\xff\xd9' not in jpeg_data[-128:]:
+                    self.timeout_count += 1
+                    print(f"[Camera] 🪓 帧 {fid} 缺EOI tail={jpeg_data[-2:].hex()}, {len(jpeg_data)}B → 浏览器可能黑屏")
                     continue
                 # ★ OpenCV 像素亮度检测: 替代字节大小启发式, 精确识别暗帧
                 if self._is_dark_frame(jpeg_data, fid):

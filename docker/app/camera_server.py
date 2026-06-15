@@ -919,6 +919,11 @@ class CameraServer:
                     self.timeout_count += 1
                     print(f"[Camera] 🖤 帧 {fid} 疑似暗帧 ({len(jpeg_data)}B), 保留旧帧")
                     continue
+                # ★ JPEG完整性校验: 缺失 SOI(FFD8) → 编码坏帧 → 浏览器渲染黑屏
+                if jpeg_data[:2] != b'\xff\xd8':
+                    self.timeout_count += 1
+                    print(f"[Camera] 💔 帧 {fid} JPEG头损坏 SOI={jpeg_data[:2].hex()}, {len(jpeg_data)}B")
+                    continue
                 if self._try_set_jpeg(jpeg_data):
                     self.total_frames += 1
                     self.fps_history.append(tnow)

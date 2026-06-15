@@ -864,8 +864,9 @@ class CameraServer:
 
             # ▲ DEBUG: 打印收到的原始字节，确认格式
             if len(data) >= 8:
+                magic_ok = data[:2].hex() == "aa55"
                 print(f"[Camera] 🔍 收到 {len(data)}B | {addr[0]}:{addr[1]} | head={data[:16].hex()} | "
-                      f"magic={data[:2].hex()} {'✅' if data[:2]==b'\xaa\x55' else '❌'}")
+                      f"magic={data[:2].hex()} {'✅' if magic_ok else '❌'}")
 
             # 解析协议头
             result = proto.unpack_header(data)

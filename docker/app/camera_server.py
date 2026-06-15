@@ -190,8 +190,15 @@ class CameraServer:
             mean_brightness = float(np.mean(img))
             BRIGHTNESS_THRESHOLD = 30  # 0-255，<30 肉眼几乎全黑
 
+            # ★ 亮度采样: 每50帧输出一次，观察暗帧/正常帧实际亮度范围以校准阈值
+            sample_cnt = getattr(self, '_brightness_sample_count', 0) + 1
+            self._brightness_sample_count = sample_cnt
+            if sample_cnt % 50 == 1:
+                label = "🌑暗帧" if mean_brightness < BRIGHTNESS_THRESHOLD else "✅正常"
+                print(f"[Camera] 🔬 亮度采样 | 帧{frame_id} {label} | 均值={mean_brightness:.1f}/255 | 大小={len(jpeg_data)}B")
+
             if mean_brightness < BRIGHTNESS_THRESHOLD:
-                # 每 50 个暗帧输出一次诊断，避免日志刷屏
+                # 每 50 个暗帧额外输出拦截日志
                 cnt = getattr(self, '_dark_log_count', 0) + 1
                 self._dark_log_count = cnt
                 if cnt % 50 == 1:

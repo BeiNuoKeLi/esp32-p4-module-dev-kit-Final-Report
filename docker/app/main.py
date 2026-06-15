@@ -28,7 +28,7 @@ import time as _time
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query, Request
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, StreamingResponse, Response
+from fastapi.responses import FileResponse, StreamingResponse, Response, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 import os
 import hmac
@@ -747,7 +747,6 @@ async def camera_push(request: Request):
     接收 raw body → 写入 camera_server.latest_jpeg
     通过 X-Push 响应头告知 ESP32-CAM 是否继续推送（零额外解析开销）
     """
-    from fastapi.responses import JSONResponse
     jpeg_data = await request.body()
     if jpeg_data:
         cam.push_jpeg(jpeg_data)

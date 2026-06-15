@@ -188,26 +188,32 @@ class CameraServer:
                 return True  # JPEG 损坏/不完整 → 丢弃
 
             mean_brightness = float(np.mean(img))
-            BRIGHTNESS_THRESHOLD = 30  # 0-255，<30 肉眼几乎全黑
+            DARK_THRESHOLD = 30     # <30 绝对黑帧 → 丢弃
+            SUS_THRESHOLD = 45      # 30-45 可疑低亮 → 诊断
 
-            # ★ 亮度采样: 每50帧输出一次，观察暗帧/正常帧实际亮度范围以校准阈值
+            # ★ 滚动均值: 跟踪正常帧亮度基线
+            running_avg = getattr(self, '_brightness_avg', 50.0)
+            alpha = 0.1  # EMA 平滑因子
+            self._brightness_avg = running_avg * (1 - alpha) + mean_brightness * alpha
+
+            # ★ 亮度采样: 每10帧输出一次 (密度够高可捕获暗帧脉冲)
             sample_cnt = getattr(self, '_brightness_sample_count', 0) + 1
             self._brightness_sample_count = sample_cnt
-            if sample_cnt % 50 == 1:
-                label = "🌑暗帧" if mean_brightness < BRIGHTNESS_THRESHOLD else "✅正常"
-                print(f"[Camera] 🔬 亮度采样 | 帧{frame_id} {label} | 均值={mean_brightness:.1f}/255 | 大小={len(jpeg_data)}B")
+            if sample_cnt % 10 == 0:
+                avg = self._brightness_avg
+                flag = "🌑拦截" if mean_brightness < DARK_THRESHOLD else ("⚠️低亮" if mean_brightness < SUS_THRESHOLD else "✅正常")
+                print(f"[Camera] 🔬 #{sample_cnt} | 帧{frame_id} {flag} | 亮度={mean_brightness:.1f} | 均线={avg:.1f} | {len(jpeg_data)}B")
 
-            if mean_brightness < BRIGHTNESS_THRESHOLD:
-                # 每 50 个暗帧额外输出拦截日志
+            # 绝对黑帧: 无条件拦截
+            if mean_brightness < DARK_THRESHOLD:
                 cnt = getattr(self, '_dark_log_count', 0) + 1
                 self._dark_log_count = cnt
-                if cnt % 50 == 1:
-                    print(f"[Camera] 🌑 帧 {frame_id} 亮度={mean_brightness:.1f}/255 (阈值{BRIGHTNESS_THRESHOLD}), 拦截暗帧")
+                print(f"[Camera] 🌑 帧{frame_id} 亮度={mean_brightness:.1f} — 拦截暗帧 (#{cnt})")
                 return True
 
             return False
         except Exception:
-            return False  # 解码异常时放行，宁滥勿缺
+            return False
 
     # ─── 初始化 ──────────────────────────────────────────
 

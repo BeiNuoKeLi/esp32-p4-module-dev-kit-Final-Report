@@ -914,8 +914,8 @@ class CameraServer:
             for fid in completed_fids:
                 cache_entry = self.frame_cache.pop(fid)
                 jpeg_data = b"".join(cache_entry["chunks"])
-                # ★ 过滤暗帧: HVGA正常≥6KB, <4KB大概率暗帧（之前2.5KB没拦住）
-                if len(jpeg_data) < 4000:
+                # ★ 过滤暗帧: ESP32输出 13KB正常 / 5KB暗帧, 阈值8KB拦截曝光振荡暗帧
+                if len(jpeg_data) < 8000:
                     self.timeout_count += 1
                     print(f"[Camera] 🖤 帧 {fid} 疑似暗帧 ({len(jpeg_data)}B), 保留旧帧")
                     continue

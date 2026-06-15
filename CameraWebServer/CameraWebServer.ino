@@ -52,7 +52,7 @@ void setup() {
     config.frame_size = FRAMESIZE_HVGA;    // ★ 480x320 折中 (QVGA太糊/VGA闪屏), 像素2xQVGA
     config.jpeg_quality = 15;              // ★ 高画质, ~16KB/帧 ≈16分片, 预计15-20fps
     config.fb_count = 2;                   // ★ 双缓冲: 连续DMA，帧立即可取
-    config.grab_mode = CAMERA_GRAB_LATEST; // 始终取最新帧
+    config.grab_mode = CAMERA_GRAB_WHEN_EMPTY; // ★ 仅取完整帧，防高分辨率下拿到写入中的坏帧导致黑屏
   } else {
     // 无 PSRAM 时降至最低分辨率 + 单缓冲
     config.frame_size = FRAMESIZE_QQVGA;

@@ -902,9 +902,9 @@ function startCamFetch(){
   stopCamFetch();
   var img = document.getElementById('camImg');
   _camCtrl = new AbortController();
-  // ★ 纯二进制Buffer方案: 不经过字符串转换，直接在Uint8Array中搜索boundary
-  var B = [0x0D,0x0A,0x2D,0x2D,0x66,0x72,0x61,0x6D,0x65,0x62,0x6F,0x75,0x6E,0x64,0x61,0x72,0x79]; // \r\n--frameboundary
-  var BL = B.length;
+  // ★ 修复: 用 --frameboundary 定界，下一边界位置切帧，避免 buf.length-2 裁切误差
+  var BM = [0x2D,0x2D,0x66,0x72,0x61,0x6D,0x65,0x62,0x6F,0x75,0x6E,0x64,0x61,0x72,0x79]; // --frameboundary
+  var BML = BM.length;  // 15
   var buf = new Uint8Array(0);
 
   fetch('/api/camera/mjpeg', {signal: _camCtrl.signal}).then(function(resp){
@@ -913,35 +913,37 @@ function startCamFetch(){
     (function read(){
       reader.read().then(function(v){
         if (v.done) { stopCamFetch(); return; }
-        // 追加到buffer
         var nb = new Uint8Array(buf.length + v.value.length);
         nb.set(buf); nb.set(v.value, buf.length);
         buf = nb;
 
-        // 在buf中搜索所有boundary
         var pos = 0;
         while (true) {
-          var idx = findBoundary(buf, B, pos);
+          var idx = findBoundary(buf, BM, pos);
           if (idx < 0) break;
-          // idx是\r\n之前的位置，找frame body: 跳过 \r\n\r\n header分隔符
-          var hdrEnd = findCRLFCRLF(buf, idx + BL);
-          if (hdrEnd >= 0 && buf.length > hdrEnd + 2) {
-            var frameData = buf.slice(hdrEnd, buf.length - 2); // 去掉末尾\r\n
-            if (frameData.length > 500) {
-              var url = URL.createObjectURL(new Blob([frameData], {type:'image/jpeg'}));
-              img.src = url;
-              if (_camBlobURL) URL.revokeObjectURL(_camBlobURL);
-              _camBlobURL = url;
-            }
-            // 截断: 保留boundary之后的数据(可能是下一帧的开始)
-            buf = buf.slice(idx + BL);
-            pos = 0;
-            continue; // 从头搜索
+          var afterBM = idx + BML;                       // boundary 之后（\r\n + headers）
+          var hdrEnd = findCRLFCRLF(buf, afterBM);      // 找到 \r\n\r\n → JPEG 起点
+          if (hdrEnd < 0) break;                         // header 不完整，等下一块
+
+          // ★ 关键：用 下一个 boundary 定界帧尾，而非 buf.length-2
+          var nextIdx = findBoundary(buf, BM, hdrEnd);
+          if (nextIdx < 0) break;                        // 帧不完整，等下一块
+          var frameEnd = nextIdx - 2;                    // 去掉前一帧尾部的 \r\n
+          if (frameEnd <= hdrEnd) { pos = idx + 1; continue; }
+
+          var frameData = buf.slice(hdrEnd, frameEnd);
+          if (frameData.length > 500) {
+            var url = URL.createObjectURL(new Blob([frameData], {type:'image/jpeg'}));
+            img.src = url;
+            if (_camBlobURL) URL.revokeObjectURL(_camBlobURL);
+            _camBlobURL = url;
           }
-          pos = idx + 1;
+          // 截断：保留 boundary 之后的数据（下一帧的开始）
+          buf = buf.slice(idx + BML);
+          pos = 0;
+          continue;
         }
 
-        // 防止内存无限增长
         if (buf.length > 3e6) buf = buf.slice(Math.max(0, buf.length - 1e6));
         read();
       }).catch(function(e){

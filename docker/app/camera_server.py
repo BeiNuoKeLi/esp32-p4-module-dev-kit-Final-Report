@@ -1075,10 +1075,8 @@ class CameraServer:
                 self._mjpeg_new_frame.set()
                 current_seq = self._mjpeg_frame_seq
 
-            was_new_frame = (current_seq != last_seq)  # ★ 在 last_seq 被更新前捕获
-
             if self.stream_enabled:
-                if was_new_frame:
+                if current_seq != last_seq:
                     jpeg_data = self.latest_jpeg
                     if jpeg_data:
                         last_sent_jpeg = jpeg_data  # ★ 缓存好帧，用于回退
@@ -1089,9 +1087,6 @@ class CameraServer:
                     jpeg_data = last_sent_jpeg
             else:
                 jpeg_data = self.placeholder_jpeg
-
-            # ★ 诊断日志：确认黑屏时浏览器到底收到了什么
-            print(f"[MJPEG DIAG] seq={current_seq} new={was_new_frame} size={len(jpeg_data)} stream={self.stream_enabled}", flush=True)
 
             yield (
                 f"{boundary}\r\n"

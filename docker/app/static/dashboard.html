@@ -541,7 +541,10 @@ th{color:var(--text-dim);font-weight:600;white-space:nowrap}
   <div class="card">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
       <h3 style="margin:0;">📦 库存清单</h3>
-      <button class="btn-add" onclick="openAddInventoryModal()">＋ 手动新增物料</button>
+      <div style="display:flex;gap:8px;">
+        <button class="btn-danger-sm" onclick="clearAllInventory()" title="清空全部库存及出入库流水">🗑 一键清除库存</button>
+        <button class="btn-add" onclick="openAddInventoryModal()">＋ 手动新增物料</button>
+      </div>
     </div>
     <!-- 分类统计卡片 -->
     <div class="cat-stats-row" id="catStatsRow">
@@ -1075,6 +1078,21 @@ async function clearCheckLog(){
     showToast(rs.ok?'success':'error',rs.message);
     if(rs.ok){var a=document.getElementById('whLogArea');a.innerHTML='<div class="log-entry"><span class="log-time">--:--:--</span><span class="log-msg" style="color:var(--text-dim)">等待操作...</span></div>'}
   }catch(e){showToast('error','清空失败: '+e.message)}
+}
+
+// ===== 一键清除全部库存 =====
+async function clearAllInventory(){
+  if(!confirm('⚠️ 确定要一键清除全部库存吗？\n\n此操作将清空库存清单和出入库流水记录，不可撤销！'))return;
+  try{
+    var r=await fetch('/api/inventory',{method:'DELETE'});
+    var rs=await r.json();
+    showToast(rs.ok?'success':'error',rs.message);
+    if(rs.ok){
+      var a=document.getElementById('whLogArea');
+      a.innerHTML='<div class="log-entry"><span class="log-time">--:--:--</span><span class="log-msg" style="color:var(--text-dim)">等待操作...</span></div>';
+      refreshWH();
+    }
+  }catch(e){showToast('error','清除失败: '+e.message)}
 }
 
 // ===== 删除库存物料 =====

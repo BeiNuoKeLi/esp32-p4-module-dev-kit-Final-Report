@@ -290,6 +290,18 @@ async def get_check_log(limit: int = 20) -> list[dict]:
         return [dict(r) for r in rows]
 
 
+async def clear_inventory() -> int:
+    """一键清除全部库存：清空 inventory 和 check_log 两张表，返回删除的库存记录数"""
+    _ensure_dir()
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute("SELECT COUNT(*) as cnt FROM inventory")
+        count = (await cursor.fetchone())[0]
+        await db.execute("DELETE FROM inventory")
+        await db.execute("DELETE FROM check_log")
+        await db.commit()
+        return count
+
+
 async def clear_check_log() -> int:
     """清空全部出入库流水记录，返回删除条数"""
     _ensure_dir()

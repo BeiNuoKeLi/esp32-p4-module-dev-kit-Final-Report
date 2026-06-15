@@ -209,6 +209,19 @@ class WarehouseDB:
 
     # ==================== 清理 ====================
 
+    def clear_all(self) -> int:
+        """
+        一键清除全部库存数据：清空 inventory 和 check_log 两张表。
+
+        Returns:
+            被删除的库存记录总数。
+        """
+        count = self.conn.execute("SELECT COUNT(*) as cnt FROM inventory").fetchone()["cnt"]
+        self.conn.execute("DELETE FROM inventory")
+        self.conn.execute("DELETE FROM check_log")
+        self.conn.commit()
+        return count
+
     def close(self):
         """关闭数据库连接"""
         if self.conn:

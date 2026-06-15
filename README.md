@@ -143,7 +143,7 @@ docker-compose up -d
 - **报警历史系统**：事件列表/详情/统计/确认，去重窗口 30s，级别变化即时触发
 - 历史数据折线图（温度/湿度趋势）
 - 摄像头 MJPEG 实时流预览 + **视频流开关**（关闭即切黑屏节省带宽，开启恢复拉流；TCP 模式下无观看者时 ESP32-CAM 自动切心跳模式省带宽 ~99.8%，UDP 模式全速推流不支持按需降速）
-- 仓储管理（二维码扫码入库/出库 + 手动新增 + 库存分类统计 + 流水清空）
+- 仓储管理（二维码扫码入库/出库 + 手动新增 + 库存分类统计 + 流水清空 + 一键清除库存）
 - **仿真注入面板**：前端一键注入 L1/L2/L3 预设报警或自定义传感器数值
 - **报警管理**：一键清空全部报警记录（DELETE /api/alarms）
 - **内置 UDP 监听器**：Docker 服务直接监听 :8080，无需外部 udp_to_web.py 桥接脚本
@@ -224,7 +224,7 @@ D:\Anaconda3\envs\ForAgents\python.exe smart_monitor_sim_gui.py
 |------|------|
 | `warehouse_db.py` | SQLite 数据库 (inventory + check_log 表) |
 | `generate_qr_labels.py` | 生成 6 种化肥二维码标签到 `qr_labels/`（version=4, EC=H 30% 纠错, 抗污损能力翻倍） |
-| `smart_monitor_sim_gui.py` Tab 2 | 摄像头拉流 → CLAHE + 锐化核预处理 → pyzbar 扫码（0.5s 冷却） → 入库/出库 → TreeView 表格
+| `smart_monitor_sim_gui.py` Tab 2 | 摄像头拉流 → CLAHE + 锐化核预处理 → pyzbar 扫码（0.5s 冷却） → 入库/出库 → TreeView 表格 + 一键清除库存按钮
 | 摄像头预览 | 点击顶部「打开摄像头预览」按钮，独立窗口 640×480+ 展示画面
 
 ## 已知问题 & 修复

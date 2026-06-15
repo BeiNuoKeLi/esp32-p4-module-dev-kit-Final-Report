@@ -394,6 +394,17 @@ class SimGUI:
         tree_scroll.pack(side=tk.RIGHT, fill=tk.Y)
         self.tree.configure(yscrollcommand=tree_scroll.set)
 
+        # 清除库存按钮（表底控制栏）
+        clear_bar = tk.Frame(table_frame, bg=WH_COLORS["bg_panel"])
+        clear_bar.pack(side=tk.BOTTOM, fill=tk.X, pady=(4, 0))
+        self.btn_clear_inventory = tk.Button(clear_bar, text="🗑 一键清除全部库存",
+                                             bg="#D32F2F", fg="#FFFFFF",
+                                             font=("Microsoft YaHei", 9, "bold"),
+                                             relief=tk.FLAT, padx=12, pady=4, cursor="hand2",
+                                             activebackground="#B71C1C", activeforeground="#FFFFFF",
+                                             command=self._clear_inventory)
+        self.btn_clear_inventory.pack(side=tk.LEFT, padx=2)
+
         # 操作日志
         wh_log_frame = tk.LabelFrame(bottom_area, text="  出货记录 ", bg=WH_COLORS["bg_panel"],
                                      fg=WH_COLORS["text_bright"], font=("Microsoft YaHei", 10, "bold"),
@@ -941,6 +952,31 @@ class SimGUI:
 
         self.tree.tag_configure("在库", foreground="#4CAF50")
         self.tree.tag_configure("已出库", foreground="#9E9E9E")
+
+    def _clear_inventory(self):
+        """一键清除全部库存 — 带二次确认弹窗"""
+        if self.db is None:
+            messagebox.showerror("错误", "数据库不可用", parent=self.root)
+            return
+
+        count = self.db.conn.execute("SELECT COUNT(*) as cnt FROM inventory").fetchone()["cnt"]
+        if count == 0:
+            messagebox.showinfo("提示", "库存已为空，无需清除", parent=self.root)
+            return
+
+        ok = messagebox.askyesno(
+            "⚠️ 确认清除",
+            f"将永久删除全部 {count} 条库存记录及出入库流水，此操作不可撤销！\n\n确定继续？",
+            parent=self.root,
+            icon="warning",
+        )
+        if not ok:
+            return
+
+        deleted = self.db.clear_all()
+        self._refresh_inventory_table()
+        self._wh_log(f"🗑 已清除全部库存（{deleted} 条记录）")
+        messagebox.showinfo("完成", f"已清除 {deleted} 条库存记录", parent=self.root)
 
     # ==================== 日志方法 ====================
 

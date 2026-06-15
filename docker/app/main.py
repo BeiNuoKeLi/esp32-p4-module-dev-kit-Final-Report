@@ -9,6 +9,7 @@ SmartMonitor Web 仪表盘 — FastAPI 入口
   POST  /api/warehouse/checkin    入库操作
   POST  /api/warehouse/checkout   出库操作
   GET   /api/warehouse/log        出入库流水
+  DELETE /api/inventory           一键清除全部库存
   GET   /api/camera/mjpeg         摄像头 MJPEG 实时流
   GET   /api/camera/snapshot      摄像头最新帧 JPEG
   GET   /api/camera/stream        查询视频流开关状态
@@ -441,6 +442,13 @@ async def alarm_clear():
     """清空全部报警事件记录"""
     deleted = await database.clear_alarm_events()
     return {"ok": True, "deleted": deleted, "message": f"已清空 {deleted} 条报警记录"}
+
+
+@app.delete("/api/inventory")
+async def inventory_clear_all():
+    """一键清除全部库存数据（清空 inventory + check_log 两张表）"""
+    deleted = await database.clear_inventory()
+    return {"ok": True, "deleted": deleted, "message": f"已清空全部库存（共 {deleted} 条记录）"}
 
 
 @app.delete("/api/inventory/{item_id}")

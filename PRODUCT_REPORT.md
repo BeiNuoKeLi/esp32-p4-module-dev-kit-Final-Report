@@ -1,7 +1,7 @@
 # 智慧农资仓储环境监测系统 — 产品汇报文档
 
-> **版本**：v3.5 — Camera 渲染架构优化 (MJPEG `<img>` 原生渲染)
-> **日期**：2026-06-14
+> **版本**：v4.0 — ESP32-CAM UDP 直连推流 (跨海 119x 吞吐，零 RTT 限制)
+> **日期**：2026-06-15
 > **适用场景**：农资化肥仓库（氮肥/复合肥/钾肥）
 
 ---
@@ -69,7 +69,7 @@
 | **AIOSQLite** | 异步 SQLite 数据库，存储传感器数据、库存、操作日志、报警事件 |
 | **WebSocket** | 实时推送通道，传感器数据变更即时通知前端 |
 | **Chart.js** | 前端图表库，展示温度/湿度历史趋势曲线 |
-| **camera_server** | 摄像头服务：**TCP 二进制推流 (v3.8 推荐)** / Push 直推 / HTTP 拉取 / UDP 中继 (备选) → MJPEG 流转换 + pyzbar 二维码扫码。前端使用 `<img>` MJPEG 原生渲染（零 JS 开销，GPU 合成）。支持 stream 开关暂停/恢复。**按需推送**：无观看者时 ESP32-CAM 自动降速 1fps（每 3s 轻量轮询），节省 ~95% 带宽。**v3.5 优化**：移除 `cv2.imdecode` 热路径 + Canvas JS 轮询，端到端延迟从 1-3s 降至 <200ms。**v3.8 优化**：TCP 二进制推流替代 HTTP POST，FPS 0.9→10-16，延迟 ~3s→<300ms。 |
+| **camera_server** | 摄像头服务：**UDP 分片推流 (v4.0 推荐)** / TCP 二进制推流 (v3.8) / Push 直推 / HTTP 拉取 / UDP 中继 (备选) → MJPEG 流转换 + pyzbar 二维码扫码。前端使用 `<img>` MJPEG 原生渲染（零 JS 开销，GPU 合成）。支持 stream 开关暂停/恢复。**UDP 模式**：无条件全速推流 ~10fps，跨海吞吐 238Mbps 无 RTT 影响，协议 [0xAA55+FrameID+ChunkIdx+TotalChunks] 分片重组 + 超时容错。**TCP 模式**：长连接推流，支持心跳 + 无观看者降速 1fps 省带宽 ~95%，但跨海受 RTT 窗口限制。**v3.5 优化**：移除 `cv2.imdecode` 热路径 + Canvas JS 轮询，端到端延迟从 1-3s 降至 <200ms。 |
 
 ### 2.3 后端 API 路由总览
 
@@ -107,15 +107,28 @@
 
 ### 2.4 摄像头数据流
 
-#### TCP 二进制推流：ESP32-CAM 直推 VPS (v3.8 服务器部署推荐)
+#### UDP 分片推流：ESP32-CAM 直推 VPS (v4.0 服务器部署推荐)
+
+```
+ESP32-CAM ──UDP 分片──► VPS :8003  (CAMERA_MODE=udp_esp32)
+  │   WiFiUDP 帧驱动              ↓
+  │   [0xAA55+FrameID+ChunkIdx    Docker camera_server
+  │    +TotalChunks][JPEG分片]     ↓
+  │   每包 ≤1408B, 单帧 2-6 包    Web 仪表盘实时显示
+  │   零连接开销, 不受 RTT 影响
+  │   无条件全速推流 ~10fps
+  │   容错: 超时5s + 提前渲染1s
+```
+
+#### TCP 二进制推流：ESP32-CAM 直推 VPS (v3.8 备选)
 
 ```
 ESP32-CAM ──TCP 长连接──► VPS :8003  (CAMERA_MODE=tcp)
   │   WiFiClient 帧驱动           ↓
   │   [2B len][JPEG] 格式    Docker camera_server
   │   零 HTTP 逐帧开销            ↓
-  │   ~10-16fps, <300ms 延迟  Web 仪表盘实时显示
-  │
+  │   ~10-16fps (局域网)     Web 仪表盘实时显示
+  │   ~6-10fps (跨海, 受RTT限制)
   └── 每 3s GET /api/camera/push_status ──► 无观看者降速 1fps
 ```
 
@@ -140,8 +153,8 @@ ESP32-CAM ──HTTP/TCP──► Docker camera_server  (CAMERA_MODE=http)
 #### 备选模式：ESP32-P4 UDP 中继 (已弃用，默认关闭)
 
 ```
-ESP32-CAM ─HTTP:/capture─→ camera_http_fetch.c ─UDP:8003─→ Docker camera_server
-  (备用，端口 8003→8082/udp)                                    ↓
+ESP32-CAM ─HTTP:/capture─→ camera_http_fetch.c ─UDP:8082─→ Docker camera_server
+  (备用，端口 8003→8082/udp 已由 ESP32-CAM 直连 UDP 占用)         ↓
                                                     MJPEG 流 + 二维码解码
 ```
 
@@ -412,7 +425,7 @@ L3 (紧急):    红色闪烁  [🚨 紧急] 多重危险 - 立即排风
 - ✅ 工业摄像头 KYT-U400 支持
 - ✅ 独立预览窗口 (Toplevel)
 - ✅ 视频流关闭后画面立即清空（节省带宽 + 隐私保护）
-- ✅ **相机按需推送/心跳模式**（无观看者自动暂停 JPEG 推送，ESP32-CAM 切为每 3s 轻量心跳 GET `/api/camera/push_status`，节省服务器带宽 ~99.8%）
+- ✅ **相机按需推送/心跳模式**（TCP 模式：无观看者自动暂停 JPEG 推送，ESP32-CAM 切为每 3s 轻量心跳 GET `/api/camera/push_status`，节省服务器带宽 ~99.8%；UDP 模式不支持按需推送，全速推流 ~10fps）
 
 **稳定性优化**：
 - ✅ DHT11 时序修复（脉冲宽度测量，解决 ~95% 失败率）

@@ -5,10 +5,10 @@ services:
     ports:
       - "8001:8000"                       # ★ Web 仪表盘
       - "8002:8080/udp"                   # ★ ESP32-P4 传感器数据 UDP
-      - "8003:8003/tcp"                   # ★ ESP32-CAM 二进制推流 (v3.8, 零HTTP开销)
+      - "8003:8003/udp"                   # ★ ESP32-CAM UDP 分片推流 (v4.0, 跨海119x吞吐)
     environment:
       - ESP32_IP=10.16.234.86            # ESP32-P4 设备 IP（仿真注入时用）
-      - CAMERA_MODE=tcp                   # ★ ESP32-CAM 二进制 TCP 推流 (raw framing, 8-15fps)
+      - CAMERA_MODE=udp_esp32               # ★ ESP32-CAM UDP 直连推流 (跨海119x吞吐, 零RTT影响)
     volumes:
       - ./data:/app/data
       - ./app/static:/app/app/static:ro

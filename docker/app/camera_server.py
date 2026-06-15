@@ -1,18 +1,32 @@
 """
 摄像头服务 — MJPEG HTTP 流输出
 
-支持两种数据源模式 (环境变量 CAMERA_MODE):
-  http (默认, 推荐): Docker 直接 HTTP GET ESP32-CAM /capture → 零丢包
+支持多种数据源模式 (环境变量 CAMERA_MODE):
+
+  http (默认): Docker 直接 HTTP GET ESP32-CAM /capture → 零丢包
       ESP32-CAM ──HTTP/TCP──► Docker camera_server.py
       绕过 P4 UDP 中继，TCP 保证完整送达，无分片/丢包问题
 
-  udp (备选): ESP32-P4 UDP 中继转发 (旧方案)
+  tcp: ESP32-CAM 二进制 TCP 推流 (旧方案, 受 RTT 限制)
+      ESP32-CAM ──TCP :8003──► Docker camera_server.py
+      帧格式 [2B big-endian len][JPEG]
+
+  udp_esp32 (推荐): ESP32-CAM UDP 直连推流 — 无窗口限制，跨海 119x 吞吐
+      ESP32-CAM ──UDP :8003──► Docker camera_server.py
+      协议格式 [Magic(0xAA55)+FrameID+ChunkIdx+TotalChunks][JPEG分片]
+
+  udp: ESP32-P4 UDP 中继转发 (旧方案)
       ESP32-CAM → ESP32-P4 → UDP :8082 → Docker camera_server.py
 
+  push: 外部 HTTP POST 推送 (push_jpeg 端点)
+
+  mjpeg_stream: Docker 直接拉 ESP32-CAM /stream MJPEG 流
+
 环境变量:
-  CAMERA_MODE         = http | udp (默认 http)
+  CAMERA_MODE         = http | tcp | udp_esp32 | udp | push (默认 http)
   ESP32_CAM_URL       = http://10.16.234.23/capture (HTTP 模式)
   CAMERA_HTTP_FPS     = 5  (HTTP 拉流帧率, 默认 5)
+  CAMERA_TCP_PORT     = 8003  (UDP/TCP 推流端口)
 
 提供接口:
   1. GET /api/camera/mjpeg   — multipart/x-mixed-replace 实时视频流
@@ -268,7 +282,7 @@ class CameraServer:
         return False
 
     def start(self):
-        """启动后台接收线程（根据 CAMERA_MODE 选择 tcp / push / MJPEG流 / UDP 中继）"""
+        """启动后台接收线程（根据 CAMERA_MODE 选择 udp_esp32 / tcp / push / MJPEG流 / UDP 中继）"""
         if self.running:
             return
         self.running = True
@@ -276,6 +290,10 @@ class CameraServer:
             self.thread = threading.Thread(target=self._tcp_stream_loop, daemon=True, name="CameraTCP")
             self.thread.start()
             print(f"[Camera] ✅ TCP 二进制推流模式 监听 :{CAMERA_TCP_PORT}")
+        elif CAMERA_MODE == "udp_esp32":
+            self.thread = threading.Thread(target=self._udp_esp32_loop, daemon=True, name="CameraESP32UDP")
+            self.thread.start()
+            print(f"[Camera] ✅ ESP32-CAM UDP 直连模式 监听 :{CAMERA_TCP_PORT}")
         elif CAMERA_MODE == "push":
             self.thread = threading.Thread(target=self._push_dummy_loop, daemon=True, name="CameraPush")
             self.thread.start()
@@ -795,6 +813,151 @@ class CameraServer:
                 self._last_debug_ts = tnow
 
         # 退出清理
+        if self.sock:
+            try:
+                self.sock.close()
+            except OSError:
+                pass
+            self.sock = None
+
+    # ─── ESP32-CAM 直连 UDP 接收 (互联网路径, 推荐) ──────────
+
+    def _udp_esp32_loop(self):
+        """ESP32-CAM 直连 UDP 接收 — 互联网分片重组 + 超时容错
+
+        与 _recv_loop (P4 LAN 中继) 的主要区别:
+        - 绑定 CAMERA_TCP_PORT (8003) 而非 CAMERA_PORT (8082)
+        - Socket 超时 10ms (互联网延迟更高)
+        - 帧超时 5s + 提前渲染 1.0s (给丢包重排更多时间)
+        """
+        listen_port = CAMERA_TCP_PORT
+        sock_timeout = 0.01          # 10ms socket 超时
+        frame_timeout = 5.0          # 互联网帧超时
+        early_render_stale = 1.0     # 等待 1s 后提前渲染
+
+        try:
+            self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 1024 * 1024)
+            self.sock.bind(("0.0.0.0", listen_port))
+            self.sock.settimeout(sock_timeout)
+        except OSError as e:
+            print(f"[Camera] ❌ 无法绑定 UDP 端口 {listen_port}: {e}")
+            self.running = False
+            return
+
+        print(f"[Camera] 🔌 ESP32-CAM UDP 直连监听 :{listen_port} (互联网分片重组)")
+
+        while self.running:
+            if self.paused:
+                time.sleep(0.1)
+                continue
+
+            try:
+                data, addr = self.sock.recvfrom(CAMERA_BUF_SIZE)
+            except socket.timeout:
+                continue
+            except OSError:
+                if self.running:
+                    print("[Camera] ⚠️ UDP Socket 异常")
+                break
+
+            # 解析协议头
+            result = proto.unpack_header(data)
+            if result is None:
+                continue
+
+            frame_id, chunk_idx, total_chunks = result
+            jpeg_chunk = data[proto.HEADER_SIZE:]
+            self.chunk_count += 1
+
+            tnow = time.time()
+
+            # ── 帧缓存与驱逐 ──
+            if frame_id not in self.frame_cache:
+                if len(self.frame_cache) >= MAX_FRAME_CACHE:
+                    to_evict = None
+                    for fid in self.frame_cache:
+                        fc = self.frame_cache[fid]
+                        if len(fc["received"]) < fc["total"]:
+                            to_evict = fid
+                            break
+                    if to_evict is None:
+                        self.frame_cache.popitem(last=False)
+                    else:
+                        del self.frame_cache[to_evict]
+                self.frame_cache[frame_id] = {
+                    "chunks": [b""] * total_chunks,
+                    "total": total_chunks,
+                    "received": set(),
+                    "start_time": tnow,
+                    "last_chunk_time": tnow,
+                }
+
+            cache = self.frame_cache[frame_id]
+            if chunk_idx not in cache["received"]:
+                cache["chunks"][chunk_idx] = jpeg_chunk
+                cache["received"].add(chunk_idx)
+                cache["last_chunk_time"] = tnow
+
+            # ── 完整帧收集 ──
+            completed_fids = [
+                fid for fid, c in self.frame_cache.items()
+                if len(c["received"]) == c["total"]
+            ]
+            for fid in completed_fids:
+                cache_entry = self.frame_cache.pop(fid)
+                jpeg_data = b"".join(cache_entry["chunks"])
+                if self._try_set_jpeg(jpeg_data):
+                    self.total_frames += 1
+                    self.fps_history.append(tnow)
+                    if len(self.fps_history) > 30:
+                        self.fps_history.pop(0)
+
+            # ── 超时清理 (互联网: 5s) ──
+            stale = [
+                fid for fid, fc in self.frame_cache.items()
+                if tnow - fc["start_time"] > frame_timeout
+            ]
+            for fid in stale:
+                c = self.frame_cache.pop(fid)
+                received = len(c["received"])
+                total = c["total"]
+                if received > total // 2:
+                    partial = b"".join(c["chunks"])
+                    ok = self._try_set_jpeg(partial)
+                    self.total_frames += 1
+                    self.fps_history.append(tnow)
+                    print(f"[Camera] 🔧 帧 {fid} 超时渲染 | {received}/{total} | {'✅' if ok else '⚠️'}")
+                else:
+                    self.timeout_count += 1
+                    print(f"[Camera] ⚠️ 帧 {fid} 超时丢弃 | {received}/{total}")
+
+            # ── 提前渲染 (互联网: 1.0s 无新分片) ──
+            early_render = [
+                fid for fid, fc in self.frame_cache.items()
+                if tnow - fc["last_chunk_time"] > early_render_stale
+                and len(fc["received"]) > fc["total"] // 2
+            ]
+            for fid in early_render:
+                c = self.frame_cache.pop(fid)
+                received = len(c["received"])
+                total = c["total"]
+                partial = b"".join(c["chunks"])
+                ok = self._try_set_jpeg(partial)
+                self.total_frames += 1
+                self.fps_history.append(tnow)
+                print(f"[Camera] ⚡ 帧 {fid} 提前渲染 | {received}/{total} | {'✅' if ok else '⚠️'}")
+
+            # ── 周期诊断 (每 15s) ──
+            if tnow - self._last_debug_ts > 15:
+                rate = self.fps
+                print(f"[Camera] 📊 ESP32-UDP直连 | fps={rate:.1f} | 总帧={self.total_frames} | "
+                      f"分片={self.chunk_count} | 超时丢弃={self.timeout_count} | "
+                      f"缓存={len(self.frame_cache)}")
+                self._last_debug_ts = tnow
+
+        # 清理
         if self.sock:
             try:
                 self.sock.close()

@@ -393,9 +393,9 @@ async def auth_unlock(request: Request):
         )
     cookie_val = _make_cookie_value(DEMO_PASSWORD)
     resp = JSONResponse({"ok": True, "message": "已解锁", "locked": False})
-    # 使用 raw_headers 兼容 uvloop（避免 set_cookie 静默失败）
-    resp.raw_headers.append(
-        (b"set-cookie", f"demo_unlock={cookie_val}; HttpOnly; Path=/; SameSite=Lax".encode())
+    resp.set_cookie(
+        key="demo_unlock", value=cookie_val,
+        httponly=True, path="/", samesite="lax"
     )
     return resp
 
@@ -404,9 +404,7 @@ async def auth_unlock(request: Request):
 async def auth_lock():
     """主动锁定：清除 demo_unlock Cookie"""
     resp = JSONResponse({"ok": True, "message": "已重新锁定", "locked": True})
-    resp.raw_headers.append(
-        (b"set-cookie", b"demo_unlock=; Max-Age=0; Path=/")
-    )
+    resp.delete_cookie(key="demo_unlock", path="/")
     return resp
 
 

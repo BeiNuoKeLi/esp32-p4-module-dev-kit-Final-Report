@@ -232,12 +232,11 @@ class CameraServer:
             print("[Camera] ⚠️ OpenCV 未安装，摄像头功能降级为离线模式")
 
     def _make_placeholder(self) -> bytes:
-        """生成诊断占位 JPEG (红色=占位图bug, 黑色=摄像头暗帧)"""
+        """生成黑色占位 JPEG (无需 cv2 的纯 Python 实现)"""
         if self.cv2_ok:
             import numpy as np
-            red = np.zeros((240, 320, 3), dtype=np.uint8)
-            red[:, :, 2] = 255  # BGR红色通道
-            _, buf = self._cv2.imencode('.jpg', red,
+            black = np.zeros((240, 320, 3), dtype=np.uint8)
+            _, buf = self._cv2.imencode('.jpg', black,
                                          [self._cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
             return buf.tobytes()
         else:

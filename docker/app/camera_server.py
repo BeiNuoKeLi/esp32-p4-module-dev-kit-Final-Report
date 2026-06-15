@@ -992,27 +992,27 @@ class CameraServer:
         """
         boundary = "--frameboundary"
         last_seq = -1
-        keepalive_interval = 0.5   # ★ 从 2.0s 降到 0.5s，减少事件丢失后的冻结时长
+        keepalive_interval = 0.5
+        last_sent_jpeg = self.placeholder_jpeg  # 初始占位，收到首帧后永不黑屏
 
         while self.running:
-            # 等待新帧到达
             self._mjpeg_new_frame.wait(timeout=keepalive_interval)
-            # ★ 竞态安全: 先读 seq，再 clear，再二次确认
             current_seq = self._mjpeg_frame_seq
             self._mjpeg_new_frame.clear()
-            # ★ 二次读: 若 clear() 后 seq 已变，说明 push_jpeg() 在窗口内触发
-            #    但 Event 已被 clear 清掉 → 重新 set() 确保下一轮不阻塞
             if self._mjpeg_frame_seq != current_seq:
                 self._mjpeg_new_frame.set()
                 current_seq = self._mjpeg_frame_seq
 
             if self.stream_enabled:
                 if current_seq != last_seq:
-                    jpeg_data = self.latest_jpeg or self.placeholder_jpeg
-                    last_seq = current_seq
+                    jpeg_data = self.latest_jpeg
+                    if jpeg_data:
+                        last_sent_jpeg = jpeg_data  # ★ 缓存好帧，用于回退
+                        last_seq = current_seq
+                    else:
+                        jpeg_data = last_sent_jpeg   # ★ 绝不发黑图，复用上一好帧
                 else:
-                    # 超时无新帧，重发最后一帧保活（非黑屏）
-                    jpeg_data = self.latest_jpeg or self.placeholder_jpeg
+                    jpeg_data = last_sent_jpeg
             else:
                 jpeg_data = self.placeholder_jpeg
 

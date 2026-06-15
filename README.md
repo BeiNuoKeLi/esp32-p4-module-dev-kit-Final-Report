@@ -79,7 +79,7 @@ ESP32-CAM ──UDP 分片推流──► VPS :8003  ← ★ 服务器部署 (CA
   │   CameraWebServer.ino                                   ↓
   │   WiFiUDP 直连, 协议 [0xAA55+FrameID+ChunkIdx+TotalChunks][JPEG分片]  Docker camera_server
   │   帧驱动 ~10fps, 零连接开销, 无 RTT 窗口限制               ↓
-  │   跨海 UDP 吞吐 238Mbps vs TCP 2Mbps (119x)        MJPEG `<img>` 原生渲染
+  │   跨海 UDP 吞吐 238Mbps vs TCP 2Mbps (119x)        ReadableStream + BlobURL 逐帧渲染
   │   UDP 特性: 无条件全速推流, 不支持按需降速 (TCP 模式下有)
 
 ESP32-CAM ──TCP 二进制推流──► VPS :8003  ← 备选 (CAMERA_MODE=tcp, v3.8)
@@ -176,7 +176,7 @@ D:\Anaconda3\envs\ForAgents\python.exe pc_receiver.py
 | 分片大小 | 每包 ≤1408 字节（安全互联网 MTU，适配各种 NAT/路由） |
 | 环境变量 | `CAMERA_MODE=udp_esp32` |
 | 帧率 | ~10 fps（帧驱动，不受 RTT 影响） |
-| 前端显示 | MJPEG `<img>` 原生渲染 (零 JS 开销，GPU 合成) |
+| 前端显示 | `fetch` → ReadableStream → boundary 二进制切分 → BlobURL |
 | 按需推送 | **不支持**（UDP 无连接态，ESP32-CAM 无条件全速推流） |
 | 容错机制 | VPS 侧分片重组 + 超时 5s + 提前渲染 1s（≥50% 分片即渲染） |
 
@@ -199,7 +199,7 @@ D:\Anaconda3\envs\ForAgents\python.exe pc_receiver.py
 | 采集方式 | Docker `camera_server.py` 直接 HTTP GET `/capture` 拉取 JPEG (TCP 零丢包) |
 | 环境变量 | `CAMERA_MODE=http`, `ESP32_CAM_URL`, `CAMERA_HTTP_FPS` |
 | 默认帧率 | 5 fps |
-| 前端显示 | MJPEG `<img>` 原生渲染 (零 JS 开销，GPU 合成) |
+| 前端显示 | `fetch` → ReadableStream → boundary 二进制切分 → BlobURL |
 
 #### 备选模式：ESP32-P4 UDP 中继 (已弃用，默认关闭)
 

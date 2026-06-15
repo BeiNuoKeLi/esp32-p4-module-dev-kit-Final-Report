@@ -69,5 +69,14 @@ VGA 分辨率下黑闪可能原因（未最终确认）：
 ## 结论
 
 **HVGA (480×320) @ quality=15 是当前跨海互联网推流的稳定分辨率上限。**
-VGA 黑屏闪烁根因在 ESP32 端（编码/内存/WiFi），服务端 OpenCV 亮度检测已证明帧本身不暗。
-如需升级分辨率，需在 ESP32 端解决编码器/内存问题后再尝试。
+
+### 📌 2026-06-15 最终定位：黑屏根因不在后端
+
+经过 19 次服务端 commit + MJPEG 流诊断日志实验，最终确认**服务端产出的每一帧都是合法的 JPEG 数据**（seq 连续、size 8-15KB、stream=true）。黑屏的真正根因是**前端 JS 解析的两个 Bug**：
+
+1. **首帧被丢弃**：搜索串 `\r\n--frameboundary` 无法匹配流首的裸 `--frameboundary`
+2. **帧尾裁切错误**：`buf.slice(hdrEnd, buf.length - 2)` 在多帧共缓冲时夹带了下一帧的 boundary + header，导致 JPEG 损坏 → 浏览器解码失败 → 黑屏
+
+**修复**（`dashboard.html`）：改用 `--frameboundary`(15B) 搜索 + 下一个 boundary 位置定界帧尾。
+
+> 教训：服务端一切正常时，先做数据流分界实验（print 日志），避免在后端挖洞数小时。

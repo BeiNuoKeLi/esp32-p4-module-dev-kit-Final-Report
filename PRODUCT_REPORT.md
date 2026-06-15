@@ -69,7 +69,7 @@
 | **AIOSQLite** | 异步 SQLite 数据库，存储传感器数据、库存、操作日志、报警事件 |
 | **WebSocket** | 实时推送通道，传感器数据变更即时通知前端 |
 | **Chart.js** | 前端图表库，展示温度/湿度历史趋势曲线 |
-| **camera_server** | 摄像头服务：**UDP 分片推流 (v4.0 推荐)** / TCP 二进制推流 (v3.8) / Push 直推 / HTTP 拉取 / UDP 中继 (备选) → MJPEG 流转换 + pyzbar 二维码扫码。前端使用 `<img>` MJPEG 原生渲染（零 JS 开销，GPU 合成）。支持 stream 开关暂停/恢复。**UDP 模式**：无条件全速推流 ~10fps，跨海吞吐 238Mbps 无 RTT 影响，协议 [0xAA55+FrameID+ChunkIdx+TotalChunks] 分片重组 + 超时容错。**TCP 模式**：长连接推流，支持心跳 + 无观看者降速 1fps 省带宽 ~95%，但跨海受 RTT 窗口限制。**v3.5 优化**：移除 `cv2.imdecode` 热路径 + Canvas JS 轮询，端到端延迟从 1-3s 降至 <200ms。 |
+| **camera_server** | 摄像头服务：**UDP 分片推流 (v4.0 推荐)** / TCP 二进制推流 (v3.8) / Push 直推 / HTTP 拉取 / UDP 中继 (备选) → MJPEG 流转换 + pyzbar 二维码扫码。前端使用 `fetch` → ReadableStream → 二进制 boundary 切分 → BlobURL 逐帧渲染（避开 `<img>` 直连 MJPEG 的 Chrome 解码器内部缓冲）。支持 stream 开关暂停/恢复。**UDP 模式**：无条件全速推流 ~10fps，跨海吞吐 238Mbps 无 RTT 影响，协议 [0xAA55+FrameID+ChunkIdx+TotalChunks] 分片重组 + 超时容错。**TCP 模式**：长连接推流，支持心跳 + 无观看者降速 1fps 省带宽 ~95%，但跨海受 RTT 窗口限制。**v3.5 优化**：移除 `cv2.imdecode` 热路径 + Canvas JS 轮询，端到端延迟从 1-3s 降至 <200ms。 |
 
 ### 2.3 后端 API 路由总览
 
@@ -146,7 +146,7 @@ ESP32-CAM ──HTTP POST──► VPS :8001 /api/camera/push  (CAMERA_MODE=push
 ```
 ESP32-CAM ──HTTP/TCP──► Docker camera_server  (CAMERA_MODE=http)
   │   /capture + /stream           ↓
-  │   HVGA 480×320, q=12      MJPEG `<img>` 原生渲染 + 二维码解码
+  │   HVGA 480×320, q=12      ReadableStream + BlobURL 逐帧渲染 + 二维码解码
   └──────────────────────  Web 仪表盘实时显示
 ```
 
@@ -397,7 +397,7 @@ L3 (紧急):    红色闪烁  [🚨 紧急] 多重危险 - 立即排风
 | 阶段八 | 摄像头帧率优化 → HVGA 480×320 + Docker 直连 TCP 架构 | ✅ | 2026-06-11 |
 | 阶段九 | 仿真注入 + 报警管理增强 + 前端交互优化 | ✅ | 2026-06-13 |
 | 阶段十 | Camera 按需推送/心跳模式（省带宽 ~99.8%） | ✅ | 2026-06-14 |
-| 阶段十一 | Camera 渲染链路优化 → MJPEG `<img>` 原生渲染 + 移除 imdecode 热路径 | ✅ | 2026-06-14 |
+| 阶段十一 | Camera 渲染链路优化 → ReadableStream + BlobURL 逐帧渲染 + 移除 imdecode 热路径 | ✅ | 2026-06-14 |
 
 ### 9.1 已完成功能清单（v3.5）
 
@@ -409,7 +409,7 @@ L3 (紧急):    红色闪烁  [🚨 紧急] 多重危险 - 立即排风
 - ✅ **报警历史系统**（分页列表 + 级别筛选 + 详情弹窗 + 现场快照 + 确认 + 一键清空）
 - ✅ 报警去重策略（同级别 30s 内仅记录一条，级别变化立即写入）
 - ✅ MQ-135/光敏 DO 数字输出状态实时显示（正常=绿色 / 报警=红色闪烁）
-- ✅ 摄像头 MJPEG `<img>` 原生渲染 + **视频流开关**（关闭时画面清空，不消耗带宽）
+- ✅ 摄像头 ReadableStream + BlobURL 逐帧渲染 + **视频流开关**（关闭时画面清空，不消耗带宽）
 - ✅ 二维码扫码入库/出库（化肥标签 FERT-20260611-001~006）+ CLAHE 增强
 - ✅ **仿真注入系统**（Web → ESP32-P4 UDP 命令，一键复现 L1/L2/L3 报警场景）
 - ✅ 待机模式 / 出入库模式（UI 状态切换，扫码按钮联动禁用）
@@ -421,7 +421,7 @@ L3 (紧急):    红色闪烁  [🚨 紧急] 多重危险 - 立即排风
 - ✅ **HVGA 480×320** 分辨率，JPEG quality=12，识别率提升
 - ✅ ESP32-P4 UDP 中继 (备选, 默认关闭)
 - ✅ **CameraWebServer/** ESP32-CAM Arduino 工程源码 (OV2640)
-- ✅ **MJPEG `<img>` 原生渲染** 替代 Canvas 快照轮询 (零 JS 开销，GPU 合成，延迟 <200ms)
+- ✅ **ReadableStream + BlobURL 逐帧渲染** 替代 Canvas 快照轮询 + `<img>` 原生 MJPEG (延迟 <200ms)
 - ✅ 工业摄像头 KYT-U400 支持
 - ✅ 独立预览窗口 (Toplevel)
 - ✅ 视频流关闭后画面立即清空（节省带宽 + 隐私保护）
@@ -433,7 +433,7 @@ L3 (紧急):    红色闪烁  [🚨 紧急] 多重危险 - 立即排风
 - ✅ Wi-Fi 连接轮询等待
 - ✅ **HTTP 超时 10s / Content-Length ≤0 拦截 / EOF 边界修复**（camera_http_fetch.c）
 - ✅ JS try-catch 语法修复（消除 `Missing catch or finally after try` 运行时错误）
-- ✅ MJPEG `<img>` 原生渲染消除 Canvas 渲染开销与 Blob 内存泄漏风险
+- ✅ ReadableStream + BlobURL 逐帧渲染消除 Canvas 渲染开销与 Chrome MJPEG 解码器缓冲延迟
 
 ---
 

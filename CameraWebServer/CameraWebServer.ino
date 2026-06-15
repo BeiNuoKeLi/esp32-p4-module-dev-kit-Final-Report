@@ -46,13 +46,13 @@ void setup() {
   //config.pixel_format = PIXFORMAT_RGB565; // for face detection/recognition
   config.fb_location = CAMERA_FB_IN_PSRAM;
 
-  // ★ QVGA 320x240: 互联网推流文件小→FPS 稳定, 二维码近距离识别够用
-  // ★ jpeg_quality=25: q12→3fps | q20→6fps | q25→10fps 稳定 | q35 块状伪影
+  // ★ HVGA 480x320: 2xQVGA像素，互联网推流文件适中 ~8-10KB，FPS稳定
+  // ★ jpeg_quality=15: 高画质, ~8KB/帧 ≈8分片@1024, 预计15-20fps
   if (psramFound()) {
-    config.frame_size = FRAMESIZE_VGA;     // ★ 640x480, 暗帧问题已定位修复(曝光振荡→8KB阈值过滤)
-    config.jpeg_quality = 20;              // ★ VGA适配压缩, ~20KB/帧 ≈17分片@1280, 预计15fps
+    config.frame_size = FRAMESIZE_HVGA;     // ★ 480x320 折中 (QVGA太糊/VGA闪屏)
+    config.jpeg_quality = 15;              // ★ 高画质, ~8KB/帧 ≈8分片
     config.fb_count = 2;                   // ★ 双缓冲: 连续DMA，帧立即可取
-    config.grab_mode = CAMERA_GRAB_WHEN_EMPTY; // ★ 仅取完整帧，防高分辨率写入坏帧
+    config.grab_mode = CAMERA_GRAB_WHEN_EMPTY; // ★ 仅取完整帧
   } else {
     // 无 PSRAM 时降至最低分辨率 + 单缓冲
     config.frame_size = FRAMESIZE_QQVGA;
@@ -137,7 +137,7 @@ void setup() {
 //    UDP 吞吐量实测 238Mbps vs TCP 2Mbps (119x)，不受跨海 RTT 影响
 #define CAM_STREAM_HOST    "38.55.199.220"
 #define CAM_STREAM_PORT    8003
-#define UDP_CHUNK_SIZE     1280  // ★ VGA优化: 减少分片数 (IP包1316B, 安全MTU)
+#define UDP_CHUNK_SIZE     1024  // ★ 安全互联网 MTU (1400B大包跨网被丢弃)
 
 #include <WiFiUdp.h>
 

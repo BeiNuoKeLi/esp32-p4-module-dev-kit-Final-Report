@@ -16,8 +16,10 @@
 | 编译器 | RISC-V 32-bit |
 | PSRAM | 已启用 32MB（`CONFIG_SPIRAM=y`，200MHz 16线模式），详见 `PSRAM_DEBUG_GUIDE.md` |
 | WiFi | 已通过 `esp_wifi_remote`（SDIO → ESP32-C6 协处理器）联网，`app_main()` 中已调用 `wifi_init_sta()` |
-| 上位机 IP | `10.16.234.215`（Windows 局域网, 2026-06-04 ipconfig 确认） |
-| 通信端口 | `8080`（UDP） |
+| 上位机 IP (本地) | `10.16.234.215`（Windows 局域网, 2026-06-04 ipconfig 确认） |
+| 上位机 IP (VPS) | `38.55.199.220`（benoc.top, 2026-06-13 部署） |
+| 通信端口 (本地) | `8080`（UDP） |
+| 通信端口 (VPS) | `8002`（UDP, → 容器 :8080） |
 
 ---
 
@@ -195,13 +197,15 @@ Rs = (Vc / Vout - 1) × RL
 
 ```
 main/
-├── smart_monitor_main.c   # 已有：WiFi STA 初始化 + 传感器/OLED 任务创建
+├── smart_monitor_main.c   # 已有：WiFi STA 初始化 + 传感器/OLED/报警任务创建
 ├── sensors.h            # 已有：引脚宏、传感器数据结构、函数声明
 ├── sensors.c            # 已有：全部传感器驱动 + ADC 滤波 + 错误处理
 ├── oled_ssd1306.h       # 已有：SSD1306 OLED I2C 驱动头文件
 ├── oled_ssd1306.c       # 已有：SSD1306 OLED framebuffer 渲染 + 6x8 字体
 ├── udp_sender.h         # 新建：UDP 任务声明
-└── udp_sender.c         # 新建：JSON 组包 + UDP Socket
+├── udp_sender.c         # 新建：JSON 组包 + UDP Socket
+├── sim_poll.h           # 新建：仿真注入 & 报警配置 HTTP 轮询声明
+└── sim_poll.c           # 新建：HTTP GET 轮询 /api/sim/poll + /api/alarm/config/poll
 ```
 
 ### 5.2 FreeRTOS 任务设计
@@ -214,7 +218,8 @@ main/
 | `photo_sensor` | 3 | 4096 | 自动 | 每 2 秒 |
 | `oled_display` | 2 | 4096 | 自动 | 每 1 秒 |
 | `buzzer_alarm` | 2 | 5120 | 自动 | 每 500ms |
-| `Task_UDP_Send` | 2 | 4096 | Core 1 | 事件驱动（待实现） |
+| `Task_UDP_Send` | 2 | 4096 | Core 1 | 每 2s |
+| `Task_Sim_Poll` | 1 | 8192 | 自动 | 每 3s (仿真) + 10s (配置) |
 
 ### 5.3 任务间数据同步
 
@@ -325,11 +330,13 @@ DHT11 和 DS18B20 使用不同的 GPIO，需分别实现驱动函数，不可混
 **配置下发链路**：
 ```
 Web 仪表盘 POST /api/alarm/config → Docker SQLite 镜像
-     └─ UDP "cmd:config" → ESP32 UDP 8081 → udp_sim_command_task()
-            ├─ 解析 JSON → 写入 g_sensor_data 运行时字段
-            ├─ save_alarm_config_to_nvs() 持久化
-            └─ 返回 OK 确认 → Docker → Web 仪表盘
+     ├─ UDP "cmd:config" → ESP32 UDP 8081 (快速路径, 局域网可达)
+     │     └─ udp_sim_command_task() 解析 → 写入 g_sensor_data → save_alarm_config_to_nvs()
+     │
+     └─ 写入 _pending_alarm_cfg 暂存区 → ESP32 HTTP GET /api/alarm/config/poll?seq=N (可靠路径, NAT 穿透)
+           └─ sim_poll_task() 每 10s 轮询 → apply_alarm_config() → save_alarm_config_to_nvs() 持久化
 ```
+- **v3.7 启动同步**：seq=0 且无待下发配置时，VPS 从 SQLite 返回当前完整配置作为初始同步，解决 Docker 重启后 `_pending_alarm_cfg` 内存队列丢失导致 ESP32 拿不到配置的问题。
 
 ### 5.6 报警升级定时
 
@@ -345,8 +352,10 @@ Web 仪表盘 POST /api/alarm/config → Docker SQLite 镜像
 
 | 参数 | 值 |
 |------|-----|
-| 目标 IP | `192.168.5.5` |
-| 目标端口 | `8080` |
+| 目标 IP (本地) | `10.16.234.215` |
+| 目标 IP (VPS) | `38.55.199.220` |
+| 目标端口 (本地) | `8080` |
+| 目标端口 (VPS) | `8002` |
 | 发送间隔 | 每 2 秒（跟随采集周期） |
 | 单包最大 | < 512 字节（避免 IP 分片） |
 

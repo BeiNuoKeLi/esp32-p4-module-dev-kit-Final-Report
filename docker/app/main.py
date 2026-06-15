@@ -25,7 +25,7 @@ import json
 import asyncio
 import time as _time
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, StreamingResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -120,10 +120,18 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 
-# ★ ESP32-P4 设备 IP（仿真注入目标）
+# ★ ESP32-P4 设备 IP（仿真注入目标，UDP 模式不可达时由轮询模式接管）
 ESP32_IP = os.environ.get("ESP32_IP", "10.16.234.86")
 ESP32_CMD_PORT = 8081
 SIM_ACTIVE = False  # 轻量状态标志，仅用于前端显示，不再拦截数据
+
+# ★ 仿真命令暂存（反转轮询模式: ESP32 HTTP GET 拉取命令，替代 VPS→ESP32 UDP 入站）
+_pending_sim_cmd: dict = {"seq": 0, "data": None, "ts": 0.0}
+_sim_cmd_lock = asyncio.Lock()
+
+# ★ 报警配置暂存（反转轮询模式: ESP32 HTTP GET 拉取配置，替代 VPS→ESP32 UDP 入站）
+_pending_alarm_cfg: dict = {"seq": 0, "data": None, "ts": 0.0}
+_alarm_cfg_lock = asyncio.Lock()
 
 
 # ==================== 内置 UDP 监听器 (MCU → Docker 直通) ====================
@@ -133,6 +141,8 @@ class SensorUDPProtocol(asyncio.DatagramProtocol):
     asyncio UDP 协议 — 监听 0.0.0.0:8080，直接接收 ESP32-P4 传感器 JSON。
     替代 udp_to_web.py 桥接脚本，消除外部依赖。
     """
+
+    _count = 0
 
     def datagram_received(self, data: bytes, addr: tuple):
         """收到 UDP 数据报 → 解析 JSON → 提交到传感器处理流水线"""
@@ -147,6 +157,10 @@ class SensorUDPProtocol(asyncio.DatagramProtocol):
             obj = json.loads(raw)
         except json.JSONDecodeError:
             return
+
+        self._count += 1
+        if self._count <= 3 or self._count % 10 == 0:
+            print(f"[UDP] 收到 #{self._count} 来自 {addr} | type={obj.get('type','?')}")
 
         # 仅处理 sensor data 类型（出入库仍通过 HTTP API 操作）
         msg_type = obj.get("type", "data")
@@ -211,8 +225,8 @@ async def _process_udp_sensor(obj: dict):
     """异步处理 UDP 收到的传感器数据"""
     try:
         await _ingest_sensor_data(obj)
-    except Exception:
-        pass  # 字段不合法，静默丢弃
+    except Exception as e:
+        print(f"[UDP/Sensor] 处理失败: {type(e).__name__}: {e}")
 
 
 async def _process_udp_warehouse(obj: dict, msg_type: str):
@@ -520,11 +534,9 @@ class _SimResponseProtocol(asyncio.DatagramProtocol):
 @app.post("/api/sim/inject")
 async def sim_inject(data: SimInjectRequest):
     """
-    注入仿真传感器数据 → 转发到 ESP32-P4 UDP 8081。
-    MCU 收到后替代真实传感器读数，通过 UDP 8080 回传处理后数据。
-    Web 端通过正常的 UDP 8080 → DB → WebSocket 流程获取更新。
+    注入仿真传感器数据 → 写入暂存区，等待 ESP32 HTTP 轮询拉取。
+    ESP32 通过 GET /api/sim/poll 每 3s 拉取一次待执行命令。
     """
-    # 构建 MCU 期望的 JSON（与 smart_monitor_sim_gui.py _apply_sim 一致）
     cmd = {
         "dht11_t": data.dht11_t,
         "dht11_h": data.dht11_h,
@@ -534,46 +546,57 @@ async def sim_inject(data: SimInjectRequest):
         "photo_raw": data.photo_raw,
         "photo_do": data.photo_do,
     }
-    msg = json.dumps(cmd)
-
-    ok, reply = await _udp_send_cmd(msg)
-    if not ok:
-        print(f"[Sim] ❌ UDP 发送失败: {reply}")
-        return {"ok": False, "message": reply}
-
-    if reply:
-        print(f"[Sim] ← MCU 确认: {reply}")
-    else:
-        print("[Sim] ⚠️ 未收到 MCU 确认 (超时)")
+    async with _sim_cmd_lock:
+        global _pending_sim_cmd
+        _pending_sim_cmd["seq"] += 1
+        _pending_sim_cmd["data"] = cmd
+        _pending_sim_cmd["ts"] = _time.time()
+        seq = _pending_sim_cmd["seq"]
 
     async with _sim_lock:
         global SIM_ACTIVE
         SIM_ACTIVE = True
-    return {"ok": True, "message": f"仿真命令已发送到 ESP32 [{ESP32_IP}], MCU 将回传处理后的数据"}
+    print(f"[Sim] 📝 仿真命令已暂存 (seq={seq}), 等待 ESP32 轮询拉取")
+    return {"ok": True, "message": f"仿真命令已暂存 (seq={seq}), 等待 ESP32 拉取后生效"}
+
+
+@app.get("/api/sim/poll")
+async def sim_poll(seq: int = 0):
+    """
+    ESP32 轮询端点 — 返回当前待执行的仿真命令。
+
+    参数:
+        seq: ESP32 上一次收到的命令序号。仅当 VPS 端 seq 更大时返回新命令。
+             避免重复执行同一命令。
+
+    返回:
+        {"seq": N, "data": {...}}  — 有待执行命令
+        {"seq": N, "data": null}   — 无新命令
+    """
+    async with _sim_cmd_lock:
+        if _pending_sim_cmd["data"] is not None and _pending_sim_cmd["seq"] > seq:
+            return {"seq": _pending_sim_cmd["seq"], "data": _pending_sim_cmd["data"]}
+        return {"seq": _pending_sim_cmd["seq"], "data": None}
 
 
 @app.post("/api/sim/reset")
 async def sim_reset():
     """
-    发送 reset 命令到 ESP32-P4 UDP 8081。
+    暂存 reset 命令 → 等待 ESP32 轮询拉取。
     MCU 收到后关闭仿真模式，恢复真实传感器读数。
     """
-    msg = '{"cmd":"reset"}'
-
-    ok, reply = await _udp_send_cmd(msg)
-    if not ok:
-        print(f"[Sim] ❌ Reset UDP 发送失败: {reply}")
-        return {"ok": False, "message": reply}
-
-    if reply:
-        print(f"[Sim] ← MCU reset 确认: {reply}")
-    else:
-        print("[Sim] ⚠️ 未收到 MCU reset 确认 (超时)")
+    async with _sim_cmd_lock:
+        global _pending_sim_cmd
+        _pending_sim_cmd["seq"] += 1
+        _pending_sim_cmd["data"] = {"cmd": "reset"}
+        _pending_sim_cmd["ts"] = _time.time()
+        seq = _pending_sim_cmd["seq"]
 
     async with _sim_lock:
         global SIM_ACTIVE
         SIM_ACTIVE = False
-    return {"ok": True, "message": "已发送 reset 到 ESP32, MCU 恢复真实传感器模式"}
+    print(f"[Sim] 📝 Reset 命令已暂存 (seq={seq}), 等待 ESP32 拉取")
+    return {"ok": True, "message": "Reset 命令已暂存, 等待 ESP32 拉取后恢复真实传感器模式"}
 
 
 # ==================== HTTP API — 摄像头 ====================
@@ -608,6 +631,36 @@ async def camera_snapshot():
     )
 
 
+@app.post("/api/camera/push")
+async def camera_push(request: Request):
+    """
+    ESP32-CAM 直推 JPEG 帧 (服务器版)
+    接收 raw body → 写入 camera_server.latest_jpeg
+    通过 X-Push 响应头告知 ESP32-CAM 是否继续推送（零额外解析开销）
+    """
+    from fastapi.responses import JSONResponse
+    jpeg_data = await request.body()
+    if jpeg_data:
+        cam.push_jpeg(jpeg_data)
+        resp = JSONResponse({"ok": True, "size": len(jpeg_data)})
+    else:
+        resp = JSONResponse({"ok": False})
+    resp.headers["X-Push"] = "1" if cam.should_push else "0"
+    return resp
+
+
+@app.get("/api/camera/push_status")
+async def camera_push_status():
+    """
+    轻量心跳端点: ESP32-CAM 暂停后定期检查是否需要恢复推送
+    通过 X-Push 响应头传递状态，ESP32 无需解析 body，~30 bytes
+    """
+    from fastapi.responses import JSONResponse
+    resp = JSONResponse({"push": cam.should_push})
+    resp.headers["X-Push"] = "1" if cam.should_push else "0"
+    return resp
+
+
 @app.post("/api/camera/scan", response_model=ScanResult)
 async def camera_scan():
     """
@@ -616,6 +669,11 @@ async def camera_scan():
     """
     if not cam.cv2_ok:
         return ScanResult(success=False, message="OpenCV 未安装，扫码不可用")
+
+    # ★ 按需解码 JPEG → OpenCV frame（在线程池中执行，不阻塞事件循环）
+    ok = await asyncio.to_thread(cam.try_decode_frame)
+    if not ok:
+        return ScanResult(success=False, message="无可用画面（摄像头可能未连接）")
 
     frame = cam.latest_frame
     if frame is None:
@@ -765,25 +823,66 @@ async def post_alarm_config(data: AlarmConfigRequest):
     """
     更新报警配置：
     1. 写入 SQLite 镜像
-    2. 通过 UDP 转发到 ESP32 MCU
-    3. 返回更新后的配置
+    2. 通过 UDP 尝试发送（快速路径，可能因 NAT 失败）
+    3. 写入轮询暂存区（可靠路径，ESP32 HTTP 轮询拉取）
+    4. 返回更新后的配置
     """
     config_dict = data.model_dump()
 
     # Step 1: 写 SQLite
     updated = await database.set_alarm_config(config_dict)
 
-    # Step 2: UDP 转发到 MCU
+    # Step 2: UDP 快速路径（可能因 NAT 被阻断，静默失败）
     ok, reply = await _send_alarm_config_to_mcu(config_dict)
     if ok:
-        print(f"[AlarmConfig] 已发送到 ESP32, 回复: {reply or '(无回复)'}")
+        print(f"[AlarmConfig] UDP 已发送到 ESP32, 回复: {reply or '(无回复)'}")
     else:
-        print(f"[AlarmConfig] ⚠️ UDP 发送失败: {reply}")
+        print(f"[AlarmConfig] ⚠️ UDP 发送失败 (NAT?), 依赖轮询通道: {reply}")
+
+    # Step 3: 写入轮询暂存区（可靠路径，不受 NAT 影响）
+    cfg_cmd = {"cmd": "config", **config_dict}
+    async with _alarm_cfg_lock:
+        global _pending_alarm_cfg
+        _pending_alarm_cfg["seq"] += 1
+        _pending_alarm_cfg["data"] = cfg_cmd
+        _pending_alarm_cfg["ts"] = _time.time()
+        seq = _pending_alarm_cfg["seq"]
+    print(f"[AlarmConfig] 📝 配置已暂存 (seq={seq}), 等待 ESP32 HTTP 轮询拉取")
 
     return AlarmConfigResponse(
         **updated,
-        message="配置已更新" + (" (已同步到MCU)" if ok else " (MCU同步失败)")
+        message="配置已更新 (已暂存, 等待 ESP32 轮询同步)"
     )
+
+
+@app.get("/api/alarm/config/poll")
+async def alarm_config_poll(seq: int = 0):
+    """
+    ESP32 轮询端点 — 返回待下发的报警配置。
+
+    参数:
+        seq: ESP32 上一次收到的配置序号。仅当 VPS 端 seq 更大时返回新配置。
+
+    返回:
+        {"seq": N, "data": {"cmd":"config",...}}  — 有待下发配置
+        {"seq": N, "data": null}                   — 无新配置
+
+    启动同步 (v3.7):
+        当 seq=0 且无待下发配置时（ESP32 刚启动 / Docker 刚重启），
+        从 SQLite 返回当前完整配置作为初始同步，确保 ESP32 不依赖过期的 NVS 值。
+    """
+    async with _alarm_cfg_lock:
+        if _pending_alarm_cfg["data"] is not None and _pending_alarm_cfg["seq"] > seq:
+            return {"seq": _pending_alarm_cfg["seq"], "data": _pending_alarm_cfg["data"]}
+
+        # ★ 启动同步: seq=0 且无新下发命令 → 返回 SQLite 当前配置
+        if seq == 0 and _pending_alarm_cfg["data"] is None:
+            current_cfg = await database.get_alarm_config()
+            sync_data = {"cmd": "config", **current_cfg}
+            print(f"[AlarmConfig] 🔄 启动同步 → ESP32 (seq={_pending_alarm_cfg['seq']})")
+            return {"seq": _pending_alarm_cfg["seq"], "data": sync_data}
+
+        return {"seq": _pending_alarm_cfg["seq"], "data": None}
 
 
 # ==================== WebSocket ====================

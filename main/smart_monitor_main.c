@@ -19,6 +19,7 @@
 #include "oled_ssd1306.h"
 #include "udp_sender.h"
 #include "camera_http_fetch.h"
+#include "sim_poll.h"
 #include "lwip/sockets.h"
 
 /* ================== Wi-Fi 配置（通过 menuconfig 设置）================== */
@@ -170,7 +171,7 @@ static void load_alarm_config_from_nvs(void)
 /**
  * @brief 将当前报警配置保存到 NVS（在收到 config 命令时调用）
  */
-static void save_alarm_config_to_nvs(void)
+void save_alarm_config_to_nvs(void)
 {
     nvs_handle_t h;
     esp_err_t ret = nvs_open(NVS_ALARM_NS, NVS_READWRITE, &h);
@@ -927,8 +928,11 @@ void app_main(void)
     /* 创建 UDP 传感器数据发送任务 (优先级2, 栈3584, 不绑核避免 SDIO 中断冲突) */
     xTaskCreate(udp_sender_task, "Task_UDP_Send", 3584, NULL, 2, NULL);
 
-    /* 创建 UDP 仿真命令接收任务 (优先级1, 栈3072) — PC GUI 远程注入传感器值 */
+    /* 创建 UDP 仿真命令接收任务 (优先级1, 栈3072) — 局域网 PC GUI 直接注入 */
     xTaskCreate(udp_sim_command_task, "Task_UDP_Sim", 3072, NULL, 1, NULL);
+
+    /* 创建 HTTP 仿真命令轮询任务 (优先级1, 栈8192) — 公网 VPS 反转轮询 */
+    xTaskCreate(sim_poll_task, "Task_Sim_Poll", 8192, NULL, 1, NULL);
 
     /* 创建 HTTP 摄像头拉图转发任务 (优先级1, 栈8192) — ESP32-CAM → HTTP → UDP */
 #ifdef CONFIG_CAMERA_HTTP_ENABLED

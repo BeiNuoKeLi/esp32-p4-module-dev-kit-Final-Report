@@ -16,7 +16,7 @@ class SensorData(BaseModel):
     dht11_h: Optional[float] = None
     ds18b20_t: Optional[float] = None
     mq135_v: Optional[float] = None
-    light_raw: Optional[int] = None     # 光敏 ADC 原始值 (0~4095)
+    light_raw: Optional[float] = None     # 光敏 ADC 原始值 (0~4095)
     mq135_do: Optional[int] = None    # 0=超阈值, 1=正常
     photo_do: Optional[int] = None    # 0=超阈值, 1=正常
     alert: int = 0          # 0=正常, 1=任一报警源触发
@@ -32,7 +32,7 @@ class SensorRecord(BaseModel):
     dht11_h: Optional[float] = None
     ds18b20_t: Optional[float] = None
     mq135_v: Optional[float] = None
-    light_raw: Optional[int] = None
+    light_raw: Optional[float] = None
     mq135_do: Optional[int] = None
     photo_do: Optional[int] = None
     level: int = 0
@@ -48,7 +48,7 @@ class StatusResponse(BaseModel):
     dht11_h: Optional[float] = None
     ds18b20_t: Optional[float] = None
     mq135_v: Optional[float] = None
-    light_raw: Optional[int] = None
+    light_raw: Optional[float] = None
     mq135_do: Optional[int] = None
     photo_do: Optional[int] = None
     alert: int = 0
@@ -135,7 +135,7 @@ class AlarmEvent(BaseModel):
     ds18b20_t: Optional[float] = None
     mq135_v: Optional[float] = None
     mq135_do: Optional[int] = None
-    light_raw: Optional[int] = None
+    light_raw: Optional[float] = None
     photo_do: Optional[int] = None
     has_snapshot: bool = False      # 是否有现场照片
     acknowledged: int = 0           # 0=未确认, 1=已确认

@@ -58,7 +58,7 @@ idf.py build flash monitor
 └─────────────────────────────────────────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────────────────┐
-│                      Docker Web 仪表盘 (v3.4)                          │
+│                      Docker Web 仪表盘 (v3.5)                          │
 │  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────────┐    │
 │  │   FastAPI       │  │   AIOSQLite     │  │   WebSocket         │    │
 │  │   REST API      │  │   数据持久化    │  │   实时推送          │    │
@@ -75,13 +75,23 @@ idf.py build flash monitor
 ### 摄像头数据流
 
 ```
-ESP32-CAM ──HTTP/TCP──► Docker (camera_server.py)  ← 当前主模式 (零丢包)
-  │                                                    ↓
-  │   HVGA 480×320, JPEG quality=12             MJPEG 流 + Canvas 快照轮询
+ESP32-CAM ──UDP 分片推流──► VPS :8003  ← ★ 服务器部署 (CAMERA_MODE=udp_esp32, v4.0 推荐)
+  │   CameraWebServer.ino                                   ↓
+  │   WiFiUDP 直连, 协议 [0xAA55+FrameID+ChunkIdx+TotalChunks][JPEG分片]  Docker camera_server
+  │   帧驱动 ~10fps, 零连接开销, 无 RTT 窗口限制               ↓
+  │   跨海 UDP 吞吐 238Mbps vs TCP 2Mbps (119x)        ReadableStream + BlobURL 逐帧渲染
+  │   UDP 特性: 无条件全速推流, 不支持按需降速 (TCP 模式下有)
+
+ESP32-CAM ──TCP 二进制推流──► VPS :8003  ← 备选 (CAMERA_MODE=tcp, v3.8)
+  │   WiFiClient 长连接, 帧格式 [2B len][JPEG]             ↓
+  │   每 3s 心跳 GET /api/camera/push_status, 无观看者降速 1fps
+
+ESP32-CAM ──HTTP POST──► VPS :8001 /api/camera/push  ← 备选 (CAMERA_MODE=push)
+  │   (每帧 HTTP 握手, ~1-3fps)
+
+ESP32-CAM ──HTTP/TCP──► Docker (camera_server.py)  ← 局域网模式 (CAMERA_MODE=http)
   │   CameraWebServer.ino 提供 /capture + /stream      ↓
-  │                                              Web 仪表盘实时显示
-  └── [已弃用] ESP32-P4 UDP 中继 (camera_http_fetch.c)
-          ESP32-CAM → HTTP GET → P4 → UDP:8082 → Docker
+  └──────────────────────────────            Web 仪表盘实时显示
 ```
 
 ### 模块说明
@@ -101,7 +111,7 @@ ESP32-CAM ──HTTP/TCP──► Docker (camera_server.py)  ← 当前主模式
 
 ## 通信
 
-### Web 仪表盘 (v3.4)
+### Web 仪表盘 (v3.5)
 
 项目已支持 **Docker 容器化部署**，提供 Web 可视化仪表盘：
 
@@ -111,33 +121,43 @@ cd docker
 docker-compose up -d
 ```
 
+#### 本地开发
+
 | 服务 | 地址 | 说明 |
 |------|------|------|
 | Web 仪表盘 | http://localhost:8000 | Chart.js 实时数据图表 |
 | API 文档 | http://localhost:8000/docs | FastAPI 交互式文档 |
 | WebSocket | ws://localhost:8000/ws | 实时数据推送 |
 
+#### VPS 部署 (公网端口映射)
+
+| 服务 | 容器内 | 对外 | 说明 |
+|------|--------|------|------|
+| Web + CAM 推帧 + 心跳 | :8000 | `:8001` (TCP) | FastAPI HTTP + `/api/camera/push_status` |
+| P4 传感器 UDP | :8080 | `:8002` (UDP) | SensorUDPProtocol |
+| CAM UDP 推流 | :8003 | `:8003` (UDP) | ★ ESP32-CAM UDP 分片推流 (v4.0, 跨海119x吞吐, 无RTT影响) |
+
 **Web 仪表盘功能**：
 - 实时传感器数据卡片（温湿度、MQ-135、光敏）
 - 分级报警状态徽章（L0~L3），L3 紧急时页面红色闪烁
 - **报警历史系统**：事件列表/详情/统计/确认，去重窗口 30s，级别变化即时触发
 - 历史数据折线图（温度/湿度趋势）
-- 摄像头 MJPEG 实时流预览 + **视频流开关**（关闭即切黑屏节省带宽，开启恢复拉流）
+- 摄像头 MJPEG 实时流预览 + **视频流开关**（关闭即切黑屏节省带宽，开启恢复拉流；TCP 模式下无观看者时 ESP32-CAM 自动切心跳模式省带宽 ~99.8%，UDP 模式全速推流不支持按需降速）
 - 仓储管理（二维码扫码入库/出库 + 手动新增 + 库存分类统计 + 流水清空）
 - **仿真注入面板**：前端一键注入 L1/L2/L3 预设报警或自定义传感器数值
 - **报警管理**：一键清空全部报警记录（DELETE /api/alarms）
 - **内置 UDP 监听器**：Docker 服务直接监听 :8080，无需外部 udp_to_web.py 桥接脚本
 - SQLite 数据持久化（aiosqlite 异步引擎）
 
-### 传感器数据 (ESP32 → PC)
+### 传感器数据 (ESP32 → PC/VPS)
 
-| 参数 | 值 |
-|------|-----|
-| ESP32-P4 IP | DHCP 自动获取 (当前 10.16.234.86) |
-| 上位机 IP | 10.16.234.215 |
-| 端口 | 8080 UDP |
-| 间隔 | 每 2 秒 |
-| 格式 | JSON (12 字段: ts, dht11_t/h, ds18b20_t, mq135_v, light_raw, mq135_do, photo_do, level, alert, err, reason) |
+| 参数 | 本地开发 | VPS 部署 |
+|------|----------|----------|
+| ESP32-P4 IP | DHCP 自动获取 | 手机热点 DHCP |
+| 目标 IP | 10.16.234.215 | 38.55.199.220 |
+| 目标端口 | 8080 UDP | 8002 UDP |
+| 间隔 | 每 2 秒 | 每 2 秒 |
+| 格式 | JSON (12 字段) | JSON (12 字段) |
 
 ```bash
 # 启动上位机接收端
@@ -146,7 +166,31 @@ D:\Anaconda3\envs\ForAgents\python.exe pc_receiver.py
 
 ### 摄像头图像流
 
-#### 主模式：Docker 直连 ESP32-CAM (推荐)
+#### UDP 分片推流：ESP32-CAM 直推 VPS (服务器部署，v4.0 推荐)
+
+| 参数 | 值 |
+|------|-----|
+| 采集方式 | ESP32-CAM `loop()` 帧驱动 + WiFiUDP 分片推流 |
+| 目标 | `38.55.199.220:8003` (UDP raw) |
+| 协议格式 | `[0xAA55 Magic + FrameID(u16) + ChunkIdx(u16) + TotalChunks(u16)][JPEG分片]` |
+| 分片大小 | 每包 ≤1408 字节（安全互联网 MTU，适配各种 NAT/路由） |
+| 环境变量 | `CAMERA_MODE=udp_esp32` |
+| 帧率 | ~10 fps（帧驱动，不受 RTT 影响） |
+| 前端显示 | `fetch` → ReadableStream → boundary 二进制切分 → BlobURL |
+| 按需推送 | **不支持**（UDP 无连接态，ESP32-CAM 无条件全速推流） |
+| 容错机制 | VPS 侧分片重组 + 超时 5s + 提前渲染 1s（≥50% 分片即渲染） |
+
+#### TCP 二进制推流 (备选，v3.8)
+
+| 参数 | 值 |
+|------|-----|
+| 环境变量 | `CAMERA_MODE=tcp` |
+| 帧格式 | `[2-byte big-endian length][JPEG data]` (无 HTTP 开销) |
+| 帧率 | ~10-16 fps（局域网）/ ~6-10 fps（跨海，受 RTT ~154ms TCP窗口限制） |
+| 心跳端点 | `GET /api/camera/push_status`（无观看者时降速 1fps） |
+| 省带宽 | 无观看者时降为 1fps，节省 ~95% 带宽 |
+
+#### 主模式：Docker 直连 ESP32-CAM (局域网推荐)
 
 | 参数 | 值 |
 |------|-----|
@@ -155,7 +199,7 @@ D:\Anaconda3\envs\ForAgents\python.exe pc_receiver.py
 | 采集方式 | Docker `camera_server.py` 直接 HTTP GET `/capture` 拉取 JPEG (TCP 零丢包) |
 | 环境变量 | `CAMERA_MODE=http`, `ESP32_CAM_URL`, `CAMERA_HTTP_FPS` |
 | 默认帧率 | 5 fps |
-| 前端显示 | Canvas 快照轮询 (替代 MJPEG `<img>`，消除 Chrome 缓冲延迟) |
+| 前端显示 | `fetch` → ReadableStream → boundary 二进制切分 → BlobURL |
 
 #### 备选模式：ESP32-P4 UDP 中继 (已弃用，默认关闭)
 
@@ -163,7 +207,7 @@ D:\Anaconda3\envs\ForAgents\python.exe pc_receiver.py
 |------|-----|
 | 采集方式 | ESP32-P4 通过 HTTP GET `/capture` 拉取 JPEG，UDP 分包转发到 Docker |
 | 转发协议 | UDP 分包 (Magic 0xAA55, 4096 字节/包) |
-| 端口 | 8082 UDP |
+| 端口 | 8082 UDP (容器内) / 8003 UDP (对外，已由 ESP32-CAM 直连 UDP 占用) |
 | 配置项 | `CONFIG_CAMERA_HTTP_ENABLED=y` / `CONFIG_CAMERA_HTTP_FPS` |
 
 ### 仓储管理 (二维码扫码)
@@ -199,3 +243,6 @@ D:\Anaconda3\envs\ForAgents\python.exe smart_monitor_sim_gui.py
 - Camera HTTP 拉图与 Sensor UDP 共用 lwIP pbuf 池，已实现 ENOMEM(errno=12) 退避重试 + 1 tick 微延迟防止资源争抢
 - Camera UDP 端口 8082 与 Sensor 数据端口 8080 隔离
 - Docker 直连模式 (CAMERA_MODE=http) 绕过 P4 UDP 中继，TCP 协议保证帧完整性，无分片/丢包问题
+- VPS 部署推荐 (CAMERA_MODE=udp_esp32)：ESP32-CAM WiFiUDP 分片直推 VPS:8003，跨海吞吐 238Mbps，零 RTT 影响。UDP 模式无条件全速推流，不支持按需降速/心跳
+- VPS 部署备选 (CAMERA_MODE=tcp)：ESP32-CAM TCP 长连接推流，支持心跳降速省带宽，但受 RTT 窗口限制（跨海 ~10fps）
+- VPS 部署旧方案 (CAMERA_MODE=push)：ESP32-CAM 主动 HTTP POST 推帧到 `/api/camera/push`，已基本弃用

@@ -402,7 +402,7 @@ async def insert_alarm_event(
     level: int, reason: str = "",
     dht11_t: float | None = None, dht11_h: float | None = None,
     ds18b20_t: float | None = None, mq135_v: float | None = None,
-    mq135_do: int | None = None, light_raw: int | None = None,
+    mq135_do: int | None = None, light_raw: float | None = None,
     photo_do: int | None = None, snapshot: bytes | None = None
 ) -> int:
     """插入一条报警事件记录（含快照），返回 id"""

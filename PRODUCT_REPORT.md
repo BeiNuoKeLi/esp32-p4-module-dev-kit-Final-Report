@@ -1,7 +1,7 @@
 # 智慧农资仓储环境监测系统 — 产品汇报文档
 
-> **版本**：v3.4 — 仿真注入 + 报警管理增强
-> **日期**：2026-06-13
+> **版本**：v4.0 — ESP32-CAM UDP 直连推流 (跨海 119x 吞吐，零 RTT 限制)
+> **日期**：2026-06-15
 > **适用场景**：农资化肥仓库（氮肥/复合肥/钾肥）
 
 ---
@@ -69,7 +69,7 @@
 | **AIOSQLite** | 异步 SQLite 数据库，存储传感器数据、库存、操作日志、报警事件 |
 | **WebSocket** | 实时推送通道，传感器数据变更即时通知前端 |
 | **Chart.js** | 前端图表库，展示温度/湿度历史趋势曲线 |
-| **camera_server** | 摄像头服务：HTTP 直连 (主模式) 或 UDP 接收 (备选) → MJPEG 流转换 + Canvas 快照轮询 + pyzbar 二维码扫码，支持 stream 开关暂停/恢复，关闭时前端自动切黑屏 |
+| **camera_server** | 摄像头服务：**UDP 分片推流 (v4.0 推荐)** / TCP 二进制推流 (v3.8) / Push 直推 / HTTP 拉取 / UDP 中继 (备选) → MJPEG 流转换 + pyzbar 二维码扫码。前端使用 `fetch` → ReadableStream → 二进制 boundary 切分 → BlobURL 逐帧渲染（避开 `<img>` 直连 MJPEG 的 Chrome 解码器内部缓冲）。支持 stream 开关暂停/恢复。**UDP 模式**：无条件全速推流 ~10fps，跨海吞吐 238Mbps 无 RTT 影响，协议 [0xAA55+FrameID+ChunkIdx+TotalChunks] 分片重组 + 超时容错。**TCP 模式**：长连接推流，支持心跳 + 无观看者降速 1fps 省带宽 ~95%，但跨海受 RTT 窗口限制。**v3.5 优化**：移除 `cv2.imdecode` 热路径 + Canvas JS 轮询，端到端延迟从 1-3s 降至 <200ms。 |
 
 ### 2.3 后端 API 路由总览
 
@@ -98,19 +98,55 @@
 | `POST` | `/api/alarms/{id}/ack` | 确认单条报警 |
 | `DELETE` | `/api/alarms` | 清空全部报警记录 |
 | `GET` | `/api/alarm/config` | 获取当前报警配置（AO/DO 模式、阈值） |
-| `POST` | `/api/alarm/config` | 更新报警配置 → 写 SQLite + UDP 同步到 MCU |
+| `POST` | `/api/alarm/config` | 更新报警配置 → 写 SQLite + UDP 尝试 + HTTP 轮询暂存 |
+| `GET` | `/api/alarm/config/poll?seq=N` | ESP32 HTTP 轮询拉取待下发报警配置（NAT 穿透可靠路径）。**v3.7**：seq=0 时自动从 SQLite 返回当前配置作为启动同步，确保 ESP32 不依赖过期 NVS 值 |
+| `GET` | `/api/camera/push_status` | 摄像头推送心跳端点（ESP32-CAM 暂停时轮询恢复，~30 bytes） |
 | `GET` | `/api/sim/status` | 查询仿真注入状态 |
 | `POST` | `/api/sim/inject` | 注入仿真传感器数据到 ESP32-P4 |
+| `POST` | `/api/camera/push` | [备选] ESP32-CAM HTTP POST 直推 JPEG 帧 (已由 TCP 推流替代) |
 
 ### 2.4 摄像头数据流
 
-#### 主模式：Docker 直连 (推荐，TCP 零丢包)
+#### UDP 分片推流：ESP32-CAM 直推 VPS (v4.0 服务器部署推荐)
+
+```
+ESP32-CAM ──UDP 分片──► VPS :8003  (CAMERA_MODE=udp_esp32)
+  │   WiFiUDP 帧驱动              ↓
+  │   [0xAA55+FrameID+ChunkIdx    Docker camera_server
+  │    +TotalChunks][JPEG分片]     ↓
+  │   每包 ≤1408B, 单帧 2-6 包    Web 仪表盘实时显示
+  │   零连接开销, 不受 RTT 影响
+  │   无条件全速推流 ~10fps
+  │   容错: 超时5s + 提前渲染1s
+```
+
+#### TCP 二进制推流：ESP32-CAM 直推 VPS (v3.8 备选)
+
+```
+ESP32-CAM ──TCP 长连接──► VPS :8003  (CAMERA_MODE=tcp)
+  │   WiFiClient 帧驱动           ↓
+  │   [2B len][JPEG] 格式    Docker camera_server
+  │   零 HTTP 逐帧开销            ↓
+  │   ~10-16fps (局域网)     Web 仪表盘实时显示
+  │   ~6-10fps (跨海, 受RTT限制)
+  └── 每 3s GET /api/camera/push_status ──► 无观看者降速 1fps
+```
+
+#### Push 模式：ESP32-CAM HTTP POST 直推 (备选)
+
+```
+ESP32-CAM ──HTTP POST──► VPS :8001 /api/camera/push  (CAMERA_MODE=push)
+  │   每帧 HTTP 握手 (~1-3fps)     ↓
+  │   JPEG raw body           Docker camera_server
+  └──────────────────────  Web 仪表盘实时显示
+```
+
+#### 主模式：Docker 直连拉取 (局域网推荐，TCP 零丢包)
 
 ```
 ESP32-CAM ──HTTP/TCP──► Docker camera_server  (CAMERA_MODE=http)
   │   /capture + /stream           ↓
-  │   HVGA 480×320, q=12      MJPEG 流 + Canvas 快照轮询 + 二维码解码
-  │                                 ↓
+  │   HVGA 480×320, q=12      ReadableStream + BlobURL 逐帧渲染 + 二维码解码
   └──────────────────────  Web 仪表盘实时显示
 ```
 
@@ -118,7 +154,7 @@ ESP32-CAM ──HTTP/TCP──► Docker camera_server  (CAMERA_MODE=http)
 
 ```
 ESP32-CAM ─HTTP:/capture─→ camera_http_fetch.c ─UDP:8082─→ Docker camera_server
-                                                             ↓
+  (备用，端口 8003→8082/udp 已由 ESP32-CAM 直连 UDP 占用)         ↓
                                                     MJPEG 流 + 二维码解码
 ```
 
@@ -178,7 +214,7 @@ ESP32-CAM ─HTTP:/capture─→ camera_http_fetch.c ─UDP:8082─→ Docker ca
 | **AO 阈值可调** | MQ-135 电压阈值（0~3.3V）、光敏 ADC 阈值（0~4095）通过滑块实时调整 |
 | **触发方向** | 支持"高于阈值"（MQ-135 毒气检测）或"低于阈值"（光敏遮挡检测）两种方向 |
 | **温湿度独立开关** | 温湿度报警可整体关闭，仅保留气体+光敏报警 |
-| **端到端同步** | Web → Docker SQLite → UDP 8081 → ESP32 NVS 持久化，断电不丢失 |
+| **端到端同步** | 三路径：UDP 8081 快速路径（局域网） + HTTP 轮询 `/api/alarm/config/poll`（公网/NAT 可靠） + **启动同步**（seq=0 时从 VPS SQLite 拉取当前配置，解决 Docker 重启后内存队列清空问题）→ ESP32 NVS 持久化，断电不丢失 |
 | **范围保护** | 启动时 NVS 加载带范围校验，垃圾值自动回退默认值 |
 
 ---
@@ -196,13 +232,16 @@ Web 仪表盘                               ESP32-P4 (MCU)
   │                                          │
   │  POST /api/sim/inject                    │
   │  {"photo_raw":2000, "mq135_v":2.8, ...}  │
-  ├────────────────── UDP:8081 ──────────────►│
-  │                                          ├─ udp_sim_command_task() 解析
-  │                                          ├─ 写入 g_sensor_data.sim_xxx
-  │                                          ├─ sim_active = 1 (切换仿真模式)
-  │                                          │
-  │              ← UDP:8080 ──────────────── │ (仿真数据作为真实传感器值上报)
-  │  {"level":2, "mq135_do":0, ...}         │  传感器任务读取 sim_xxx → 报警逻辑正常运作
+  │  ──→ VPS 写入 _pending_sim_cmd 暂存 ──→  │
+  │                                    │     │
+  │                          GET /api/sim/poll?seq=N  (HTTP 轮询, 每 3s)
+  │                                    ├─────────────►│
+  │                                    │              ├─ sim_poll_task() 解析
+  │                                    │              ├─ 写入 g_sensor_data.sim_xxx
+  │                                    │              └─ sim_active = 1
+  │                                    │              │
+  │              ← UDP:8002 ──────────────────────── │ (仿真数据作为真实值上报)
+  │  {"level":2, "mq135_do":0, ...}                  │  传感器任务读取 sim_xxx → 报警逻辑运作
   │                                          │
   ▼                                          │
   前端自动更新报警状态 + 环境数据
@@ -213,7 +252,9 @@ Web 仪表盘                               ESP32-P4 (MCU)
 
 | 特性 | 说明 |
 |------|------|
-| **模式切换** | 发送 `{"reset":""}` 命令退出仿真，恢复真实传感器 |
+| **HTTP 反转轮询** | ESP32 主动 GET 拉取命令, 绕过 NAT 入站限制 (VPS 公网部署必需) |
+| **seq 去重** | 每次轮询带上次 seq, VPS 仅在 seq 更大时返回新命令, 避免重复执行 |
+| **模式切换** | VPS 暂存 `{"cmd":"reset"}` → ESP32 轮询拉取后退出仿真, 恢复真实传感器 |
 | **字段可选** | 注入命令中任意字段可省略，省略字段使用当前真实值 |
 | **无缝衔接** | 仿真数据走完整传感器→报警逻辑链路，模拟真实触发效果 |
 | **快速预设** | 前端内置 L1/L2/L3 三个预设按钮，一键注入典型报警场景 |
@@ -355,8 +396,10 @@ L3 (紧急):    红色闪烁  [🚨 紧急] 多重危险 - 立即排风
 | 阶段七 | 多仓库节点集中管理平台 | ⏳ | 规划中 |
 | 阶段八 | 摄像头帧率优化 → HVGA 480×320 + Docker 直连 TCP 架构 | ✅ | 2026-06-11 |
 | 阶段九 | 仿真注入 + 报警管理增强 + 前端交互优化 | ✅ | 2026-06-13 |
+| 阶段十 | Camera 按需推送/心跳模式（省带宽 ~99.8%） | ✅ | 2026-06-14 |
+| 阶段十一 | Camera 渲染链路优化 → ReadableStream + BlobURL 逐帧渲染 + 移除 imdecode 热路径 | ✅ | 2026-06-14 |
 
-### 9.1 已完成功能清单（v3.4）
+### 9.1 已完成功能清单（v3.5）
 
 **Web 仪表盘功能**：
 - ✅ FastAPI REST API（传感器数据、库存管理、摄像头控制、报警管理、仿真注入）
@@ -366,7 +409,7 @@ L3 (紧急):    红色闪烁  [🚨 紧急] 多重危险 - 立即排风
 - ✅ **报警历史系统**（分页列表 + 级别筛选 + 详情弹窗 + 现场快照 + 确认 + 一键清空）
 - ✅ 报警去重策略（同级别 30s 内仅记录一条，级别变化立即写入）
 - ✅ MQ-135/光敏 DO 数字输出状态实时显示（正常=绿色 / 报警=红色闪烁）
-- ✅ 摄像头 MJPEG 实时流预览 + **视频流开关**（关闭时自动切黑屏，不消耗带宽）
+- ✅ 摄像头 ReadableStream + BlobURL 逐帧渲染 + **视频流开关**（关闭时画面清空，不消耗带宽）
 - ✅ 二维码扫码入库/出库（化肥标签 FERT-20260611-001~006）+ CLAHE 增强
 - ✅ **仿真注入系统**（Web → ESP32-P4 UDP 命令，一键复现 L1/L2/L3 报警场景）
 - ✅ 待机模式 / 出入库模式（UI 状态切换，扫码按钮联动禁用）
@@ -378,10 +421,11 @@ L3 (紧急):    红色闪烁  [🚨 紧急] 多重危险 - 立即排风
 - ✅ **HVGA 480×320** 分辨率，JPEG quality=12，识别率提升
 - ✅ ESP32-P4 UDP 中继 (备选, 默认关闭)
 - ✅ **CameraWebServer/** ESP32-CAM Arduino 工程源码 (OV2640)
-- ✅ **Canvas 快照轮询** 替代 MJPEG `<img>` (消除 Chrome 缓冲延迟)
+- ✅ **ReadableStream + BlobURL 逐帧渲染** 替代 Canvas 快照轮询 + `<img>` 原生 MJPEG (延迟 <200ms)
 - ✅ 工业摄像头 KYT-U400 支持
 - ✅ 独立预览窗口 (Toplevel)
-- ✅ 视频流关闭后 Canvas 立即黑屏（节省带宽 + 隐私保护）
+- ✅ 视频流关闭后画面立即清空（节省带宽 + 隐私保护）
+- ✅ **相机按需推送/心跳模式**（TCP 模式：无观看者自动暂停 JPEG 推送，ESP32-CAM 切为每 3s 轻量心跳 GET `/api/camera/push_status`，节省服务器带宽 ~99.8%；UDP 模式不支持按需推送，全速推流 ~10fps）
 
 **稳定性优化**：
 - ✅ DHT11 时序修复（脉冲宽度测量，解决 ~95% 失败率）
@@ -389,9 +433,9 @@ L3 (紧急):    红色闪烁  [🚨 紧急] 多重危险 - 立即排风
 - ✅ Wi-Fi 连接轮询等待
 - ✅ **HTTP 超时 10s / Content-Length ≤0 拦截 / EOF 边界修复**（camera_http_fetch.c）
 - ✅ JS try-catch 语法修复（消除 `Missing catch or finally after try` 运行时错误）
-- ✅ Canvas Blob URL 内存泄漏修复（onload/onerror 均释放 URL.revokeObjectURL）
+- ✅ ReadableStream + BlobURL 逐帧渲染消除 Canvas 渲染开销与 Chrome MJPEG 解码器缓冲延迟
 
 ---
 
-> **最后更新**：2026-06-13
+> **最后更新**：2026-06-14
 > **作者**：SmartMonitor Team

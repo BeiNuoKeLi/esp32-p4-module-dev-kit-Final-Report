@@ -1,25 +1,40 @@
 """
 摄像头服务 — MJPEG HTTP 流输出
 
-支持两种数据源模式 (环境变量 CAMERA_MODE):
-  http (默认, 推荐): Docker 直接 HTTP GET ESP32-CAM /capture → 零丢包
+支持多种数据源模式 (环境变量 CAMERA_MODE):
+
+  http (默认): Docker 直接 HTTP GET ESP32-CAM /capture → 零丢包
       ESP32-CAM ──HTTP/TCP──► Docker camera_server.py
       绕过 P4 UDP 中继，TCP 保证完整送达，无分片/丢包问题
 
-  udp (备选): ESP32-P4 UDP 中继转发 (旧方案)
+  tcp: ESP32-CAM 二进制 TCP 推流 (旧方案, 受 RTT 限制)
+      ESP32-CAM ──TCP :8003──► Docker camera_server.py
+      帧格式 [2B big-endian len][JPEG]
+
+  udp_esp32 (推荐): ESP32-CAM UDP 直连推流 — 无窗口限制，跨海 119x 吞吐
+      ESP32-CAM ──UDP :8003──► Docker camera_server.py
+      协议格式 [Magic(0xAA55)+FrameID+ChunkIdx+TotalChunks][JPEG分片]
+
+  udp: ESP32-P4 UDP 中继转发 (旧方案)
       ESP32-CAM → ESP32-P4 → UDP :8082 → Docker camera_server.py
 
+  push: 外部 HTTP POST 推送 (push_jpeg 端点)
+
+  mjpeg_stream: Docker 直接拉 ESP32-CAM /stream MJPEG 流
+
 环境变量:
-  CAMERA_MODE         = http | udp (默认 http)
+  CAMERA_MODE         = http | tcp | udp_esp32 | udp | push (默认 http)
   ESP32_CAM_URL       = http://10.16.234.23/capture (HTTP 模式)
   CAMERA_HTTP_FPS     = 5  (HTTP 拉流帧率, 默认 5)
+  CAMERA_TCP_PORT     = 8003  (UDP/TCP 推流端口)
 
 提供接口:
   1. GET /api/camera/mjpeg   — multipart/x-mixed-replace 实时视频流
   2. GET /api/camera/snapshot — 最新一帧 JPEG bytes
 
 降级策略:
-  - 若容器内无 OpenCV → 自动进入 offline 模式，MJPEG 返回黑色占位图
+  - OpenCV 像素亮度检测 → 画面均值 <30/255 即拦截暗帧 (替代字节大小启发式)
+  - 若容器内无 OpenCV → 回退到字节大小阈值 + offline 模式
   - 无数据到达时 → MJPEG 保持最后一帧，snapshot 返回空
 """
 import os
@@ -35,6 +50,7 @@ ESP32_CAM_URL = os.getenv("ESP32_CAM_URL", "http://10.16.234.23/capture")
 # MJPEG 流地址: CameraWebServer 在 port 81 提供 /stream 端点
 ESP32_CAM_STREAM_URL = os.getenv("ESP32_CAM_STREAM_URL", "http://10.16.234.23:81/stream")
 CAMERA_HTTP_FPS_LIMIT = int(os.getenv("CAMERA_HTTP_FPS", "3"))  # 仅 /capture 轮询模式使用
+SKIP_CV2_BRIGHTNESS = os.getenv("SKIP_CV2_BRIGHTNESS", "0") == "1"  # ★ 调试: 临时跳过OpenCV亮度检测
 
 # 项目内协议模块 (camera_protocol.py 在 docker/app/ 同目录)
 from . import camera_protocol as proto
@@ -47,6 +63,7 @@ FRAME_STALE_MS = 0.35
 MAX_FRAME_CACHE = 5
 MJPEG_FPS_LIMIT = 10
 JPEG_QUALITY = 85
+CAMERA_TCP_PORT = int(os.getenv("CAMERA_TCP_PORT", "8003"))  # ★ TCP 二进制推流端口
 
 
 class CameraServer:
@@ -92,10 +109,35 @@ class CameraServer:
         # 占位 JPEG (黑色 320x240)
         self.placeholder_jpeg = self._make_placeholder()
 
-        # 视频流开关（默认开启）
-        self.stream_enabled = True
+        # 视频流开关（默认开启，线程安全）
+        self._stream_enabled = True
         # UDP 接收暂停标志（关闭视频流时暂停接收，节省带宽/CPU）
-        self.paused = False
+        self._paused = False
+
+    @property
+    def should_push(self) -> bool:
+        """ESP32-CAM 是否需要继续推送帧（有观看者时为 True）"""
+        return self.stream_enabled and self.running
+
+    @property
+    def stream_enabled(self) -> bool:
+        with self._frame_lock:
+            return self._stream_enabled
+
+    @stream_enabled.setter
+    def stream_enabled(self, val: bool):
+        with self._frame_lock:
+            self._stream_enabled = val
+
+    @property
+    def paused(self) -> bool:
+        with self._frame_lock:
+            return self._paused
+
+    @paused.setter
+    def paused(self, val: bool):
+        with self._frame_lock:
+            self._paused = val
 
     @property
     def online(self) -> bool:
@@ -122,6 +164,62 @@ class CameraServer:
         with self._frame_lock:
             self._latest_frame = val
 
+    # ─── 暗帧检测 (OpenCV 像素级亮度) ──────────────────────
+
+    def _is_dark_frame(self, jpeg_data: bytes, frame_id: int = 0) -> bool:
+        """OpenCV 像素级亮度检测：直接分析画面内容均值，比字节大小阈值精确得多。
+
+        使用 IMREAD_REDUCED_GRAYSCALE_4 解码到原图 1/4 尺寸，速度快 ~10x。
+        若 OpenCV 不可用则回退到字节大小启发式。
+        环境变量 SKIP_CV2_BRIGHTNESS=1 可临时禁用 (调试用)。
+
+        Returns:
+            True  = 画面太暗，应丢弃
+            False = 正常亮度，可输出
+        """
+        if SKIP_CV2_BRIGHTNESS:
+            return False  # ★ 调试模式: 跳过亮度检测
+
+        if not self.cv2_ok:
+            # 无 OpenCV 时回退到字节大小启发式 (VGA: 暗帧~8-10KB, 正常~15-25KB)
+            return len(jpeg_data) < 12000
+
+        try:
+            import numpy as np
+            arr = np.frombuffer(jpeg_data, dtype=np.uint8)
+            # 缩略解码: 原图 1/4 尺寸 → 像素量 1/16，解码速度 ~5-10ms
+            img = self._cv2.imdecode(arr, self._cv2.IMREAD_REDUCED_GRAYSCALE_4)
+            if img is None:
+                return True  # JPEG 损坏/不完整 → 丢弃
+
+            mean_brightness = float(np.mean(img))
+            DARK_THRESHOLD = 30     # <30 绝对黑帧 → 丢弃
+            SUS_THRESHOLD = 45      # 30-45 可疑低亮 → 诊断
+
+            # ★ 滚动均值: 跟踪正常帧亮度基线
+            running_avg = getattr(self, '_brightness_avg', 50.0)
+            alpha = 0.1  # EMA 平滑因子
+            self._brightness_avg = running_avg * (1 - alpha) + mean_brightness * alpha
+
+            # ★ 亮度采样: 每10帧输出一次 (密度够高可捕获暗帧脉冲)
+            sample_cnt = getattr(self, '_brightness_sample_count', 0) + 1
+            self._brightness_sample_count = sample_cnt
+            if sample_cnt % 10 == 0:
+                avg = self._brightness_avg
+                flag = "🌑拦截" if mean_brightness < DARK_THRESHOLD else ("⚠️低亮" if mean_brightness < SUS_THRESHOLD else "✅正常")
+                print(f"[Camera] 🔬 #{sample_cnt} | 帧{frame_id} {flag} | 亮度={mean_brightness:.1f} | 均线={avg:.1f} | {len(jpeg_data)}B")
+
+            # 绝对黑帧: 无条件拦截
+            if mean_brightness < DARK_THRESHOLD:
+                cnt = getattr(self, '_dark_log_count', 0) + 1
+                self._dark_log_count = cnt
+                print(f"[Camera] 🌑 帧{frame_id} 亮度={mean_brightness:.1f} — 拦截暗帧 (#{cnt})")
+                return True
+
+            return False
+        except Exception:
+            return False
+
     # ─── 初始化 ──────────────────────────────────────────
 
     def _try_import_cv2(self):
@@ -134,11 +232,12 @@ class CameraServer:
             print("[Camera] ⚠️ OpenCV 未安装，摄像头功能降级为离线模式")
 
     def _make_placeholder(self) -> bytes:
-        """生成黑色占位 JPEG (无需 cv2 的纯 Python 实现)"""
+        """生成诊断占位 JPEG (红色=占位图bug, 黑色=摄像头暗帧)"""
         if self.cv2_ok:
             import numpy as np
-            black = np.zeros((240, 320, 3), dtype=np.uint8)
-            _, buf = self._cv2.imencode('.jpg', black,
+            red = np.zeros((240, 320, 3), dtype=np.uint8)
+            red[:, :, 2] = 255  # BGR红色通道
+            _, buf = self._cv2.imencode('.jpg', red,
                                          [self._cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
             return buf.tobytes()
         else:
@@ -193,37 +292,72 @@ class CameraServer:
     # ─── 生命周期 ──────────────────────────────────────────
 
     def _try_set_jpeg(self, jpeg_data: bytes) -> bool:
-        """尝试设置 JPEG 帧。成功返回 True，失败时仍保存原始字节供浏览器尝试渲染。"""
-        ok = False
-        if self.cv2_ok:
+        """保存 JPEG 原始字节并通知 MJPEG 输出端（轻量路径，不做 cv2.imdecode）。
+
+        imdecode 是 CPU 密集操作（50-200ms），在 VPS 弱 CPU 上会阻塞接收线程，
+        导致后续帧积压 → 延迟雪崩。改为仅存储原始字节，latest_frame 按需在
+        try_decode_frame() 中解码（扫码等低频场景使用）。
+        """
+        if not jpeg_data:
+            return False
+        self.latest_jpeg = jpeg_data
+        self._mjpeg_frame_seq += 1
+        self._mjpeg_new_frame.set()
+        return True
+
+    def push_jpeg(self, jpeg_data: bytes):
+        """外部推送 JPEG 帧 (ESP32-CAM 直推模式) — ★ 轻量路径，不阻塞事件循环
+
+        关键优化：不做 cv2.imdecode（50-200ms CPU 密集），只保存原始 JPEG bytes。
+        latest_frame 按需在 scan 端点解码，不在热路径执行。
+        """
+        # 直接保存 JPEG bytes — 加锁保护（与其他线程竞争）
+        self.latest_jpeg = jpeg_data
+        # 通知 MJPEG 输出端有新帧
+        self._mjpeg_frame_seq += 1
+        self._mjpeg_new_frame.set()
+        self.total_frames += 1
+        # 更新 FPS 统计
+        t0 = time.time()
+        self.fps_history.append(t0)
+        if len(self.fps_history) > 30:
+            self.fps_history.pop(0)
+
+    def try_decode_frame(self) -> bool:
+        """按需解码 latest_jpeg → latest_frame（用于 QR 扫码等场景）。
+        返回 True 表示解码成功。此调用是同步 CPU 密集操作，仅应在低频场景（按需）调用。"""
+        jpeg_data = self.latest_jpeg
+        if not jpeg_data or not self.cv2_ok:
+            return False
+        try:
             import numpy as np
             arr = np.frombuffer(jpeg_data, dtype=np.uint8)
             frame = self._cv2.imdecode(arr, self._cv2.IMREAD_COLOR)
             if frame is not None:
                 self.latest_frame = frame
-                self.latest_jpeg = jpeg_data
-                ok = True
-            else:
-                # OpenCV 解码失败（残缺JPEG），但仍保存原始字节
-                self.latest_jpeg = jpeg_data
-        else:
-            # 无 cv2 时直接信任 JPEG bytes
-            self.latest_jpeg = jpeg_data
-            ok = True
-
-        # ★ 关键修复: 只要收到了新的 JPEG 数据就通知，不再依赖 OpenCV 解码结果
-        # 旧逻辑 (if ok or self.latest_frame is None) 在 OpenCV 解码失败时不会触发 Event，
-        # 导致 MJPEG 输出端收不到通知 → 帧丢失 → 浏览器显示全黑
-        self._mjpeg_frame_seq += 1
-        self._mjpeg_new_frame.set()
-        return ok
+                return True
+        except Exception:
+            pass
+        return False
 
     def start(self):
-        """启动后台接收线程（根据 CAMERA_MODE 选择 MJPEG流 / UDP 中继）"""
+        """启动后台接收线程（根据 CAMERA_MODE 选择 udp_esp32 / tcp / push / MJPEG流 / UDP 中继）"""
         if self.running:
             return
         self.running = True
-        if CAMERA_MODE == "udp":
+        if CAMERA_MODE == "tcp":
+            self.thread = threading.Thread(target=self._tcp_stream_loop, daemon=True, name="CameraTCP")
+            self.thread.start()
+            print(f"[Camera] ✅ TCP 二进制推流模式 监听 :{CAMERA_TCP_PORT}")
+        elif CAMERA_MODE == "udp_esp32":
+            self.thread = threading.Thread(target=self._udp_esp32_loop, daemon=True, name="CameraESP32UDP")
+            self.thread.start()
+            print(f"[Camera] ✅ ESP32-CAM UDP 直连模式 监听 :{CAMERA_TCP_PORT}")
+        elif CAMERA_MODE == "push":
+            self.thread = threading.Thread(target=self._push_dummy_loop, daemon=True, name="CameraPush")
+            self.thread.start()
+            print(f"[Camera] ✅ Push 模式 (等待 ESP32-CAM 直推) 端点 POST /api/camera/push")
+        elif CAMERA_MODE == "udp":
             self.thread = threading.Thread(target=self._recv_loop, daemon=True, name="CameraUDP")
             self.thread.start()
             print(f"[Camera] ✅ UDP 中继模式 监听 :{CAMERA_PORT}")
@@ -231,6 +365,115 @@ class CameraServer:
             self.thread = threading.Thread(target=self._mjpeg_stream_loop, daemon=True, name="CameraMJPEG")
             self.thread.start()
             print(f"[Camera] ✅ MJPEG 流模式 → {ESP32_CAM_STREAM_URL}")
+
+    def _push_dummy_loop(self):
+        """push 模式占位线程 — 保持 self.running=True, 帧由外部 push_jpeg() 注入"""
+        while self.running:
+            time.sleep(5)
+
+    # ─── TCP 二进制推流接收 (推荐, 零 HTTP 开销) ────────────
+
+    def _tcp_stream_loop(self):
+        """监听 TCP 端口，接收 ESP32-CAM 二进制推流
+
+        帧格式: [2-byte big-endian length][JPEG data]
+        一条 TCP 长连接持续接收所有帧，无 HTTP 逐帧握手开销。
+        """
+        import struct
+
+        server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            server.bind(("0.0.0.0", CAMERA_TCP_PORT))
+        except OSError as e:
+            print(f"[Camera] ❌ 无法绑定 TCP 端口 {CAMERA_TCP_PORT}: {e}")
+            self.running = False
+            return
+        server.listen(1)
+        server.settimeout(1.0)  # 1s 超时以检查 self.running
+        print(f"[Camera] 🔌 TCP 推流监听 :{CAMERA_TCP_PORT} (等待 ESP32-CAM 连接)")
+
+        while self.running:
+            client = None
+            try:
+                client, addr = server.accept()
+            except socket.timeout:
+                continue
+            except OSError:
+                break
+
+            print(f"[Camera] 🔗 ESP32-CAM 已连接 ({addr[0]}:{addr[1]})")
+            client.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            client.settimeout(5.0)
+            buffer = b""
+            timeout_count = 0
+
+            try:
+                while self.running:
+                    if self.paused:
+                        time.sleep(0.1)
+                        continue
+
+                    try:
+                        data = client.recv(65536)
+                    except socket.timeout:
+                        timeout_count += 1
+                        if timeout_count > 3:
+                            print("[Camera] ⚠️ TCP 读取超时, 断开")
+                            break
+                        continue
+
+                    if not data:
+                        print("[Camera] ⚠️ ESP32-CAM 断开 (EOF)")
+                        break
+
+                    timeout_count = 0
+                    buffer += data
+
+                    # 解析帧: [2B big-endian len][JPEG]
+                    while len(buffer) >= 2:
+                        frame_len = struct.unpack(">H", buffer[:2])[0]
+                        if frame_len == 0:          # 心跳/空帧, 跳过
+                            buffer = buffer[2:]
+                            continue
+                        total_needed = 2 + frame_len
+                        if len(buffer) >= total_needed:
+                            jpeg = buffer[2:total_needed]
+                            if len(jpeg) > 500:
+                                t0 = time.time()
+                                self._try_set_jpeg(jpeg)
+                                self.total_frames += 1
+                                self.fps_history.append(t0)
+                                if len(self.fps_history) > 30:
+                                    self.fps_history.pop(0)
+                            buffer = buffer[total_needed:]
+                        else:
+                            break  # 等下一个 recv
+
+                    # 周期诊断
+                    tnow = time.time()
+                    if tnow - self._last_debug_ts > 15:
+                        rate = self.fps
+                        print(f"[Camera] 📊 TCP推流 | fps={rate:.1f} | 总帧={self.total_frames} | buf={len(buffer)}B")
+                        self._last_debug_ts = tnow
+
+            except (ConnectionError, OSError) as e:
+                print(f"[Camera] ❌ TCP 异常: {e}")
+            finally:
+                if client:
+                    try:
+                        client.close()
+                    except Exception:
+                        pass
+
+            if self.running:
+                print("[Camera] 🔄 等待 ESP32-CAM 重连...")
+
+        try:
+            server.close()
+        except Exception:
+            pass
+
 
     def stop(self):
         """停止接收线程并释放资源"""
@@ -636,6 +879,163 @@ class CameraServer:
                 pass
             self.sock = None
 
+    # ─── ESP32-CAM 直连 UDP 接收 (互联网路径, 推荐) ──────────
+
+    def _udp_esp32_loop(self):
+        """ESP32-CAM 直连 UDP 接收 — 互联网分片重组 + 超时容错
+
+        与 _recv_loop (P4 LAN 中继) 的主要区别:
+        - 绑定 CAMERA_TCP_PORT (8003) 而非 CAMERA_PORT (8082)
+        - Socket 超时 10ms (互联网延迟更高)
+        - 帧超时 5s + 提前渲染 1.0s (给丢包重排更多时间)
+        """
+        listen_port = CAMERA_TCP_PORT
+        sock_timeout = 0.01          # 10ms socket 超时
+        frame_timeout = 5.0          # 互联网帧超时
+        early_render_stale = 1.0     # 等待 1s 后提前渲染
+
+        try:
+            self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 1024 * 1024)
+            self.sock.bind(("0.0.0.0", listen_port))
+            self.sock.settimeout(sock_timeout)
+        except OSError as e:
+            print(f"[Camera] ❌ 无法绑定 UDP 端口 {listen_port}: {e}")
+            self.running = False
+            return
+
+        print(f"[Camera] 🔌 ESP32-CAM UDP 直连监听 :{listen_port} (互联网分片重组)")
+
+        while self.running:
+            if self.paused:
+                time.sleep(0.1)
+                continue
+
+            try:
+                data, addr = self.sock.recvfrom(CAMERA_BUF_SIZE)
+            except socket.timeout:
+                continue
+            except OSError:
+                if self.running:
+                    print("[Camera] ⚠️ UDP Socket 异常")
+                break
+
+            # 解析协议头
+            result = proto.unpack_header(data)
+            if result is None:
+                print(f"[Camera] ❌ 头解析失败 | len={len(data)} | head={data[:16].hex()}")
+                continue
+
+            frame_id, chunk_idx, total_chunks = result
+            jpeg_chunk = data[proto.HEADER_SIZE:]
+            self.chunk_count += 1
+
+            # ★ 每50分片轻量简报
+            if self.chunk_count % 50 == 0:
+                print(f"[Camera] 📦 分片={self.chunk_count} | 缓存帧={len(self.frame_cache)} | 完成={self.total_frames} | 丢弃={self.timeout_count}")
+
+            tnow = time.time()
+
+            # ── 帧缓存与驱逐 ──
+            if frame_id not in self.frame_cache:
+                if len(self.frame_cache) >= MAX_FRAME_CACHE:
+                    to_evict = None
+                    for fid in self.frame_cache:
+                        fc = self.frame_cache[fid]
+                        if len(fc["received"]) < fc["total"]:
+                            to_evict = fid
+                            break
+                    if to_evict is None:
+                        self.frame_cache.popitem(last=False)
+                    else:
+                        del self.frame_cache[to_evict]
+                self.frame_cache[frame_id] = {
+                    "chunks": [b""] * total_chunks,
+                    "total": total_chunks,
+                    "received": set(),
+                    "start_time": tnow,
+                    "last_chunk_time": tnow,
+                }
+
+            cache = self.frame_cache[frame_id]
+            if chunk_idx not in cache["received"]:
+                cache["chunks"][chunk_idx] = jpeg_chunk
+                cache["received"].add(chunk_idx)
+                cache["last_chunk_time"] = tnow
+
+            # ── 完整帧收集 ──
+            completed_fids = [
+                fid for fid, c in self.frame_cache.items()
+                if len(c["received"]) == c["total"]
+            ]
+            for fid in completed_fids:
+                cache_entry = self.frame_cache.pop(fid)
+                jpeg_data = b"".join(cache_entry["chunks"])
+                # ★ JPEG完整性校验: SOI(FFD8) + EOI(FFD9) 双重检查
+                if jpeg_data[:2] != b'\xff\xd8':
+                    self.timeout_count += 1
+                    print(f"[Camera] 💔 帧 {fid} 缺SOI header={jpeg_data[:2].hex()}, {len(jpeg_data)}B")
+                    continue
+                if jpeg_data[-2:] != b'\xff\xd9' and b'\xff\xd9' not in jpeg_data[-128:]:
+                    self.timeout_count += 1
+                    print(f"[Camera] 🪓 帧 {fid} 缺EOI tail={jpeg_data[-2:].hex()}, {len(jpeg_data)}B → 浏览器可能黑屏")
+                    continue
+                # ★ OpenCV 像素亮度检测: 替代字节大小启发式, 精确识别暗帧
+                if self._is_dark_frame(jpeg_data, fid):
+                    self.timeout_count += 1
+                    continue
+                if self._try_set_jpeg(jpeg_data):
+                    self.total_frames += 1
+                    self.fps_history.append(tnow)
+                    if len(self.fps_history) > 30:
+                        self.fps_history.pop(0)
+
+            # ── 超时清理 (互联网: 5s) ──
+            stale = [
+                fid for fid, fc in self.frame_cache.items()
+                if tnow - fc["start_time"] > frame_timeout
+            ]
+            for fid in stale:
+                c = self.frame_cache.pop(fid)
+                received = len(c["received"])
+                total = c["total"]
+                if received > total // 2:
+                    self.timeout_count += 1
+                    print(f"[Camera] ⏳ 帧 {fid} 超时保留旧帧 | {received}/{total} (不更新画面防花屏)")
+                else:
+                    self.timeout_count += 1
+                    print(f"[Camera] ⚠️ 帧 {fid} 超时丢弃 | {received}/{total}")
+
+            # ── 提前渲染 (互联网: 1.0s 无新分片) ──
+            early_render = [
+                fid for fid, fc in self.frame_cache.items()
+                if tnow - fc["last_chunk_time"] > early_render_stale
+                and len(fc["received"]) > fc["total"] // 2
+            ]
+            for fid in early_render:
+                c = self.frame_cache.pop(fid)
+                received = len(c["received"])
+                total = c["total"]
+                self.timeout_count += 1
+                print(f"[Camera] ⚡ 帧 {fid} 提前丢弃 | {received}/{total} (保留旧帧防花屏)")
+
+            # ── 周期诊断 (每 15s) ──
+            if tnow - self._last_debug_ts > 15:
+                rate = self.fps
+                print(f"[Camera] 📊 ESP32-UDP直连 | fps={rate:.1f} | 总帧={self.total_frames} | "
+                      f"分片={self.chunk_count} | 超时丢弃={self.timeout_count} | "
+                      f"缓存={len(self.frame_cache)}")
+                self._last_debug_ts = tnow
+
+        # 清理
+        if self.sock:
+            try:
+                self.sock.close()
+            except OSError:
+                pass
+            self.sock = None
+
     # ─── FPS 计算 ───────────────────────────────────────────
 
     @property
@@ -656,26 +1056,35 @@ class CameraServer:
 
         关键优化: 使用 Event 驱动，只在有新帧到达时才发送，
         避免重复帧堆积在浏览器缓冲区造成 7s+ 延迟。
-        若超过 15 秒无新帧则发送最后一帧保活连接（不再发送占位黑图）。
+        若超过 5 秒无新帧则发送最后一帧保活连接（不再发送占位黑图）。
+
+        ★ 竞态修复: wait()→clear() 之间存在窗口，push_jpeg() 若在此窗口 set()，
+           Event 已为 True → set() 无效 → clear() 清掉 → 事件丢失。
+           修复: clear() 后二次读 seq，若已变则重新 set() 唤醒下一次 wait()。
         """
         boundary = "--frameboundary"
         last_seq = -1
-        keepalive_interval = 2.0   # 无新帧时保活间隔（使用最后一帧），快速感知连接断开
+        keepalive_interval = 0.5
+        last_sent_jpeg = self.placeholder_jpeg  # 初始占位，收到首帧后永不黑屏
 
         while self.running:
-            # 等待新帧到达
             self._mjpeg_new_frame.wait(timeout=keepalive_interval)
-            self._mjpeg_new_frame.clear()
-
             current_seq = self._mjpeg_frame_seq
+            self._mjpeg_new_frame.clear()
+            if self._mjpeg_frame_seq != current_seq:
+                self._mjpeg_new_frame.set()
+                current_seq = self._mjpeg_frame_seq
 
             if self.stream_enabled:
                 if current_seq != last_seq:
-                    jpeg_data = self.latest_jpeg or self.placeholder_jpeg
-                    last_seq = current_seq
+                    jpeg_data = self.latest_jpeg
+                    if jpeg_data:
+                        last_sent_jpeg = jpeg_data  # ★ 缓存好帧，用于回退
+                        last_seq = current_seq
+                    else:
+                        jpeg_data = last_sent_jpeg   # ★ 绝不发黑图，复用上一好帧
                 else:
-                    # 超时无新帧，重发最后一帧保活（非黑屏）
-                    jpeg_data = self.latest_jpeg or self.placeholder_jpeg
+                    jpeg_data = last_sent_jpeg
             else:
                 jpeg_data = self.placeholder_jpeg
 

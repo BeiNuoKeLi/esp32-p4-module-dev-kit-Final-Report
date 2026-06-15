@@ -33,7 +33,8 @@
   2. GET /api/camera/snapshot — 最新一帧 JPEG bytes
 
 降级策略:
-  - 若容器内无 OpenCV → 自动进入 offline 模式，MJPEG 返回黑色占位图
+  - OpenCV 像素亮度检测 → 画面均值 <30/255 即拦截暗帧 (替代字节大小启发式)
+  - 若容器内无 OpenCV → 回退到字节大小阈值 + offline 模式
   - 无数据到达时 → MJPEG 保持最后一帧，snapshot 返回空
 """
 import os
@@ -161,6 +162,45 @@ class CameraServer:
     def latest_frame(self, val):
         with self._frame_lock:
             self._latest_frame = val
+
+    # ─── 暗帧检测 (OpenCV 像素级亮度) ──────────────────────
+
+    def _is_dark_frame(self, jpeg_data: bytes, frame_id: int = 0) -> bool:
+        """OpenCV 像素级亮度检测：直接分析画面内容均值，比字节大小阈值精确得多。
+
+        使用 IMREAD_REDUCED_GRAYSCALE_4 解码到原图 1/4 尺寸，速度快 ~10x。
+        若 OpenCV 不可用则回退到字节大小启发式。
+
+        Returns:
+            True  = 画面太暗，应丢弃
+            False = 正常亮度，可输出
+        """
+        if not self.cv2_ok:
+            # 无 OpenCV 时回退到字节大小启发式 (VGA: 暗帧~8-10KB, 正常~15-25KB)
+            return len(jpeg_data) < 12000
+
+        try:
+            import numpy as np
+            arr = np.frombuffer(jpeg_data, dtype=np.uint8)
+            # 缩略解码: 原图 1/4 尺寸 → 像素量 1/16，解码速度 ~5-10ms
+            img = self._cv2.imdecode(arr, self._cv2.IMREAD_REDUCED_GRAYSCALE_4)
+            if img is None:
+                return True  # JPEG 损坏/不完整 → 丢弃
+
+            mean_brightness = float(np.mean(img))
+            BRIGHTNESS_THRESHOLD = 30  # 0-255，<30 肉眼几乎全黑
+
+            if mean_brightness < BRIGHTNESS_THRESHOLD:
+                # 每 50 个暗帧输出一次诊断，避免日志刷屏
+                cnt = getattr(self, '_dark_log_count', 0) + 1
+                self._dark_log_count = cnt
+                if cnt % 50 == 1:
+                    print(f"[Camera] 🌑 帧 {frame_id} 亮度={mean_brightness:.1f}/255 (阈值{BRIGHTNESS_THRESHOLD}), 拦截暗帧")
+                return True
+
+            return False
+        except Exception:
+            return False  # 解码异常时放行，宁滥勿缺
 
     # ─── 初始化 ──────────────────────────────────────────
 
@@ -914,15 +954,14 @@ class CameraServer:
             for fid in completed_fids:
                 cache_entry = self.frame_cache.pop(fid)
                 jpeg_data = b"".join(cache_entry["chunks"])
-                # ★ 过滤暗帧: VGA正常~20KB / 暗帧~8-10KB, 阈值12KB拦截曝光振荡暗帧
-                if len(jpeg_data) < 12000:
-                    self.timeout_count += 1
-                    print(f"[Camera] 🖤 帧 {fid} 疑似暗帧 ({len(jpeg_data)}B), 保留旧帧")
-                    continue
                 # ★ JPEG完整性校验: 缺失 SOI(FFD8) → 编码坏帧 → 浏览器渲染黑屏
                 if jpeg_data[:2] != b'\xff\xd8':
                     self.timeout_count += 1
                     print(f"[Camera] 💔 帧 {fid} JPEG头损坏 SOI={jpeg_data[:2].hex()}, {len(jpeg_data)}B")
+                    continue
+                # ★ OpenCV 像素亮度检测: 替代字节大小启发式, 精确识别暗帧
+                if self._is_dark_frame(jpeg_data, fid):
+                    self.timeout_count += 1
                     continue
                 if self._try_set_jpeg(jpeg_data):
                     self.total_frames += 1

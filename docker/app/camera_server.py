@@ -929,11 +929,8 @@ class CameraServer:
                 received = len(c["received"])
                 total = c["total"]
                 if received > total // 2:
-                    partial = b"".join(c["chunks"])
-                    ok = self._try_set_jpeg(partial)
-                    self.total_frames += 1
-                    self.fps_history.append(tnow)
-                    print(f"[Camera] 🔧 帧 {fid} 超时渲染 | {received}/{total} | {'✅' if ok else '⚠️'}")
+                    self.timeout_count += 1
+                    print(f"[Camera] ⏳ 帧 {fid} 超时保留旧帧 | {received}/{total} (不更新画面防花屏)")
                 else:
                     self.timeout_count += 1
                     print(f"[Camera] ⚠️ 帧 {fid} 超时丢弃 | {received}/{total}")
@@ -948,11 +945,8 @@ class CameraServer:
                 c = self.frame_cache.pop(fid)
                 received = len(c["received"])
                 total = c["total"]
-                partial = b"".join(c["chunks"])
-                ok = self._try_set_jpeg(partial)
-                self.total_frames += 1
-                self.fps_history.append(tnow)
-                print(f"[Camera] ⚡ 帧 {fid} 提前渲染 | {received}/{total} | {'✅' if ok else '⚠️'}")
+                self.timeout_count += 1
+                print(f"[Camera] ⚡ 帧 {fid} 提前丢弃 | {received}/{total} (保留旧帧防花屏)")
 
             # ── 周期诊断 (每 15s) ──
             if tnow - self._last_debug_ts > 15:

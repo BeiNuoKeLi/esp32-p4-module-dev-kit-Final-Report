@@ -50,6 +50,7 @@ ESP32_CAM_URL = os.getenv("ESP32_CAM_URL", "http://10.16.234.23/capture")
 # MJPEG 流地址: CameraWebServer 在 port 81 提供 /stream 端点
 ESP32_CAM_STREAM_URL = os.getenv("ESP32_CAM_STREAM_URL", "http://10.16.234.23:81/stream")
 CAMERA_HTTP_FPS_LIMIT = int(os.getenv("CAMERA_HTTP_FPS", "3"))  # 仅 /capture 轮询模式使用
+SKIP_CV2_BRIGHTNESS = os.getenv("SKIP_CV2_BRIGHTNESS", "0") == "1"  # ★ 调试: 临时跳过OpenCV亮度检测
 
 # 项目内协议模块 (camera_protocol.py 在 docker/app/ 同目录)
 from . import camera_protocol as proto
@@ -170,11 +171,15 @@ class CameraServer:
 
         使用 IMREAD_REDUCED_GRAYSCALE_4 解码到原图 1/4 尺寸，速度快 ~10x。
         若 OpenCV 不可用则回退到字节大小启发式。
+        环境变量 SKIP_CV2_BRIGHTNESS=1 可临时禁用 (调试用)。
 
         Returns:
             True  = 画面太暗，应丢弃
             False = 正常亮度，可输出
         """
+        if SKIP_CV2_BRIGHTNESS:
+            return False  # ★ 调试模式: 跳过亮度检测
+
         if not self.cv2_ok:
             # 无 OpenCV 时回退到字节大小启发式 (VGA: 暗帧~8-10KB, 正常~15-25KB)
             return len(jpeg_data) < 12000

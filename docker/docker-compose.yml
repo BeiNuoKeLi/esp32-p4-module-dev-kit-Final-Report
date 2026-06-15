@@ -9,6 +9,7 @@ services:
     environment:
       - ESP32_IP=10.16.234.86            # ESP32-P4 设备 IP（仿真注入时用）
       - CAMERA_MODE=udp_esp32               # ★ ESP32-CAM UDP 直连推流 (跨海119x吞吐, 零RTT影响)
+      - SKIP_CV2_BRIGHTNESS=1               # ★ 临时: 跳过OpenCV亮度检测 (定位黑闪根因)
     volumes:
       - ./data:/app/data
       - ./app/static:/app/app/static:ro

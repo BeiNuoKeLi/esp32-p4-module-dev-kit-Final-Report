@@ -130,7 +130,7 @@ class SimGUI:
         self.frame_cache: OrderedDict = OrderedDict()
         self.frame_queue = queue.Queue(maxsize=2)
         self.last_scan_time = 0.0
-        self.scan_cooldown = 2.0
+        self.scan_cooldown = 0.5   # ★ P2: 缩短冷却时间, 不再怕频繁扫码
         self.qr_scan_counter = 0
         self.total_frames = 0
         self.fps_history = []
@@ -796,6 +796,12 @@ class SimGUI:
 
         try:
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            # ★ P2: CLAHE 局部直方图均衡 → 增强 QR 边缘对比度, 与 Docker API 对齐
+            clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+            gray = clahe.apply(gray)
+            # ★ 轻度锐化核 → 进一步强化模糊文本边缘
+            kernel = np.array([[0, -1, 0], [-1, 5, -1], [0, -1, 0]], dtype=np.float32)
+            gray = cv2.filter2D(gray, -1, kernel)
             results = pyzbar_decode(gray)
             for r in results:
                 data_str = r.data.decode("utf-8").strip()

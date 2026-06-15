@@ -92,6 +92,20 @@ void setup() {
     s->set_brightness(s, 1);   // up the brightness just a bit
     s->set_saturation(s, -2);  // lower the saturation
   }
+  // ★ OV2640 传感器 → 针对二维码识别优化
+  if (s->id.PID == OV2640_PID) {
+    s->set_brightness(s, 0);         // 中性亮度, 避免过曝
+    s->set_contrast(s, 2);           // ★ 拉高对比度 → 黑白边缘更锐利, pyzbar 易识别
+    s->set_saturation(s, -1);        // QR 是黑白的, 降低饱和度减少色彩噪声
+    s->set_gain_ctrl(s, 1);          // 开启自动增益
+    s->set_agc_gain(s, 0);           // 手动增益归零 (AGC 自动决策)
+    s->set_aec2(s, 1);               // ★ 快速自动曝光 → 对准 QR 后 2-3 帧稳定
+    s->set_ae_level(s, 0);           // 曝光居中
+    s->set_gainceiling(s, (gainceiling_t)0); // GAINCEILING_2X → 限制增益上限, 防暗部噪声
+    s->set_wb_mode(s, 0);            // 自动白平衡
+    s->set_dcw(s, 1);               // 开窗缩小画幅
+    s->set_raw_gma(s, 1);           // 使用传感器 Gamma
+  }
 
 #if defined(CAMERA_MODEL_M5STACK_WIDE) || defined(CAMERA_MODEL_M5STACK_ESP32CAM)
   s->set_vflip(s, 1);

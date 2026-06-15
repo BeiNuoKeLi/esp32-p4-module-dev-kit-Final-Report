@@ -194,7 +194,7 @@ D:\Anaconda3\envs\ForAgents\python.exe pc_receiver.py
 
 | 参数 | 值 |
 |------|-----|
-| 摄像头模块 | ESP32-CAM (OV2640, **HVGA 480×320**, quality=12) |
+| 摄像头模块 | ESP32-CAM (OV2640, **HVGA 480×320**, quality=12, contrast=2 锐化边缘 + aec2 快速曝光 → QR 扫码优化) |
 | CAM 源码 | `CameraWebServer/` (Arduino 工程，提供 `/capture` + `/stream`) |
 | 采集方式 | Docker `camera_server.py` 直接 HTTP GET `/capture` 拉取 JPEG (TCP 零丢包) |
 | 环境变量 | `CAMERA_MODE=http`, `ESP32_CAM_URL`, `CAMERA_HTTP_FPS` |
@@ -223,8 +223,8 @@ D:\Anaconda3\envs\ForAgents\python.exe smart_monitor_sim_gui.py
 | 文件 | 说明 |
 |------|------|
 | `warehouse_db.py` | SQLite 数据库 (inventory + check_log 表) |
-| `generate_qr_labels.py` | 生成 6 种化肥二维码标签到 `qr_labels/` |
-| `smart_monitor_sim_gui.py` Tab 2 | 摄像头拉流 → pyzbar 扫码 → 入库/出库 → TreeView 表格
+| `generate_qr_labels.py` | 生成 6 种化肥二维码标签到 `qr_labels/`（version=4, EC=H 30% 纠错, 抗污损能力翻倍） |
+| `smart_monitor_sim_gui.py` Tab 2 | 摄像头拉流 → CLAHE + 锐化核预处理 → pyzbar 扫码（0.5s 冷却） → 入库/出库 → TreeView 表格
 | 摄像头预览 | 点击顶部「打开摄像头预览」按钮，独立窗口 640×480+ 展示画面
 
 ## 已知问题 & 修复

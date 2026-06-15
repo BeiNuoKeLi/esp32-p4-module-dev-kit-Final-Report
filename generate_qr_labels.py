@@ -103,9 +103,10 @@ def generate_qr_label(item: dict, output_dir: Path):
     item_id = item["id"]
 
     # 创建二维码
+    # ★ P3: version=4 + EC=H(30%) → 抗污损能力翻倍, 物理 33×33 模块
     qr = qrcode.QRCode(
-        version=3,
-        error_correction=qrcode.constants.ERROR_CORRECT_M,
+        version=4,
+        error_correction=qrcode.constants.ERROR_CORRECT_H,
         box_size=8,
         border=2,
     )

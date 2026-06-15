@@ -665,23 +665,42 @@ async def camera_push_status():
 async def camera_scan():
     """
     对摄像头最新帧执行 pyzbar 二维码解码。
+    ★ P0 多帧重试: 最多取 3 帧检测，每帧间隔 80ms，大幅提升识别率。
     返回解码出的物料 JSON（如果成功）。
     """
     if not cam.cv2_ok:
         return ScanResult(success=False, message="OpenCV 未安装，扫码不可用")
 
-    # ★ 按需解码 JPEG → OpenCV frame（在线程池中执行，不阻塞事件循环）
-    ok = await asyncio.to_thread(cam.try_decode_frame)
-    if not ok:
-        return ScanResult(success=False, message="无可用画面（摄像头可能未连接）")
-
-    frame = cam.latest_frame
-    if frame is None:
-        return ScanResult(success=False, message="无可用画面（摄像头可能未连接）")
-
     try:
         from pyzbar.pyzbar import decode as pyzbar_decode
-        import cv2
+    except ImportError:
+        return ScanResult(success=False, message="pyzbar 未安装")
+
+    import cv2
+    import datetime as _dt
+
+    _last_jpeg_hash = None
+    SCAN_RETRIES = 3
+    RETRY_DELAY = 0.08  # 80ms, 等待新帧到来
+
+    for attempt in range(1, SCAN_RETRIES + 1):
+        # ★ 按需解码 JPEG → OpenCV frame（在线程池中执行，不阻塞事件循环）
+        ok = await asyncio.to_thread(cam.try_decode_frame)
+        if not ok:
+            continue
+
+        frame = cam.latest_frame
+        if frame is None:
+            continue
+
+        # ★ 重复帧跳过：如果 JPEG 和上一轮相同，说明摄像头未产新帧，直接等下一轮
+        current_jpeg = cam.latest_jpeg
+        if current_jpeg is not None and current_jpeg == _last_jpeg_hash:
+            if attempt < SCAN_RETRIES:
+                await asyncio.sleep(RETRY_DELAY)
+                continue
+        _last_jpeg_hash = current_jpeg
+
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         # ★ CLAHE 局部直方图均衡 → 增强二维码边缘对比度，抵消 JPEG 压缩模糊
         clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
@@ -693,19 +712,20 @@ async def camera_scan():
             try:
                 item = json.loads(data_str)
                 if "id" in item:
-                    import datetime as _dt
                     return ScanResult(
                         success=True,
                         item=item,
-                        message=f"识别到: {item.get('id', '')}",
+                        message=f"识别到: {item.get('id', '')}（第{attempt}次尝试）",
                         timestamp=_dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                     )
             except (ValueError, KeyError):
                 continue
 
-        return ScanResult(success=False, message="画面中未检测到有效二维码")
-    except ImportError:
-        return ScanResult(success=False, message="pyzbar 未安装")
+        # 当前帧没找到，等待新帧再试
+        if attempt < SCAN_RETRIES:
+            await asyncio.sleep(RETRY_DELAY)
+
+    return ScanResult(success=False, message=f"画面中未检测到有效二维码（已尝试{SCAN_RETRIES}帧）")
 
 
 @app.get("/api/camera/status")

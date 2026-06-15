@@ -2,7 +2,7 @@
 
 > **文档目的**：记录项目当前状态、规范和已实现功能，方便后续 Agent 理解和继续开发
 >
-> **最后更新**：2026-06-16（v3.5 演示锁定机制上线；每浏览器独立 Cookie 认证；写操作全量守卫）
+> **最后更新**：2026-06-16（v3.5 演示锁定机制 + 手机端响应式适配；900/600/480 三级断点）
 
 ---
 
@@ -585,7 +585,7 @@ portENABLE_INTERRUPTS();
 | 2026-06-12 | 摄像头架构重构 v3.3 | Agent | Docker 直连 ESP32-CAM (HVGA 480×320); Canvas 快照轮询替代 MJPEG <img>; CameraWebServer Arduino 工程 |
 | 2026-06-13 | 仿真注入系统 v3.4 | Agent | 内置 UDP 监听器 SensorUDPProtocol:8080 替代外部桥接; POST /api/sim/inject + 前端预设面板; DELETE /api/alarms 报警清空; 库存管理增强 (手动新增/流水清空/物料删除); 视频流关闭→黑屏; 文档全面更新至 v3.4 |
 | 2026-06-15 | 前端 MJPEG 解析修复 | Agent | 黑屏根因定位：服务端数据正常但前端 JS 两个 bug — (1) `\r\n--frameboundary`无法匹配流首裸boundary导致首帧跳过；(2) `buf.length-2`硬裁切在多帧共缓冲时夹带下一帧数据致JPEG损坏。修复：改用`--frameboundary`(15B)搜索 + 下一boundary精确定界帧尾。前端渲染方案为`fetch`→ReadableStream→boundary二进制切分→BlobURL; 替代了 v3.3的Canvas轮询和v3.5的`<img>`原生渲染。VGA_DEBUG_LOG.md 补充最终根因。PRODUCT_REPORT.md/README.md 同步前端渲染描述。**总结为 DEBUG_GUIDE.md 数据流分界实验法。** |
-| 2026-06-16 | 演示锁定机制 v3.5 | Agent | HMAC-SHA256 Cookie 签名 + HTTP 中间件写操作拦截 + ESP32 白名单放行; 前端 🛡️锁定指示器 + 密码弹窗 + 14 个 checkUnlock() 守卫; DEMO_PASSWORD 环境变量控制开关; 每浏览器独立锁定 |
+| 2026-06-16 | 演示锁定机制 v3.5 | Agent | HMAC-SHA256 Cookie 签名 + HTTP 中间件写操作拦截 + ESP32 白名单放行; 前端 🛡️锁定指示器 + 密码弹窗 + 14 个 checkUnlock() 守卫; DEMO_PASSWORD 环境变量控制开关; 每浏览器独立锁定 |\n| 2026-06-16 | 手机端响应式适配 | Agent | 900/600/480 三级断点; sim-panel 6→3→2列、cat-stats 4→2→1列; 弹窗 90vw+max-width; rawDataPanel min(420px,94vw); 表格 overflow-x滚动; 传感器字体 2rem→1.6→1.4rem; header/button/chart 逐级缩小; toast 全宽 |
 
 ---
 

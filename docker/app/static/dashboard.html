@@ -165,7 +165,100 @@ th{color:var(--text-dim);font-weight:600;white-space:nowrap}
 .toast-exit{animation:toast-out .25s ease-in forwards}
 @keyframes toast-out{to{opacity:0;transform:translateX(40px)}}
 
-@media(max-width:900px){.g4{grid-template-columns:repeat(2,1fr)}.g2{grid-template-columns:1fr}.cam-wh-row{grid-template-columns:1fr}main{padding:16px}}
+/* ===== 响应式布局 ===== */
+@media(max-width:900px){
+  .g4{grid-template-columns:repeat(2,1fr)}
+  .g2{grid-template-columns:1fr}
+  .cam-wh-row{grid-template-columns:1fr}
+  .cat-stats-row{grid-template-columns:repeat(2,1fr)}
+  .sim-panel{grid-template-columns:repeat(3,1fr)}
+  main{padding:16px}
+  header{padding:12px 20px}
+}
+@media(max-width:600px){
+  .g4{grid-template-columns:1fr 1fr}
+  .g2{grid-template-columns:1fr}
+  .cam-wh-row{grid-template-columns:1fr}
+  .cat-stats-row{grid-template-columns:repeat(2,1fr)}
+  .sim-panel{grid-template-columns:repeat(2,1fr);gap:6px 8px}
+  #inventoryTable,.alarm-panel{overflow-x:auto;-webkit-overflow-scrolling:touch}
+  main{padding:12px;gap:14px}
+  header{padding:10px 14px;flex-wrap:wrap;gap:8px}
+  header h1{font-size:1.1rem}
+  .alert-badge{font-size:.8rem;padding:6px 12px;gap:6px}
+  .alert-reason{font-size:.72rem}
+  .card{padding:14px}
+  .sensor-card{padding:14px 10px}
+  .sensor-card .value{font-size:1.6rem}
+  .sensor-card .unit{font-size:.75rem}
+  .sensor-card .label{font-size:.7rem}
+  .chart-wrap{height:200px}
+  .cam-panel{min-height:260px}
+  .cam-viewport{min-height:220px}
+  .wh-mode-btn{font-size:.82rem;padding:10px 12px}
+  .btn-scan{font-size:.8rem;padding:9px}
+  .btn-preset{font-size:.72rem;padding:5px 10px}
+  .toast-container{top:70px;right:10px}
+  .toast{min-width:200px;font-size:.78rem;padding:10px 14px}
+  .status-bar{flex-wrap:wrap;gap:8px;font-size:.72rem}
+}
+@media(max-width:480px){
+  .g4{grid-template-columns:1fr}
+  .g2{grid-template-columns:1fr}
+  .cam-wh-row{grid-template-columns:1fr}
+  .cat-stats-row{grid-template-columns:1fr}
+  .sim-panel{grid-template-columns:repeat(2,1fr)}
+  main{padding:8px;gap:10px}
+  header{padding:8px 10px;gap:6px}
+  header h1{font-size:1rem}
+  .alert-badge{font-size:.72rem;padding:4px 10px;gap:4px}
+  .alert-reason{display:none}
+  .lock-indicator{font-size:.72rem;padding:4px 10px}
+  .card{padding:10px}
+  .card h3{font-size:.75rem;margin-bottom:10px}
+  .sensor-card{padding:12px 8px}
+  .sensor-card .value{font-size:1.4rem}
+  .sensor-card .unit{font-size:.7rem}
+  .sensor-card .label{font-size:.65rem}
+  .do-tag{font-size:.6rem;padding:1px 6px;top:-1px}
+  .chart-wrap{height:180px}
+  .cam-panel{min-height:220px;padding:12px}
+  .cam-viewport{min-height:180px}
+  .cam-chip{font-size:.65rem;padding:3px 8px}
+  .cam-mode-tag{font-size:.68rem;padding:4px 10px}
+  .wh-mode-btn{font-size:.75rem;padding:8px 10px;gap:4px}
+  .btn-scan{font-size:.75rem;padding:8px 10px;gap:4px}
+  .wh-log-area{min-height:80px;max-height:120px;padding:8px}
+  .scan-result-card{padding:10px 12px;min-height:100px}
+  .env-snapshot-bar{gap:8px;padding:6px 10px;font-size:.7rem;flex-wrap:wrap}
+  table{font-size:.72rem}
+  th,td{padding:6px 8px}
+  .alarm-table{font-size:.7rem}
+  .alarm-table th,.alarm-table td{padding:6px 8px}
+  .alarm-toolbar{gap:6px}
+  .alarm-toolbar select,.alarm-toolbar button{font-size:.7rem;padding:4px 8px}
+  .alarm-pager{font-size:.7rem}
+  .btn-danger-sm{font-size:.65rem;padding:4px 8px}
+  .btn-add{font-size:.72rem;padding:5px 10px}
+  .btn-del-row{font-size:.65rem;padding:2px 8px}
+  .btn-preset{font-size:.68rem;padding:4px 8px}
+  .form-row input,.form-row select{font-size:.75rem;padding:5px 8px}
+  .form-row label{font-size:.7rem;min-width:50px}
+  .btn-submit{padding:7px 16px;font-size:.78rem}
+  .modal-box{padding:16px;max-width:100%;width:95%}
+  .lock-modal-box{width:90vw;max-width:340px;padding:22px 20px}
+  .lock-modal-box h3{font-size:.95rem}
+  .lock-password-input{font-size:.8rem;padding:8px 12px}
+  .btn-lock-unlock,.btn-lock-cancel{font-size:.78rem;padding:7px 18px}
+  .toast-container{top:60px;right:6px;left:6px}
+  .toast{min-width:0;font-size:.74rem;padding:10px 12px}
+  .status-bar{padding:8px 10px;font-size:.68rem;margin-top:12px}
+  .cat-card{padding:10px 12px}
+  .cat-card .cat-total{font-size:1.2rem}
+  .cat-card .cat-instock{font-size:.7rem}
+  .sim-item label{font-size:.65rem}
+  .sim-item .sim-val{font-size:.7rem}
+}
 
 /* Toggle switch */
 .toggle-switch{position:relative;display:inline-block;width:44px;height:24px}
@@ -1527,7 +1620,7 @@ console.log('[SmartMonitor] Block3: 业务模块初始化完成');
 </script>
 
 <!-- ====== Raw Sensor Data Floating Panel ====== -->
-<div id="rawDataPanel" style="display:none;position:fixed;bottom:16px;right:16px;width:420px;max-height:480px;z-index:200;
+<div id="rawDataPanel" style="display:none;position:fixed;bottom:16px;right:16px;width:min(420px,94vw);max-height:480px;z-index:200;
   background:linear-gradient(145deg,#1a2733 0%,rgba(15,25,35,.97)100%);
   border:1px solid var(--border-light);border-radius:12px;padding:16px;
   box-shadow:0 8px 36px rgba(0,0,0,.6);overflow:hidden;backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);">

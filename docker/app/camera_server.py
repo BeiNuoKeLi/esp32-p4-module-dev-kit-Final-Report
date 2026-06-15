@@ -914,6 +914,11 @@ class CameraServer:
             for fid in completed_fids:
                 cache_entry = self.frame_cache.pop(fid)
                 jpeg_data = b"".join(cache_entry["chunks"])
+                # ★ 过滤极暗帧/损坏帧: HVGA质量15正常≥5KB, <2.5KB大概率是传感器暗帧
+                if len(jpeg_data) < 2500:
+                    self.timeout_count += 1
+                    print(f"[Camera] 🖤 帧 {fid} 疑似暗帧 ({len(jpeg_data)}B), 保留旧帧")
+                    continue
                 if self._try_set_jpeg(jpeg_data):
                     self.total_frames += 1
                     self.fps_history.append(tnow)

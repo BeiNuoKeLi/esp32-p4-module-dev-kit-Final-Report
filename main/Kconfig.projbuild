@@ -13,33 +13,4 @@ menu "Example Configuration"
         help
             Password for the target WiFi network.
 
-    config CAMERA_HTTP_ENABLED
-        bool "Enable HTTP Camera Fetch (ESP32-CAM relay)"
-        default n
-        help
-            [已弃用] 当前架构下 Docker 直连 ESP32-CAM HTTP 拉流，不再需要 P4 UDP 中继。
-            如需恢复旧方案 (P4 中继转发)，开启此项。
-
-    config CAMERA_HTTP_ESP32CAM_URL
-        string "ESP32-CAM HTTP Capture URL"
-        default "http://10.16.234.23/capture"
-        help
-            Full URL to the ESP32-CAM's single JPEG capture endpoint.
-            Typically http://<esp32cam-ip>/capture for Arduino CameraWebServer.
-
-    config CAMERA_HTTP_UDP_IP
-        string "Camera UDP Target IP (PC)"
-        default "10.16.234.215"
-        help
-            Destination IP address for JPEG stream forwarding (UDP port 8082).
-            Should match the PC running camera_display_receiver.py.
-
-    config CAMERA_HTTP_FPS
-        int "Camera Fetch Rate (FPS)"
-        range 1 10
-        default 10
-        help
-            Target frame fetch rate from ESP32-CAM.
-            Lower values reduce bandwidth. ESP32-CAM typically 3-5 fps.
-
 endmenu

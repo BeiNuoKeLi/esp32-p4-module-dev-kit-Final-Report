@@ -229,18 +229,17 @@ void sim_poll_task(void *arg)
         esp_netif_t *sta_netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
         esp_netif_ip_info_t ip_info;
         int wait = 0;
-        while (wait < 200) {
+        while (1) {
             if (sta_netif && esp_netif_is_netif_up(sta_netif)) {
                 esp_netif_get_ip_info(sta_netif, &ip_info);
                 if (ip_info.ip.addr != 0) break;
             }
             vTaskDelay(pdMS_TO_TICKS(100));
             wait++;
-        }
-        if (wait >= 200) {
-            ESP_LOGE(TAG, "Wi-Fi 连接超时 (20s), 任务退出");
-            vTaskDelete(NULL);
-            return;
+            /* 每 20s 打一次日志，避免静默 */
+            if (wait % 200 == 0) {
+                ESP_LOGW(TAG, "Wi-Fi 仍未就绪，继续等待...");
+            }
         }
     }
     ESP_LOGI(TAG, "轮询就绪 → sim=%s (%dms) | cfg=%s (%dms)",

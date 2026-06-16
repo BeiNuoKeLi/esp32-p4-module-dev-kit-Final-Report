@@ -99,11 +99,10 @@ ESP32-CAM ──HTTP/TCP──► Docker (camera_server.py)  ← 局域网模式
 - **`sensors.c/h`**：DHT11 / DS18B20 / MQ-135 / 光敏 / 蜂鸣器 / LED / 继电器 驱动
 - **`oled_ssd1306.c/h`**：SSD1306 I2C 驱动，Page Addressing 逐页刷新
 - **`udp_sender.c/h`**：JSON 组包 + UDP Socket 发送 (snprintf, lwip/sockets.h)，带 ENOMEM 退避重试
-- **`camera_http_fetch.c/h`**：[已弃用] HTTP 拉取 ESP32-CAM JPEG → 0xAA55 协议 UDP 分包转发（当前架构下 Docker 直连 ESP32-CAM，不再需要 P4 中继；默认关闭，通过 `CONFIG_CAMERA_HTTP_ENABLED` 恢复）
 - **`smart_monitor_main.c`**：主入口，Wi-Fi STA + 8 个 FreeRTOS 任务创建（LED/继电器集成在 buzzer 任务中）
 - **`pc_receiver.py`**：Windows 上位机 UDP 接收脚本 (监听 8080, CSV 日志)
 - **`camera_display_receiver.py`**：~~摄像头图像流 UDP 接收 + JPEG 解码 + OpenCV 显示~~ **已弃用**，由 Docker `camera_server.py` 替代
-- **`camera_capture_sender.py`**：~~USB 摄像头采集 + UDP 发送~~ **已弃用**，由 `CameraWebServer/` (ESP32-CAM) + `camera_http_fetch.c` 替代
+- **`camera_capture_sender.py`**：~~USB 摄像头采集 + UDP 发送~~ **已弃用**，由 `CameraWebServer/` (ESP32-CAM) 替代
 - **`smart_monitor_sim_gui.py`**：综合工具体 v3.0 — 仿真控制 (Tab 1) + 仓储管理 (Tab 2)，摄像头预览以独立 Toplevel 窗口显示
 - **`warehouse_db.py`**：SQLite 数据库模块 (inventory 库存表 + check_log 操作日志)
 - **`generate_qr_labels.py`**：二维码标签批量生成工具 (6 种与传感器匹配的化肥)
@@ -157,7 +156,7 @@ cd /opt/esp32-p4-module-dev-kit-Final-Report && git checkout main && git pull &&
 
 | 环境变量 | 默认值 | 说明 |
 |---------|--------|------|
-| `DEMO_PASSWORD` | (空/未设置) | 演示密码，留空则不启用锁定功能 |
+| `DEMO_PASSWORD` | `111` (docker-compose 部署时启用) | 演示密码，留空则不启用锁定功能。`docker-compose.yml` 中已预置 `111` |
 
 **工作原理**：
 1. 设置 `DEMO_PASSWORD` 后，Docker 启动时仪表盘自动进入只读模式
@@ -218,15 +217,6 @@ D:\Anaconda3\envs\ForAgents\python.exe pc_receiver.py
 | 环境变量 | `CAMERA_MODE=http`, `ESP32_CAM_URL`, `CAMERA_HTTP_FPS` |
 | 默认帧率 | 5 fps |
 | 前端显示 | `fetch` → ReadableStream → boundary 二进制切分 → BlobURL |
-
-#### 备选模式：ESP32-P4 UDP 中继 (已弃用，默认关闭)
-
-| 参数 | 值 |
-|------|-----|
-| 采集方式 | ESP32-P4 通过 HTTP GET `/capture` 拉取 JPEG，UDP 分包转发到 Docker |
-| 转发协议 | UDP 分包 (Magic 0xAA55, 4096 字节/包) |
-| 端口 | 8082 UDP (容器内) / 8003 UDP (对外，已由 ESP32-CAM 直连 UDP 占用) |
-| 配置项 | `CONFIG_CAMERA_HTTP_ENABLED=y` / `CONFIG_CAMERA_HTTP_FPS` |
 
 ### 仓储管理 (二维码扫码)
 

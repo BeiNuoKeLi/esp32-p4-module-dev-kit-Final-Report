@@ -18,7 +18,6 @@
 #include "sensors.h"
 #include "oled_ssd1306.h"
 #include "udp_sender.h"
-#include "camera_http_fetch.h"
 #include "sim_poll.h"
 #include "lwip/sockets.h"
 
@@ -173,6 +172,29 @@ static void load_alarm_config_from_nvs(void)
  */
 void save_alarm_config_to_nvs(void)
 {
+    /* 快照 g_sensor_data 的值（持锁），然后无锁写 NVS
+     * — 避免长时间持锁阻塞传感器任务，同时防止 sim_poll/udp_sim 并发写 NVS 导致损坏 */
+    uint8_t  mq_mode, mq_ao_dir, ph_mode, ph_ao_dir, temp_en;
+    uint32_t mq_ao_thr, ph_ao_thr;
+    int32_t  dht_t_hi, dht_h_hi, ds_t_hi;
+
+    if (xSemaphoreTake(g_sensor_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+        mq_mode   = (uint8_t)g_sensor_data.mq135_alarm_src;
+        mq_ao_thr = (uint32_t)(g_sensor_data.mq135_ao_threshold * 1000.0f);
+        mq_ao_dir = (uint8_t)g_sensor_data.mq135_ao_dir;
+        ph_mode   = (uint8_t)g_sensor_data.photo_alarm_src;
+        ph_ao_thr = (uint32_t)g_sensor_data.photo_ao_threshold;
+        ph_ao_dir = (uint8_t)g_sensor_data.photo_ao_dir;
+        dht_t_hi  = (int32_t)g_sensor_data.dht11_temp_high;
+        dht_h_hi  = (int32_t)g_sensor_data.dht11_humi_high;
+        ds_t_hi   = (int32_t)(g_sensor_data.ds18b20_temp_high * 10.0f);
+        temp_en   = (uint8_t)g_sensor_data.temp_humi_alarm_enabled;
+        xSemaphoreGive(g_sensor_mutex);
+    } else {
+        ESP_LOGE(TAG, "NVS: 无法获取传感器锁, 跳过持久化");
+        return;
+    }
+
     nvs_handle_t h;
     esp_err_t ret = nvs_open(NVS_ALARM_NS, NVS_READWRITE, &h);
     if (ret != ESP_OK) {
@@ -180,16 +202,16 @@ void save_alarm_config_to_nvs(void)
         return;
     }
 
-    nvs_set_u8(h,  "mq_mode",   (uint8_t)g_sensor_data.mq135_alarm_src);
-    nvs_set_u32(h, "mq_ao_thr", (uint32_t)(g_sensor_data.mq135_ao_threshold * 1000.0f));
-    nvs_set_u8(h,  "mq_ao_dir", (uint8_t)g_sensor_data.mq135_ao_dir);
-    nvs_set_u8(h,  "ph_mode",   (uint8_t)g_sensor_data.photo_alarm_src);
-    nvs_set_u32(h, "ph_ao_thr", (uint32_t)g_sensor_data.photo_ao_threshold);
-    nvs_set_u8(h,  "ph_ao_dir", (uint8_t)g_sensor_data.photo_ao_dir);
-    nvs_set_i32(h, "dht_t_hi",  (int32_t)g_sensor_data.dht11_temp_high);
-    nvs_set_i32(h, "dht_h_hi",  (int32_t)g_sensor_data.dht11_humi_high);
-    nvs_set_i32(h, "ds_t_hi",   (int32_t)(g_sensor_data.ds18b20_temp_high * 10.0f));
-    nvs_set_u8(h,  "temp_en",   (uint8_t)g_sensor_data.temp_humi_alarm_enabled);
+    nvs_set_u8(h,  "mq_mode",   mq_mode);
+    nvs_set_u32(h, "mq_ao_thr", mq_ao_thr);
+    nvs_set_u8(h,  "mq_ao_dir", mq_ao_dir);
+    nvs_set_u8(h,  "ph_mode",   ph_mode);
+    nvs_set_u32(h, "ph_ao_thr", ph_ao_thr);
+    nvs_set_u8(h,  "ph_ao_dir", ph_ao_dir);
+    nvs_set_i32(h, "dht_t_hi",  dht_t_hi);
+    nvs_set_i32(h, "dht_h_hi",  dht_h_hi);
+    nvs_set_i32(h, "ds_t_hi",   ds_t_hi);
+    nvs_set_u8(h,  "temp_en",   temp_en);
 
     ret = nvs_commit(h);
     nvs_close(h);
@@ -206,11 +228,15 @@ static void mq135_task(void *arg)
 {
     mq135_data_t data;
 
-    esp_err_t ret = mq135_init();
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "MQ-135 初始化失败");
-        vTaskDelete(NULL);
-        return;
+    while (1) {
+        esp_err_t ret = mq135_init();
+        if (ret == ESP_OK) break;
+        ESP_LOGW(TAG, "MQ-135 初始化失败, 5s 后重试");
+        if (xSemaphoreTake(g_sensor_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+            g_sensor_data.mq135_err = 1;
+            xSemaphoreGive(g_sensor_mutex);
+        }
+        vTaskDelay(pdMS_TO_TICKS(5000));
     }
 
     while (1) {
@@ -256,11 +282,15 @@ static void ds18b20_task(void *arg)
 {
     ds18b20_data_t data;
 
-    esp_err_t ret = ds18b20_init();
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "DS18B20 初始化失败");
-        vTaskDelete(NULL);
-        return;
+    while (1) {
+        esp_err_t ret = ds18b20_init();
+        if (ret == ESP_OK) break;
+        ESP_LOGW(TAG, "DS18B20 初始化失败, 5s 后重试");
+        if (xSemaphoreTake(g_sensor_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+            g_sensor_data.ds18b20_err = 1;
+            xSemaphoreGive(g_sensor_mutex);
+        }
+        vTaskDelay(pdMS_TO_TICKS(5000));
     }
 
     while (1) {
@@ -299,11 +329,15 @@ static void dht11_task(void *arg)
 {
     dht11_data_t data;
 
-    esp_err_t ret = dht11_init();
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "DHT11 初始化失败");
-        vTaskDelete(NULL);
-        return;
+    while (1) {
+        esp_err_t ret = dht11_init();
+        if (ret == ESP_OK) break;
+        ESP_LOGW(TAG, "DHT11 初始化失败, 5s 后重试");
+        if (xSemaphoreTake(g_sensor_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+            g_sensor_data.dht11_err = 1;
+            xSemaphoreGive(g_sensor_mutex);
+        }
+        vTaskDelay(pdMS_TO_TICKS(5000));
     }
 
     while (1) {
@@ -350,11 +384,15 @@ static void photo_sensor_task(void *arg)
 {
     photo_data_t data;
 
-    esp_err_t ret = photo_sensor_init();
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "光敏电阻传感器初始化失败");
-        vTaskDelete(NULL);
-        return;
+    while (1) {
+        esp_err_t ret = photo_sensor_init();
+        if (ret == ESP_OK) break;
+        ESP_LOGW(TAG, "光敏电阻传感器初始化失败, 5s 后重试");
+        if (xSemaphoreTake(g_sensor_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+            g_sensor_data.photo_err = 1;
+            xSemaphoreGive(g_sensor_mutex);
+        }
+        vTaskDelay(pdMS_TO_TICKS(5000));
     }
 
     while (1) {
@@ -491,9 +529,7 @@ static void buzzer_task(void *arg)
 {
     esp_err_t ret = buzzer_init();
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "蜂鸣器初始化失败");
-        vTaskDelete(NULL);
-        return;
+        ESP_LOGE(TAG, "蜂鸣器初始化失败, 报警功能降级 (无声音)");
     }
 
     ret = led_init();
@@ -888,7 +924,8 @@ void app_main(void)
     /* 创建互斥锁 */
     g_sensor_mutex = xSemaphoreCreateMutex();
     if (g_sensor_mutex == NULL) {
-        ESP_LOGE(TAG, "互斥锁创建失败!");
+        ESP_LOGE(TAG, "❌ 互斥锁创建失败! 系统无法启动");
+        while (1) { vTaskDelay(pdMS_TO_TICKS(5000)); }  /* 持续报错, 避免静默假死 */
         return;
     }
 
@@ -925,19 +962,12 @@ void app_main(void)
     /* 创建蜂鸣器报警任务 (优先级2, 栈5120 — 局部变量多+ESP_LOG格式化) */
     xTaskCreate(buzzer_task, "buzzer_alarm", 5120, NULL, 2, NULL);
 
-    /* 创建 UDP 传感器数据发送任务 (优先级2, 栈3584, 不绑核避免 SDIO 中断冲突) */
-    xTaskCreate(udp_sender_task, "Task_UDP_Send", 3584, NULL, 2, NULL);
+    /* 创建 UDP 传感器数据发送任务 (优先级2, 栈5120, 不绑核避免 SDIO 中断冲突) */
+    xTaskCreate(udp_sender_task, "Task_UDP_Send", 5120, NULL, 2, NULL);
 
-    /* 创建 UDP 仿真命令接收任务 (优先级1, 栈3072) — 局域网 PC GUI 直接注入 */
-    xTaskCreate(udp_sim_command_task, "Task_UDP_Sim", 3072, NULL, 1, NULL);
+    /* 创建 UDP 仿真命令接收任务 (优先级1, 栈4096) — 局域网 PC GUI 直接注入 */
+    xTaskCreate(udp_sim_command_task, "Task_UDP_Sim", 4096, NULL, 1, NULL);
 
     /* 创建 HTTP 仿真命令轮询任务 (优先级1, 栈8192) — 公网 VPS 反转轮询 */
     xTaskCreate(sim_poll_task, "Task_Sim_Poll", 8192, NULL, 1, NULL);
-
-    /* 创建 HTTP 摄像头拉图转发任务 (优先级1, 栈8192) — ESP32-CAM → HTTP → UDP */
-#ifdef CONFIG_CAMERA_HTTP_ENABLED
-    xTaskCreate(camera_http_fetch_task, "Task_Cam_HTTP", 8192, NULL, 1, NULL);
-#else
-    ESP_LOGI(TAG, "HTTP 摄像头已禁用 (CONFIG_CAMERA_HTTP_ENABLED=n)");
-#endif
 }

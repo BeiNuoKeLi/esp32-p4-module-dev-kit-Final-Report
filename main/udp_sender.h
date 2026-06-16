@@ -5,11 +5,11 @@
  * 功能（REQUIREMENT.md 第6节）：
  *   - 每2秒读取 g_sensor_data（持锁）
  *   - snprintf() 构建 JSON（REQUIREMENT.md 6.3）
- *   - 通过 UDP socket 发送到 192.168.5.5:8080（REQUIREMENT.md 6.1）
+ *   - 通过 UDP socket 发送到 VPS:8002 或本地上位机:8080（UDP_TARGET_IP / UDP_TARGET_PORT）
  *
  * 任务参数（REQUIREMENT.md 5.2）：
  *   - 优先级: 2
- *   - 栈大小: 4096
+ *   - 栈大小: 5120
  *   - 绑定核心: Core 1
  */
 

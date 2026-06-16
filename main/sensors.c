@@ -456,19 +456,28 @@ esp_err_t ds18b20_read(ds18b20_data_t *data)
  * @brief 确保 ADC1 单元已初始化 (光敏与 MQ-135 共享 ADC1)
  *
  * 多次调用安全: 第二次及以后调用直接返回
+ * 修复: 不再使用 ESP_ERROR_CHECK，改为返回错误码，避免 ADC 初始化失败导致系统重启
  * API: adc_oneshot_new_unit() 来自 esp_adc/include/esp_adc/adc_oneshot.h:57
+ *
+ * @return ESP_OK 成功, 其他错误码
  */
-static void adc1_shared_init(void)
+static esp_err_t adc1_shared_init(void)
 {
     if (s_adc1_inited) {
-        return;
+        return ESP_OK;
     }
 
     adc_oneshot_unit_init_cfg_t init_cfg = {
         .unit_id = ADC_UNIT_1,
     };
-    ESP_ERROR_CHECK(adc_oneshot_new_unit(&init_cfg, &s_adc1_handle));
+    esp_err_t ret = adc_oneshot_new_unit(&init_cfg, &s_adc1_handle);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG_MQ135, "ADC1 初始化失败: %d", ret);
+        return ret;
+    }
     s_adc1_inited = true;
+    ESP_LOGI(TAG_MQ135, "ADC1 初始化完成");
+    return ESP_OK;
 }
 
 /* adc_filter_sample 前置声明 (定义在后, mq135_read 先调用) */
@@ -482,7 +491,11 @@ static bool s_mq135_warmed_up = false;
 esp_err_t mq135_init(void)
 {
     /* 1. 确保 ADC1 单元已初始化 (与光敏共享, 只初始化一次) */
-    adc1_shared_init();
+    esp_err_t ret = adc1_shared_init();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG_MQ135, "MQ-135: ADC1 共享初始化失败, 无法继续");
+        return ret;
+    }
 
     /* 2. 配置 ADC1_CH5 (GPIO21): 12 位精度, 12dB 衰减
      * API: adc_oneshot_config_channel() 来自 esp_adc/include/esp_adc/adc_oneshot.h:72 */
@@ -490,7 +503,11 @@ esp_err_t mq135_init(void)
         .atten    = ADC_ATTEN_DB_12,
         .bitwidth = ADC_BITWIDTH_12,
     };
-    ESP_ERROR_CHECK(adc_oneshot_config_channel(s_adc1_handle, MQ135_ADC_CHAN, &chan_cfg));
+    ret = adc_oneshot_config_channel(s_adc1_handle, MQ135_ADC_CHAN, &chan_cfg);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG_MQ135, "MQ-135: ADC 通道配置失败: %d", ret);
+        return ret;
+    }
 
     /* 3. 配置 DO 引脚 (GPIO22) 为数字输入
      * 模块基础参数: DO 为 TTL 低电平有效 (超阈值→0, 信号灯亮→1)

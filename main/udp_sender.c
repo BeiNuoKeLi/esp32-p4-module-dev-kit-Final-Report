@@ -3,8 +3,8 @@
  * @brief UDP 传感器数据发送任务实现
  *
  * 通信协议（REQUIREMENT.md 6.1）：
- *   - 目标 IP: 192.168.5.5
- *   - 目标端口: 8080
+ *   - 目标 IP: 38.55.199.220 (VPS) 或 10.16.234.215 (本地上位机)
+ *   - 目标端口: 8002 (VPS) 或 8080 (本地上位机)
  *   - 传输方式: UDP (SOCK_DGRAM)
  *   - 发送间隔: 每 2 秒
  *   - 单包最大: < 512 字节
@@ -72,12 +72,7 @@ void udp_sender_task(void *arg)
     /* ---- 2. 创建 UDP socket ---- */
     /* API: socket(domain, type, protocol)
      * 来自 lwip/sockets.h，兼容 POSIX */
-    int sock = socket(AF_INET, SOCK_DGRAM, 0);
-    if (sock < 0) {
-        ESP_LOGE(TAG_UDP, "创建 UDP socket 失败, errno=%d", errno);
-        vTaskDelete(NULL);
-        return;
-    }
+    int sock = -1;
 
     /* ---- 3. 配置目标地址 ---- */
     /* struct sockaddr_in 来自 lwip/sockets.h (lwIP 的 BSD socket 兼容层)
@@ -87,7 +82,28 @@ void udp_sender_task(void *arg)
     dest_addr.sin_port   = htons(UDP_TARGET_PORT);
     if (inet_aton(UDP_TARGET_IP, &dest_addr.sin_addr) == 0) {
         ESP_LOGE(TAG_UDP, "无效的目标 IP 地址: %s", UDP_TARGET_IP);
-        close(sock);
+        vTaskDelete(NULL);
+        return;
+    }
+
+    /* 辅助函数: 创建 socket */
+    int create_socket(void)
+    {
+        int s = socket(AF_INET, SOCK_DGRAM, 0);
+        if (s < 0) {
+            ESP_LOGE(TAG_UDP, "创建 UDP socket 失败, errno=%d", errno);
+            return -1;
+        }
+        return s;
+    }
+
+    sock = create_socket();
+    if (sock < 0) {
+        vTaskDelay(pdMS_TO_TICKS(5000));
+        sock = create_socket();
+    }
+    if (sock < 0) {
+        ESP_LOGE(TAG_UDP, "UDP socket 创建失败, 任务退出");
         vTaskDelete(NULL);
         return;
     }
@@ -206,12 +222,14 @@ void udp_sender_task(void *arg)
             continue;
         }
 
-        /* ---- 4.4 发送 UDP 数据报 (带 ENOMEM 退避重试) ---- */
+        /* ---- 4.4 发送 UDP 数据报 (带 ENOMEM 退避重试 + socket 重建) ---- */
         /* API: sendto(sock, buf, len, flags, dest_addr, addrlen)
          * 来自 lwip/sockets.h
          *
-         * errno=12 (ENOMEM): lwIP pbuf 池暂时耗尽 (Camera 大包占用了),
-         * 等待 200ms 让 Camera 完成发送后重试, 最多 3 次 */
+         * errno=12 (ENOMEM): lwIP pbuf 池暂时耗尽,
+         * 等待 200ms 让其他网络任务完成发送后重试, 最多 3 次
+         *
+         * 其他错误: 关闭并重建 socket, 避免资源泄漏导致 UDP 永久失效 */
         int sent = -1;
         for (int retry = 0; retry < 3; retry++) {
             sent = sendto(sock, buf, written, 0,
@@ -224,7 +242,17 @@ void udp_sender_task(void *arg)
                     vTaskDelay(pdMS_TO_TICKS(200));
                 }
             } else {
-                break; /* 其他错误不重试 */
+                /* 其他错误: 关闭并重建 socket, 避免资源泄漏 */
+                ESP_LOGW(TAG_UDP, "UDP 发送失败 errno=%d, 重建 socket", errno);
+                close(sock);
+                vTaskDelay(pdMS_TO_TICKS(100));
+                sock = create_socket();
+                if (sock < 0) {
+                    ESP_LOGE(TAG_UDP, "socket 重建失败, 退出任务");
+                    vTaskDelete(NULL);
+                    return;
+                }
+                break; /* 重建后跳出重试，下一轮用新 socket */
             }
         }
 
@@ -236,7 +264,7 @@ void udp_sender_task(void *arg)
                 ESP_LOGW(TAG_UDP, "UDP 发送失败: errno=%d", errno);
             }
         } else {
-            ESP_LOGI(TAG_UDP, "已发送 (%d bytes): %s", sent, buf);
+            ESP_LOGD(TAG_UDP, "已发送 (%d bytes): %s", sent, buf);  /* DEBUG: 生产环境不刷屏 JSON */
         }
 
         /* ---- 4.5 等待下一个发送周期（REQUIREMENT.md 6.1: 每2秒）---- */

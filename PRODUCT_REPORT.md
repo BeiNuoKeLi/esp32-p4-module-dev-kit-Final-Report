@@ -434,7 +434,7 @@ L3 (紧急):    红色闪烁  [🚨 紧急] 多重危险 - 立即排风
 - ✅ DHT11 时序修复（脉冲宽度测量，解决 ~95% 失败率）
 - ✅ UDP ENOMEM 退避重试机制
 - ✅ Wi-Fi 连接轮询等待
-- ✅ **HTTP 超时 10s / Content-Length ≤0 拦截 / EOF 边界修复**（camera_http_fetch.c）
+- ✅ **HTTP 超时 10s / Content-Length ≤0 拦截 / EOF 边界修复**（camera_http_fetch.c，已删除）
 - ✅ JS try-catch 语法修复（消除 `Missing catch or finally after try` 运行时错误）
 - ✅ ReadableStream + BlobURL 逐帧渲染消除 Canvas 渲染开销与 Chrome MJPEG 解码器缓冲延迟
 

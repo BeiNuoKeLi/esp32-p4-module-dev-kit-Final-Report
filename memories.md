@@ -94,22 +94,21 @@
 
 ```
 main/
-├── smart_monitor_main.c    # 主入口，8任务(WiFi STA + OLED + Buzzer + UDP Send + UDP Sim + Cam HTTP)
+├── smart_monitor_main.c    # 主入口，9任务(WiFi STA + OLED + Buzzer + UDP Send + UDP Sim + Sim Poll)
 ├── sensors.h             # 传感器+蜂鸣器驱动头文件 + sensor_shared_t
 ├── sensors.c            # 传感器驱动实现 (MQ-135预热 + DS18B20 + DHT11 + 光敏 + 蜂鸣器)
 ├── oled_ssd1306.h        # SSD1306 OLED 驱动头文件 (I2C, GPIO7/8, 6x8字体)
 ├── oled_ssd1306.c        # SSD1306 OLED 驱动实现 (128x64 framebuffer, Page Addressing 逐页刷新)
 ├── udp_sender.h         # ✅ UDP 任务声明（2026-06-04 实现, 2026-06-07 ENOMEM 重试）
 ├── udp_sender.c         # ✅ JSON 组包 + UDP Socket 发送（ENOMEM 退避 + Wi-Fi 轮询等待）
-├── camera_http_fetch.h  # ✅ Camera HTTP Relay 声明（2026-06-07 新增）
-└── camera_http_fetch.c  # ✅ HTTP 拉取 ESP32-CAM JPEG → UDP 分包转发（2026-06-07 新增）
+
 └── pc_receiver.py       # ✅ Windows 上位机 UDP 接收脚本（2026-06-04 实现）
 
-# 摄像头图像流模块 (2026-06-06 实现)
-camera_capture_sender.py    # ✅ 摄像头采集 + Gamma校正/锐化 + JPEG编码 + UDP分包发送
-camera_display_receiver.py  # ✅ UDP接收 + 分片重组 + JPEG解码 + OpenCV实时显示
+# 摄像头图像流模块 (2026-06-06 实现，2026-06-16 移除 P4 中继)
+camera_capture_sender.py    # ✅ 摄像头采集 + Gamma校正/锐化 + JPEG编码 + UDP分包发送（已弃用）
+camera_display_receiver.py  # ✅ UDP接收 + 分片重组 + JPEG解码 + OpenCV实时显示（已弃用）
 camera_protocol.py          # ✅ Magic 0xAA55 协议头编解码 (大端序, 8字节头, 4096字节payload)
-CAMERA_DEBUG_LOG.md         # 摄像头调试历史 & 参数速查
+CAMERA_DEBUG_LOG.md         # ~~摄像头调试历史 & 参数速查~~（已删除）
 
 # Docker Web 仪表盘 v3.5 (2026-06-16 更新)
 docker/
@@ -293,13 +292,12 @@ portENABLE_INTERRUPTS();
 |------|-----|
 | 目标 IP | `10.16.234.215` (2026-06-04 ipconfig 确认) |
 | ESP32-P4 IP | DHCP 自动获取 |
-| 目标端口 | `8080` (传感器 JSON) / `8082` (Camera JPEG 中继) |
-| 发送间隔 | 每 2 秒 (传感器) / 每 ~333ms (Camera, 3fps) |
-| 单包实际 | ~110 bytes (传感器), ≤4104 bytes (Camera 分包) |
+| 目标端口 | `8080` / `8002` (传感器 JSON) / `8003` (Camera JPEG 直推 VPS) |
+| 发送间隔 | 每 2 秒 (传感器) |
+| 单包实际 | ~110 bytes (传感器) |
 | Socket API | lwip/sockets.h (BSD socket 兼容层) |
 | Wi-Fi 等待 | `esp_netif_is_netif_up()` 轮询, 最多 20s (ESP-Hosted SDIO 需 ~13s) |
 | ENOMEM 处理 | sendto errno=12 时 200ms 退避 × 3 次重试 |
-| Camera 延迟 | 每包 5ms 微延迟, 防止 pbuf 池耗尽 |
 
 ### 6.2 JSON 报文格式
 
@@ -337,31 +335,22 @@ portENABLE_INTERRUPTS();
 
 > 使用 `snprintf()` 直接拼接，**不引入** cJSON 等第三方库（REQUIREMENT.md 6.3）
 
-### 6.4 摄像头图像流协议 ✅ 已实现
+### 6.4 摄像头图像流协议 (2026-06-07 新增，2026-06-16 移除 P4 中继)
 
-> 详情见 `CAMERA_DEBUG_LOG.md`
+> 当前架构：Docker `camera_server.py` 直连 ESP32-CAM HTTP 拉流。P4 端不再参与摄像头中继。
+> 
+> 旧方案 `camera_http_fetch.c`（P4 HTTP 拉图 → UDP 分包转发）已删除。
 
 | 参数 | 值 |
 |------|-----|
-| 摄像头 | KYT-U400 工业 USB UVC (PC直连) 或 ESP32-CAM (P4 HTTP中继) |
-| 分辨率 / 格式 | 640×360 MJPG |
-| 传输端口 | 8082 UDP (与传感器数据 8080 隔离) |
+| 摄像头 | ESP32-CAM (OV2640, HVGA 480×320) |
+| 传输端口 | `8003` UDP (VPS 直推) |
 | 协议头 | Magic 0xAA55 + FrameID(2B) + ChunkIdx(2B) + TotalChunks(2B) |
 | 单包载荷 | 1400 字节（避免分片） |
-| 发送端 | `camera_http_fetch.c` (P4 HTTP 中继模式) 或 `camera_server.py` (Docker 直连) |
-| 接收端 | `Docker camera_server.py` (UDP → 重组 → MJPEG) |
+| 发送端 | `CameraWebServer/` (Arduino 工程, 提供 `/capture` + `/stream`) |
+| 接收端 | Docker `camera_server.py` (HTTP 拉流 → MJPEG) |
 
-### 6.5 Camera HTTP Relay 配置 ✅ 已实现
 
-| 参数 | 值 |
-|------|-----|
-| Kconfig 开关 | `CONFIG_CAMERA_HTTP_ENABLED` (默认 y) |
-| ESP32-CAM URL | `CONFIG_CAMERA_HTTP_ESP32CAM_URL` (默认 `http://10.16.234.23/capture`) |
-| 目标 IP | `CONFIG_CAMERA_HTTP_UDP_IP` (强制覆盖 `38.55.199.220`, 旧默认 `10.16.234.215`) |
-| 帧率 | `CONFIG_CAMERA_HTTP_FPS` (1-10, 默认 3) |
-| 缓冲区 | JPEG 128KB + UDP 64KB (PSRAM 分配) |
-| HTTP 超时 | 5000ms |
-| 依赖 | `esp_http_client` (IDF 内置, 无需额外 component) |
 
 ### 6.6 UDP 配置命令协议（v3.5）
 
@@ -421,8 +410,8 @@ portENABLE_INTERRUPTS();
 | UDP 发送模块 | 2026-06-04 | ✅ 通过 | ESP32 → 10.16.234.215:8080, snprintf JSON, 2秒间隔 |
 | pc_receiver.py | 2026-06-04 | ✅ 通过 | UDP 监听 + JSON 解析 + 控制台输出 + CSV 日志 |
 | 端到端 WiFi 传输 | 2026-06-04 | ✅ 通过 | ESP32(10.16.234.86) → PC(10.16.234.215) 稳定传输 |
-| Camera HTTP Relay | 2026-06-07 | ✅ 通过 | ESP32-CAM → HTTP → P4 → UDP:8082 → PC, 3fps 稳定 |
-| ENOMEM 退避重试 | 2026-06-07 | ✅ 通过 | Camera/Sensor UDP 并发无 pbuf 耗尽, errno=12 自动恢复 |
+| Camera HTTP Relay | 2026-06-07 | ✅ 通过 | ESP32-CAM → HTTP → P4 → UDP:8003(→VPS) 或 UDP:8082(→PC), 3fps 稳定 |
+| ENOMEM 退避重试 | 2026-06-07 | ✅ 通过 | Sensor UDP ENOMEM 自动恢复 |
 | Wi-Fi 轮询等待 | 2026-06-07 | ✅ 通过 | esp_netif_is_netif_up() 替换固定 vTaskDelay, 适应 ESP-Hosted SDIO
 
 ### 7.2 已知 Bug 及修复
@@ -435,7 +424,7 @@ portENABLE_INTERRUPTS();
 | OLED 仅第1行显示，其余乱码 | 单次 I2C 事务 1025 字节超 ESP32 TX FIFO(32B) 容量，数据丢失导致页面错乱 | 改用 Page Addressing Mode (0x20,0x02)，逐页发送 128 字节 × 8 次小事务 |
 | ESP-Hosted Handler 多重进入崩溃 | `mq135_init()` 中访问 `g_sensor_data` 与 ESP-Hosted SDIO 中断冲突 | MQ-135 预热状态改用**静态变量** `s_mq135_warmed_up`，不访问共享结构 |
 | MQ-135 上电误报警 | 预热期间 DO 输出不稳定 | 预热到 DO 连续 5 次为 1 或最大 60 秒超时，预热期间不参与报警 |
-| Sensor UDP ENOMEM(errno=12) | Camera UDP 发送 4KB+ 大包耗尽 lwIP pbuf 池 | Sensor sendto 失败时 200ms 退避 × 3 次重试; Camera 每包 5ms 微延迟让路 |
+| Sensor UDP ENOMEM(errno=12) | lwIP pbuf 池暂时耗尽 | Sensor sendto 失败时 200ms 退避 × 3 次重试 |
 | SO_SNDBUF errno=109 | lwIP UDP socket 不支持 SO_SNDBUF | 移除 setsockopt 调用, ENOMEM 退避已足够解决 |
 | Camera HTTP "Host unreachable" | 固定 8s Wi-Fi 等待不足 (ESP-Hosted SDIO 需 ~13s) | 改用 esp_netif_is_netif_up() 轮询, 最多 20s |
 
@@ -482,13 +471,13 @@ portENABLE_INTERRUPTS();
 - [x] **蜂鸣器报警任务** - 引用共享数据，间歇鸣叫（100ms/500ms）✅ 2026-06-01
 - [x] **UDP 发送任务** - Task_UDP_Send (优先级2, 栈4096, Core 1, 每2秒) ✅ 2026-06-04
 
-### 8.5 摄像头图像流
+### 8.5 摄像头图像流 (Docker 直连)
 
-- [x] **摄像头采集** - OpenCV DirectShow 后端, 640×360 MJPG, 10fps ✅ 2026-06-06
-- [x] **画质处理** - Gamma 0.55 提亮 + Sharpen 0.2 锐化 + JPEG q=80 ✅ 2026-06-06
-- [x] **UDP 分包发送** - Magic 0xAA55 协议, 4096 字节/包 ✅ 2026-06-06
-- [x] **接收显示** - 分片重组 + JPEG解码 + OpenCV imshow + FPS叠加 ✅ 2026-06-06
-- [x] **调试文档** - CAMERA_DEBUG_LOG.md (8阶段调试历史 + 参数速查表) ✅ 2026-06-06
+- [x] **ESP32-CAM 固件** - Arduino CameraWebServer, OV2640 HVGA 480×320, quality=12, contrast=2 锐化 ✅ 2026-06-12
+- [x] **Docker 拉流** - `camera_server.py` HTTP 直连 `/capture` → MJPEG 输出 ✅ 2026-06-12
+- [x] **前端显示** - Canvas 快照轮询 + 视频流开关 ✅ 2026-06-12
+- [x] **VPS 部署** - ESP32-CAM UDP 分片直推 VPS:8003 (CAMERA_MODE=udp_esp32) ✅ 2026-06-12
+- [x] **调试文档** - CAMERA_DEBUG_LOG.md (已随模块删除而移除) ✅ 2026-06-16
 
 ---
 
@@ -579,10 +568,11 @@ portENABLE_INTERRUPTS();
 | 2026-06-05 | 新增 LED + 继电器驱动 | Agent | GPIO26(红灯)/GPIO27(绿灯) 共阴极双色LED，GPIO32 继电器风扇控制，集成到 buzzer 任务 |
 | 2026-06-06 | 摄像头图像流模块 | Agent | KYT-U400 USB 摄像头, DirectShow + MJPG, Gamma/Sharpen 画质处理, UDP 分包, 接收显示, 8个阶段调试完成 |
 | 2026-06-07 | Camera HTTP Relay | Agent | 新增 camera_http_fetch.c/h, ESP32-CAM HTTP 拉图 → UDP 0xAA55 分包转发, Kconfig 可配置, Task_Cam_HTTP 任务 |
-| 2026-06-07 | UDP 稳定性修复 | Agent | ENOMEM(errno=12) 退避重试; Camera 每包 5ms 微延迟; 移除 lwIP 不支持的 SO_SNDBUF; Wi-Fi 等待改用 esp_netif 轮询 |
+| 2026-06-07 | UDP 稳定性修复 | Agent | ENOMEM(errno=12) 退避重试; 移除 lwIP 不支持的 SO_SNDBUF; Wi-Fi 等待改用 esp_netif 轮询 |
 | 2026-06-08 | Docker Web 仪表盘 v3.0 上线 | Agent | FastAPI + WebSocket + AIOSQLite + Chart.js, 传感器卡片/报警历史/趋势曲线/仓储管理, Docker 容器化 |
 | 2026-06-10 | 农资化肥场景迁移 v3.3 | Agent | 危化品 → 化肥场景全面迁移; QR 标签 FERT-xxx; 库存分类统计; generate_qr_labels.py --copies 参数 |
 | 2026-06-12 | 摄像头架构重构 v3.3 | Agent | Docker 直连 ESP32-CAM (HVGA 480×320); Canvas 快照轮询替代 MJPEG <img>; CameraWebServer Arduino 工程 |
+| 2026-06-16 | 移除 P4 摄像头中继 | Agent | 删除 camera_http_fetch.c/h, CAMERA_DEBUG_LOG.md; 清理 Kconfig/sdkconfig/CMakeLists.txt; P4 端不再参与摄像头 |
 | 2026-06-13 | 仿真注入系统 v3.4 | Agent | 内置 UDP 监听器 SensorUDPProtocol:8080 替代外部桥接; POST /api/sim/inject + 前端预设面板; DELETE /api/alarms 报警清空; 库存管理增强 (手动新增/流水清空/物料删除); 视频流关闭→黑屏; 文档全面更新至 v3.4 |
 | 2026-06-15 | 前端 MJPEG 解析修复 | Agent | 黑屏根因定位：服务端数据正常但前端 JS 两个 bug — (1) `\r\n--frameboundary`无法匹配流首裸boundary导致首帧跳过；(2) `buf.length-2`硬裁切在多帧共缓冲时夹带下一帧数据致JPEG损坏。修复：改用`--frameboundary`(15B)搜索 + 下一boundary精确定界帧尾。前端渲染方案为`fetch`→ReadableStream→boundary二进制切分→BlobURL; 替代了 v3.3的Canvas轮询和v3.5的`<img>`原生渲染。VGA_DEBUG_LOG.md 补充最终根因。PRODUCT_REPORT.md/README.md 同步前端渲染描述。**总结为 DEBUG_GUIDE.md 数据流分界实验法。** |
 | 2026-06-16 | 演示锁定机制 v3.5 | Agent | HMAC-SHA256 Cookie 签名 + HTTP 中间件写操作拦截 + ESP32 白名单放行; 前端 🛡️锁定指示器 + 密码弹窗 + 14 个 checkUnlock() 守卫; DEMO_PASSWORD 环境变量控制开关; 每浏览器独立锁定 |\n| 2026-06-16 | 手机端响应式适配 | Agent | 900/600/480 三级断点; sim-panel 6→3→2列、cat-stats 4→2→1列; 弹窗 90vw+max-width; rawDataPanel min(420px,94vw); 表格 overflow-x滚动; 传感器字体 2rem→1.6→1.4rem; header/button/chart 逐级缩小; toast 全宽 |

@@ -47,7 +47,7 @@ from warehouse_db import WarehouseDB
 # ==================== 配置 ====================
 ESP32_DATA_PORT = 8080
 ESP32_CMD_PORT = 8081
-CAMERA_PORT = 8082
+CAMERA_PORT = 8082  # 本地上位机摄像头接收端口（旧 P4 中继模式），VPS 直推用 8003
 RECV_BUF_SIZE = 2048
 CAMERA_BUF_SIZE = 65536
 CAMERA_SOCK_TIMEOUT = 0.002

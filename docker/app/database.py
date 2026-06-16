@@ -109,6 +109,15 @@ async def init_db():
                 await db.execute(f"ALTER TABLE {tbl} ADD COLUMN mq135_raw INTEGER")
             except Exception:
                 pass
+        # ── 数据库迁移：alarm_config 旧 V 阈值 → 新 raw 阈值 ──
+        # 旧值范围 0~3.3 (V), 新值范围 0~4095 (raw)
+        try:
+            await db.execute(
+                "UPDATE alarm_config SET mq135_ao_threshold = 3100 "
+                "WHERE mq135_ao_threshold < 100"
+            )
+        except Exception:
+            pass
         await db.commit()
         # ── 报警配置表（v3.5 新增）──
         await init_alarm_config_table()
@@ -587,7 +596,11 @@ async def get_alarm_config() -> dict:
                 "ds18b20_temp_high": 35.0, "temp_humi_alarm_enabled": 1,
                 "updated_at": "",
             }
-        return dict(row)
+        result = dict(row)
+        # 兜底：确保 mq135_ao_threshold 为 int（旧 DB 可能存 REAL 2.5）
+        if "mq135_ao_threshold" in result and result["mq135_ao_threshold"] is not None:
+            result["mq135_ao_threshold"] = int(result["mq135_ao_threshold"])
+        return result
 
 
 async def set_alarm_config(config: dict) -> dict:

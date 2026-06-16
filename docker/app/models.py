@@ -33,6 +33,7 @@ class SensorRecord(BaseModel):
     dht11_h: Optional[float] = None
     ds18b20_t: Optional[float] = None
     mq135_v: Optional[float] = None
+    mq135_raw: Optional[int] = None
     light_raw: Optional[float] = None
     mq135_do: Optional[int] = None
     photo_do: Optional[int] = None
@@ -49,6 +50,7 @@ class StatusResponse(BaseModel):
     dht11_h: Optional[float] = None
     ds18b20_t: Optional[float] = None
     mq135_v: Optional[float] = None
+    mq135_raw: Optional[int] = None
     light_raw: Optional[float] = None
     mq135_do: Optional[int] = None
     photo_do: Optional[int] = None
@@ -135,6 +137,7 @@ class AlarmEvent(BaseModel):
     dht11_h: Optional[float] = None
     ds18b20_t: Optional[float] = None
     mq135_v: Optional[float] = None
+    mq135_raw: Optional[int] = None
     mq135_do: Optional[int] = None
     light_raw: Optional[float] = None
     photo_do: Optional[int] = None

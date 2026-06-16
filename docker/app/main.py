@@ -208,6 +208,10 @@ async def _ingest_sensor_data(obj: dict) -> dict:
     data = SensorData(**obj)
     record = data.model_dump()
 
+    # ★ 兜底：旧 ESP32 固件只发 mq135_v，从电压反算 raw
+    if record.get("mq135_raw") is None and record.get("mq135_v") is not None:
+        record["mq135_raw"] = int(record["mq135_v"] * 4095.0 / 3.3)
+
     # Step 1: 滤波
     sensor_filter.apply(record)
 
@@ -227,6 +231,7 @@ async def _ingest_sensor_data(obj: dict) -> dict:
             "dht11_h": record.get("dht11_h"),
             "ds18b20_t": record.get("ds18b20_t"),
             "mq135_v": record.get("mq135_v"),
+            "mq135_raw": record.get("mq135_raw"),
             "light_raw": record.get("light_raw"),
             "mq135_do": record.get("mq135_do"),
             "photo_do": record.get("photo_do"),

@@ -123,6 +123,23 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 
+
+async def _broadcast_warehouse_update():
+    """仓储数据变更 → WebSocket 广播通知所有客户端刷新"""
+    await manager.broadcast({
+        "type": "warehouse_update",
+        "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+    })
+
+
+async def _broadcast_alarm_update():
+    """报警数据变更 → WebSocket 广播通知所有客户端刷新"""
+    await manager.broadcast({
+        "type": "alarm_update",
+        "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+    })
+
+
 # ★ ESP32-P4 设备 IP（仿真注入目标，UDP 模式不可达时由轮询模式接管）
 ESP32_IP = os.environ.get("ESP32_IP", "10.16.234.86")
 ESP32_CMD_PORT = 8081
@@ -250,14 +267,18 @@ async def _process_udp_warehouse(obj: dict, msg_type: str):
                 "humi": obj.get("env_humi", 0),
                 "level": obj.get("env_level", 0),
             }
-            await database.do_checkin(item, env)
+            ok = await database.do_checkin(item, env)
+            if ok:
+                asyncio.create_task(_broadcast_warehouse_update())
         elif msg_type == "checkout":
             env = {
                 "temp": obj.get("env_temp", 0),
                 "humi": obj.get("env_humi", 0),
                 "level": obj.get("env_level", 0),
             }
-            await database.do_checkout(obj.get("item_id", ""), env)
+            success, _ = await database.do_checkout(obj.get("item_id", ""), env)
+            if success:
+                asyncio.create_task(_broadcast_warehouse_update())
     except Exception as e:
         print(f"[UDP/Warehouse] ⚠️ 出入库消息处理失败: {e}")
 
@@ -503,6 +524,7 @@ async def warehouse_checkin(req: CheckinRequest):
 
     ok = await database.do_checkin(item_dict, env_dict)
     if ok:
+        asyncio.create_task(_broadcast_warehouse_update())
         return WarehouseResponse(ok=True, message=f"入库成功: {req.item_id}", data=item_dict)
     else:
         return WarehouseResponse(ok=False, message=f"重复入库: {req.item_id} 已在库中")
@@ -519,6 +541,7 @@ async def warehouse_checkout(req: CheckoutRequest):
 
     success, info = await database.do_checkout(req.item_id, env_dict)
     if success:
+        asyncio.create_task(_broadcast_warehouse_update())
         return WarehouseResponse(ok=True, message=f"出库成功: {req.item_id}", data=info)
     else:
         return WarehouseResponse(ok=False, message=str(info))
@@ -535,6 +558,7 @@ async def warehouse_log(limit: int = Query(default=20, ge=1, le=200)):
 async def warehouse_log_clear():
     """清空全部出入库流水记录"""
     deleted = await database.clear_check_log()
+    asyncio.create_task(_broadcast_warehouse_update())
     return {"ok": True, "deleted": deleted, "message": f"已清空 {deleted} 条流水记录"}
 
 
@@ -542,6 +566,7 @@ async def warehouse_log_clear():
 async def alarm_clear():
     """清空全部报警事件记录"""
     deleted = await database.clear_alarm_events()
+    asyncio.create_task(_broadcast_alarm_update())
     return {"ok": True, "deleted": deleted, "message": f"已清空 {deleted} 条报警记录"}
 
 
@@ -549,6 +574,7 @@ async def alarm_clear():
 async def inventory_clear_all():
     """一键清除全部库存数据（清空 inventory + check_log 两张表）"""
     deleted = await database.clear_inventory()
+    asyncio.create_task(_broadcast_warehouse_update())
     return {"ok": True, "deleted": deleted, "message": f"已清空全部库存（共 {deleted} 条记录）"}
 
 
@@ -557,6 +583,7 @@ async def inventory_delete(item_id: str):
     """删除库存中指定物料（同时删关联流水）"""
     ok = await database.delete_inventory_item(item_id)
     if ok:
+        asyncio.create_task(_broadcast_warehouse_update())
         return {"ok": True, "message": f"已删除: {item_id}"}
     return {"ok": False, "message": f"物料 {item_id} 不存在"}
 
@@ -566,6 +593,8 @@ async def inventory_add(item: InventoryItem):
     """手动新增库存物料"""
     item_dict = item.model_dump()
     ok, msg = await database.add_inventory_item(item_dict)
+    if ok:
+        asyncio.create_task(_broadcast_warehouse_update())
     return {"ok": ok, "message": msg}
 
 
@@ -911,6 +940,8 @@ async def alarm_detail(alarm_id: int):
 async def alarm_ack(alarm_id: int):
     """确认一条报警"""
     ok = await database.acknowledge_alarm(alarm_id)
+    if ok:
+        asyncio.create_task(_broadcast_alarm_update())
     return {"ok": ok, "id": alarm_id}
 
 

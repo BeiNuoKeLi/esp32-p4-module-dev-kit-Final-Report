@@ -859,6 +859,8 @@ function connectWS(){
     try{
       var m=JSON.parse(evt.data);
       if(m.type==='sensor_update'){handleSensorData(m.data,m.timestamp,m.id,m.timestamp)}
+      else if(m.type==='warehouse_update'){refreshWH()}
+      else if(m.type==='alarm_update'){loadAlarmSummary();loadAlarmList(_alarmPage)}
       else if(m.type==='sim_reset'){document.getElementById('simModeLabel').textContent='模式: 真实传感器';document.getElementById('simModeLabel').style.color='var(--text-dim)';document.getElementById('simDebug').style.display='none';showToast('success','MCU 已恢复真实传感器模式')}
     }catch(e){console.warn('WS msg err:',e)}
   };

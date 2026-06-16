@@ -67,7 +67,7 @@
 |------|------|
 | **FastAPI** | REST API 后端，接收传感器数据、处理出入库操作、报警管理、仿真命令注入 |
 | **AIOSQLite** | 异步 SQLite 数据库，存储传感器数据、库存、操作日志、报警事件 |
-| **WebSocket** | 实时推送通道，传感器数据变更即时通知前端 |
+| **WebSocket** | 实时推送通道，传感器数据、仓储变更、报警事件即时通知所有在线前端，无需手动刷新 |
 | **Chart.js** | 前端图表库，展示温度/湿度历史趋势曲线 |
 | **camera_server** | 摄像头服务：**UDP 分片推流 (v4.0 推荐)** / TCP 二进制推流 (v3.8) / Push 直推 / HTTP 拉取 / UDP 中继 (备选) → MJPEG 流转换 + pyzbar 二维码扫码。前端使用 `fetch` → ReadableStream → 二进制 boundary 切分 → BlobURL 逐帧渲染（避开 `<img>` 直连 MJPEG 的 Chrome 解码器内部缓冲）。支持 stream 开关暂停/恢复。**UDP 模式**：无条件全速推流 ~10fps，跨海吞吐 238Mbps 无 RTT 影响，协议 [0xAA55+FrameID+ChunkIdx+TotalChunks] 分片重组 + 超时容错。**TCP 模式**：长连接推流，支持心跳 + 无观看者降速 1fps 省带宽 ~95%，但跨海受 RTT 窗口限制。**v3.5 优化**：移除 `cv2.imdecode` 热路径 + Canvas JS 轮询，端到端延迟从 1-3s 降至 <200ms。 |
 
@@ -107,8 +107,29 @@
 | `POST` | `/api/auth/unlock` | 演示模式解锁，验证密码并下发 `demo_unlock` Cookie (HMAC-SHA256 签名) |
 | `POST` | `/api/auth/lock` | 主动锁定当前浏览器，清除 `demo_unlock` Cookie |
 | `GET` | `/api/auth/status` | 查询当前浏览器锁定状态 (`feature_enabled` + `locked`) |
+| `WS` | `/ws` | WebSocket 实时推送（传感器 + 仓储 + 报警事件） |
 
-### 2.4 摄像头数据流
+### 2.4 WebSocket 实时推送协议
+
+WebSocket 端点 `ws://<host>/ws` 提供全双工实时推送，所有在线客户端均收到同一份广播。前端采用指数退避自动重连 + HTTP 轮询降级确保数据不丢失。
+
+**消息类型枚举**：
+
+| 消息类型 (`type`) | 触发时机 | 负载结构 | 前端行为 |
+|---|---|---|---|
+| `sensor_update` | 传感器数据写入 DB 后 | `{type, id, data: {dht11_t, dht11_h, ds18b20_t, mq135_v, light_raw, mq135_do, photo_do, level, alert, reason, err}, timestamp}` | 更新传感器卡片 + DO 标签 + 报警徽章 + Chart.js 图表 + 原始数据面板 |
+| `warehouse_update` | 入库 / 出库 / 清空流水 / 删除物料 / 新增库存 / 一键清空库存 | `{type: "warehouse_update", timestamp}` | 调用 `refreshWH()` 刷新库存表 + 分类统计 + 出入库流水 |
+| `alarm_update` | 报警确认 / 清空全部报警记录 | `{type: "alarm_update", timestamp}` | 调用 `loadAlarmSummary()` + `loadAlarmList()` 刷新报警面板 |
+| `sim_reset` | 仿真重置命令生效 | `{type: "sim_reset"}` | 恢复 UI 为"真实传感器模式" |
+
+**触发 WebSocket 广播的 REST API 列表**：
+
+| 消息类型 | 触发 API |
+|---|---|
+| `warehouse_update` | `POST /api/warehouse/checkin` (成功时), `POST /api/warehouse/checkout` (成功时), `POST /api/inventory/add` (成功时), `DELETE /api/inventory/{item_id}` (成功时), `DELETE /api/inventory`, `DELETE /api/warehouse/log`, UDP 出入库 (成功时) |
+| `alarm_update` | `POST /api/alarms/{id}/ack` (成功时), `DELETE /api/alarms` |
+
+### 2.5 摄像头数据流
 
 #### UDP 分片推流：ESP32-CAM 直推 VPS (v4.0 服务器部署推荐)
 
@@ -406,7 +427,7 @@ L3 (紧急):    红色闪烁  [🚨 紧急] 多重危险 - 立即排风
 
 **Web 仪表盘功能**：
 - ✅ FastAPI REST API（传感器数据、库存管理、摄像头控制、报警管理、仿真注入）
-- ✅ WebSocket 实时推送（传感器数据即时更新）
+- ✅ WebSocket 实时推送（传感器 + 仓储变更 + 报警事件即时同步，无需手动刷新）
 - ✅ Chart.js 历史趋势曲线（温度/湿度，Y 轴固定物理量程）
 - ✅ 分级报警状态展示（L0~L3，L3 紧急时页面红色闪烁 + body 红色脉冲背景）
 - ✅ **报警历史系统**（分页列表 + 级别筛选 + 详情弹窗 + 现场快照 + 确认 + 一键清空）

@@ -129,7 +129,7 @@ cd /opt/esp32-p4-module-dev-kit-Final-Report && git checkout main && git pull &&
 |------|------|------|
 | Web 仪表盘 | http://localhost:8000 | Chart.js 实时数据图表 |
 | API 文档 | http://localhost:8000/docs | FastAPI 交互式文档 |
-| WebSocket | ws://localhost:8000/ws | 实时数据推送 |
+| WebSocket | ws://localhost:8000/ws | 实时数据推送（传感器 + 仓储变更 + 报警事件即时同步） |
 
 #### VPS 部署 (公网端口映射)
 
@@ -144,6 +144,7 @@ cd /opt/esp32-p4-module-dev-kit-Final-Report && git checkout main && git pull &&
 - 分级报警状态徽章（L0~L3），L3 紧急时页面红色闪烁
 - **报警历史系统**：事件列表/详情/统计/确认，去重窗口 30s，级别变化即时触发
 - 历史数据折线图（温度/湿度趋势）
+- **WebSocket 实时同步**：库存变更、报警确认等操作即时推送到所有在线客户端，无需手动刷新
 - 摄像头 MJPEG 实时流预览 + **视频流开关**（关闭即切黑屏节省带宽，开启恢复拉流；TCP 模式下无观看者时 ESP32-CAM 自动切心跳模式省带宽 ~99.8%，UDP 模式全速推流不支持按需降速）
 - 仓储管理（二维码扫码入库/出库 + 手动新增 + 库存分类统计 + 流水清空 + 一键清除库存）
 - **仿真注入面板**：前端一键注入 L1/L2/L3 预设报警或自定义传感器数值

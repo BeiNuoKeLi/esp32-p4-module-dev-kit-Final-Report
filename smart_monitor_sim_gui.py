@@ -56,22 +56,22 @@ FRAME_TIMEOUT = 0.3
 PRESETS = {
     "L0 正常": {
         "dht11_t": 25, "dht11_h": 60, "ds18b20_t": 25.0,
-        "mq135_v": 1.2, "mq135_do": 1, "photo_raw": 2000, "photo_do": 1,
+        "mq135_raw": 1500, "mq135_do": 1, "photo_raw": 2000, "photo_do": 1,
         "desc": "全部正常, 绿灯"
     },
     "L1 预警": {
         "dht11_t": 25, "dht11_h": 86, "ds18b20_t": 25.0,
-        "mq135_v": 1.2, "mq135_do": 1, "photo_raw": 100, "photo_do": 0,
+        "mq135_raw": 1500, "mq135_do": 1, "photo_raw": 100, "photo_do": 0,
         "desc": "仅 B 类源(光敏+湿度), 风扇不开"
     },
     "L2 严重": {
         "dht11_t": 39, "dht11_h": 60, "ds18b20_t": 25.0,
-        "mq135_v": 2.8, "mq135_do": 0, "photo_raw": 2000, "photo_do": 1,
+        "mq135_raw": 3500, "mq135_do": 0, "photo_raw": 2000, "photo_do": 1,
         "desc": "单个 A 类源(MQ135+高温), 风扇 ON"
     },
     "L3 紧急": {
         "dht11_t": 39, "dht11_h": 60, "ds18b20_t": 38.5,
-        "mq135_v": 2.8, "mq135_do": 0, "photo_raw": 2000, "photo_do": 1,
+        "mq135_raw": 3500, "mq135_do": 0, "photo_raw": 2000, "photo_do": 1,
         "desc": "多 A 类源(MQ135+双高温), 紧急排风"
     },
 }
@@ -117,7 +117,8 @@ class SimGUI:
         self.var_dht11_t = tk.IntVar(value=25)
         self.var_dht11_h = tk.IntVar(value=60)
         self.var_ds18b20_t = tk.DoubleVar(value=25.0)
-        self.var_mq135_v = tk.DoubleVar(value=1.2)
+        self.var_mq135_raw = tk.IntVar(value=1500)
+        self.var_mq135_v = tk.DoubleVar(value=1.2)  # 向后兼容, 自动从 raw 计算
         self.var_mq135_do = tk.IntVar(value=1)
         self.var_photo_raw = tk.IntVar(value=2000)
         self.var_photo_do = tk.IntVar(value=1)
@@ -192,6 +193,7 @@ class SimGUI:
             ("DHT11 温度", "dht11_t", "°C"),
             ("DHT11 湿度", "dht11_h", "%RH"),
             ("DS18B20 温度", "ds18b20_t", "°C"),
+            ("MQ-135 ADC", "mq135_raw", "raw"),
             ("MQ-135 电压", "mq135_v", "V"),
             ("MQ-135 DO", "mq135_do", ""),
             ("光敏 ADC", "light_raw", "raw"),
@@ -223,7 +225,7 @@ class SimGUI:
             ("DHT11 温度", self.var_dht11_t, 0, 50, 1, "°C"),
             ("DHT11 湿度", self.var_dht11_h, 20, 90, 1, "%RH"),
             ("DS18B20 温度", self.var_ds18b20_t, -10, 50, 0.5, "°C"),
-            ("MQ-135 电压", self.var_mq135_v, 0, 3.3, 0.1, "V"),
+            ("MQ-135 ADC", self.var_mq135_raw, 0, 4095, 50, ""),
             ("光敏 AO", self.var_photo_raw, 0, 4095, 50, ""),
         ]
         self.scale_vars = []
@@ -503,7 +505,8 @@ class SimGUI:
         self.var_dht11_t.set(params["dht11_t"])
         self.var_dht11_h.set(params["dht11_h"])
         self.var_ds18b20_t.set(params["ds18b20_t"])
-        self.var_mq135_v.set(params["mq135_v"])
+        self.var_mq135_raw.set(params["mq135_raw"])
+        self.var_mq135_v.set(params["mq135_raw"] * 3.3 / 4095.0)
         self.var_mq135_do.set(params["mq135_do"])
         self.var_photo_raw.set(params["photo_raw"])
         self.var_photo_do.set(params["photo_do"])
@@ -519,7 +522,8 @@ class SimGUI:
             "dht11_t": self.var_dht11_t.get(),
             "dht11_h": self.var_dht11_h.get(),
             "ds18b20_t": round(self.var_ds18b20_t.get(), 2),
-            "mq135_v": round(self.var_mq135_v.get(), 2),
+            "mq135_raw": self.var_mq135_raw.get(),
+            "mq135_v": round(self.var_mq135_raw.get() * 3.3 / 4095.0, 2),
             "mq135_do": self.var_mq135_do.get(),
             "photo_raw": self.var_photo_raw.get(),
             "photo_do": self.var_photo_do.get(),
@@ -626,6 +630,7 @@ class SimGUI:
             "dht11_t": ("dht11_t", lambda v: f"{v:.1f}"),
             "dht11_h": ("dht11_h", lambda v: f"{v:.1f}"),
             "ds18b20_t": ("ds18b20_t", lambda v: f"{v:.4f}"),
+            "mq135_raw": ("mq135_raw", lambda v: f"{v}"),
             "mq135_v": ("mq135_v", lambda v: f"{v:.2f}"),
             "mq135_do": ("mq135_do", lambda v: "正常" if v == 1 else ("超标" if v == 0 else "--")),
             "light_raw": ("light_raw", lambda v: f"{v}"),

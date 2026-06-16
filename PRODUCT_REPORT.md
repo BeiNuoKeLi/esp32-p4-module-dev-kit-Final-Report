@@ -117,7 +117,7 @@ WebSocket 端点 `ws://<host>/ws` 提供全双工实时推送，所有在线客�
 
 | 消息类型 (`type`) | 触发时机 | 负载结构 | 前端行为 |
 |---|---|---|---|
-| `sensor_update` | 传感器数据写入 DB 后 | `{type, id, data: {dht11_t, dht11_h, ds18b20_t, mq135_v, light_raw, mq135_do, photo_do, level, alert, reason, err}, timestamp}` | 更新传感器卡片 + DO 标签 + 报警徽章 + Chart.js 图表 + 原始数据面板 |
+| `sensor_update` | 传感器数据写入 DB 后 | `{type, id, data: {dht11_t, dht11_h, ds18b20_t, mq135_v, mq135_raw, light_raw, mq135_do, photo_do, level, alert, reason, err}, timestamp}` | 更新传感器卡片 + DO 标签 + 报警徽章 + Chart.js 图表 + 原始数据面板 |
 | `warehouse_update` | 入库 / 出库 / 清空流水 / 删除物料 / 新增库存 / 一键清空库存 | `{type: "warehouse_update", timestamp}` | 调用 `refreshWH()` 刷新库存表 + 分类统计 + 出入库流水 |
 | `alarm_update` | 报警确认 / 清空全部报警记录 | `{type: "alarm_update", timestamp}` | 调用 `loadAlarmSummary()` + `loadAlarmList()` 刷新报警面板 |
 | `sim_reset` | 仿真重置命令生效 | `{type: "sim_reset"}` | 恢复 UI 为"真实传感器模式" |
@@ -235,7 +235,7 @@ ESP32-CAM ─HTTP:/capture─→ camera_http_fetch.c ─UDP:8082─→ Docker ca
 | 特性 | 说明 |
 |------|------|
 | **AO/DO 双模式** | MQ-135 和光敏传感器各自独立选择 DO（硬件比较器）或 AO（软件阈值判定）模式 |
-| **AO 阈值可调** | MQ-135 电压阈值（0~3.3V）、光敏 ADC 阈值（0~4095）通过滑块实时调整 |
+| **AO 阈值可调** | MQ-135 ADC raw 阈值（0~4095）、光敏 ADC 阈值（0~4095）通过滑块实时调整，单位统一 |
 | **触发方向** | 支持"高于阈值"（MQ-135 毒气检测）或"低于阈值"（光敏遮挡检测）两种方向 |
 | **温湿度独立开关** | 温湿度报警可整体关闭，仅保留气体+光敏报警 |
 | **端到端同步** | 三路径：UDP 8081 快速路径（局域网） + HTTP 轮询 `/api/alarm/config/poll`（公网/NAT 可靠） + **启动同步**（seq=0 时从 VPS SQLite 拉取当前配置，解决 Docker 重启后内存队列清空问题）→ ESP32 NVS 持久化，断电不丢失 |
@@ -254,8 +254,8 @@ ESP32-CAM ─HTTP:/capture─→ camera_http_fetch.c ─UDP:8082─→ Docker ca
 ```
 Web 仪表盘                               ESP32-P4 (MCU)
   │                                          │
-  │  POST /api/sim/inject                    │
-  │  {"photo_raw":2000, "mq135_v":2.8, ...}  │
+│  POST /api/sim/inject                    │
+│  {"photo_raw":2000, "mq135_raw":3500, ...}  │
   │  ──→ VPS 写入 _pending_sim_cmd 暂存 ──→  │
   │                                    │     │
   │                          GET /api/sim/poll?seq=N  (HTTP 轮询, 每 3s)
@@ -286,10 +286,10 @@ Web 仪表盘                               ESP32-P4 (MCU)
 
 ### 4.4 前端预设
 
-| 预设 | dht11_t | dht11_h | ds18b20_t | mq135_v | mq135_do | photo_do | 预期级别 |
-|------|---------|---------|-----------|---------|----------|----------|----------|
-| L1 预警 | 25 | 86 | 25.0 | 1.2 | 1 | 0 | L1（光敏+湿度） |
-| L2 严重 | 39 | 60 | 25.0 | 2.8 | 0 | 1 | L2（MQ135+高温） |
+| 预设 | dht11_t | dht11_h | ds18b20_t | mq135_raw | mq135_do | photo_do | 预期级别 |
+|------|---------|---------|-----------|-----------|----------|----------|----------|
+| L1 预警 | 25 | 86 | 25.0 | 1500 | 1 | 0 | L1（光敏+湿度） |
+| L2 严重 | 39 | 60 | 25.0 | 3500 | 0 | 1 | L2（MQ135+高温） |
 | L3 紧急 | 39 | 60 | 38.5 | 2.8 | 0 | 1 | L3（多A类源） |
 
 ### 4.5 API 端点
@@ -315,21 +315,29 @@ Web 仪表盘                               ESP32-P4 (MCU)
   "dht11_h": 62.0,
   "ds18b20_t": 28.3125,
   "mq135_v": 1.45,
+  "mq135_raw": 1800,
   "light_raw": 1500,
+  "mq135_do": 0,
+  "photo_do": 1,
   "alert": 1,
   "err": 0,
   "reason": "mq135, dht11_temp"
 }
 ```
 
-| 字段 | 类型 | v2.0 说明 |
-|------|------|-----------|
-| `type` | string | **新增**。当前固定 `"data"`，预留 `"checkin"`、`"alert_image"` |
-| `level` | int | **新增**。0=正常, 1=预警, 2=严重, 3=紧急 |
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `type` | string | 当前固定 `"data"`，预留 `"checkin"`、`"alert_image"` |
+| `level` | int | 0=正常, 1=预警, 2=严重, 3=紧急 |
 | `ts` | int | FreeRTOS 启动后毫秒时间戳 |
 | `alert` | int | 兼容旧字段，1 表示任一报警源触发 |
 | `reason` | string | 具体触发原因枚举 |
-| 其他 | — | 传感器原始值，字段不变 |
+| `mq135_v` | float | MQ-135 电压 (V)，向后兼容 |
+| `mq135_raw` | int | **MQ-135 ADC raw (0~4095)**，与光敏统一单位 |
+| `light_raw` | int | 光敏 ADC 原始值 (0~4095) |
+| `mq135_do` | int | MQ-135 DO 状态 (0=报警, 1=正常) |
+| `photo_do` | int | 光敏 DO 状态 (0=报警, 1=正常) |
+| 其他 | — | dht11_t, dht11_h, ds18b20_t, err（字段不变） |
 
 ### 5.2 PC 上位机显示效果
 

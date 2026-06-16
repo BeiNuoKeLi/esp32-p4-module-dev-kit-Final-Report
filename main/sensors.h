@@ -77,7 +77,8 @@
 #define ALARM_ESCALATE_MS         30000   /*!< 报警持续多久升级到 L3 紧急 (毫秒) */
 
 /* ==================== AO 报警阈值默认值 ==================== */
-#define ALARM_DEFAULT_MQ135_AO_THR_MV  2500   /*!< MQ-135 AO 电压阈值默认值 (mV), 2.5V */
+/* 统一为 ADC raw (0~4095), 与光敏一致, 方便仪表盘调节 */
+#define ALARM_DEFAULT_MQ135_AO_THR_RAW 3100   /*!< MQ-135 AO ADC 阈值默认值 (0~4095), ~2.5V */
 #define ALARM_DEFAULT_PHOTO_AO_THR     1000   /*!< 光敏 AO ADC 阈值默认值 (0~4095) */
 
 /* ==================== 报警源选择枚举 ==================== */
@@ -186,8 +187,8 @@ typedef struct {
     alarm_source_t   photo_alarm_src;     /*!< 光敏报警源:   DO(0) 或 AO(1), 默认 0 */
     ao_trigger_dir_t mq135_ao_dir;        /*!< MQ-135 AO 触发方向, 默认 AO_TRIG_ABOVE */
     ao_trigger_dir_t photo_ao_dir;        /*!< 光敏 AO 触发方向,  默认 AO_TRIG_BELOW */
-    float            mq135_ao_threshold;  /*!< MQ-135 AO 阈值 (V),     默认 2.5 */
-    int              photo_ao_threshold;  /*!< 光敏 AO 阈值 (ADC raw),  默认 1000 */
+    int              mq135_ao_threshold;  /*!< MQ-135 AO 阈值 (ADC raw), 默认 3100 (~2.5V) */
+    int              photo_ao_threshold;  /*!< 光敏 AO 阈值 (ADC raw),    默认 1000 */
     int              dht11_temp_high;     /*!< DHT11 高温阈值 (°C),     默认 35 */
     int              dht11_humi_high;     /*!< DHT11 高湿阈值 (%),      默认 85 */
     float            ds18b20_temp_high;   /*!< DS18B20 高温阈值 (°C),   默认 35.0 */

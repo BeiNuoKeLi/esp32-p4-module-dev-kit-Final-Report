@@ -129,7 +129,7 @@ docker/
 | 0 | `Smart Monitor` | 系统标题 |
 | 1 | `DHT11:T=29C H=54%` | 空气温湿度（整数精度） |
 | 2 | `DS18B20: 27.875 C` | 高精度温度（0.0625°C分辨率） |
-| 3 | `MQ135: Warming...` | 预热中（预热完成后显示电压和状态，如 `MQ135: 0.99V OK`） |
+| 3 | `MQ135: Warming...` | 预热中（预热完成后显示 ADC raw 和状态，如 `MQ135: 3100raw OK`） |
 | 4 | `Light: 1375 OK` | 光照强度（ADC原始值 + 报警状态） |
 | 5 | `Alrt:OFF Err:0x00` | 报警汇总 + 传感器错误码（预热期间 MQ-135 不计入） |
 | 6 | `Buzzer: OFF` | 蜂鸣器当前状态 |
@@ -310,7 +310,10 @@ portENABLE_INTERRUPTS();
   "dht11_h": 56.0,
   "ds18b20_t": 28.4375,
   "mq135_v": 0.31,
+  "mq135_raw": 385,
   "light_raw": 2000,
+  "mq135_do": 1,
+  "photo_do": 1,
   "alert": 0,
   "err": 0,
   "reason": ""
@@ -365,7 +368,7 @@ portENABLE_INTERRUPTS();
   "photo_alarm_src": 1,
   "mq135_ao_dir": 0,
   "photo_ao_dir": 1,
-  "mq135_ao_threshold": 2.5,
+  "mq135_ao_threshold": 3100,
   "photo_ao_threshold": 1000,
   "dht11_temp_high": 35,
   "dht11_humi_high": 85,

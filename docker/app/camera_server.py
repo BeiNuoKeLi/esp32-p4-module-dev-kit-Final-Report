@@ -38,6 +38,7 @@
   - 无数据到达时 → MJPEG 保持最后一帧，snapshot 返回空
 """
 import os
+import queue
 import socket
 import threading
 import time
@@ -94,6 +95,12 @@ class CameraServer:
         # MJPEG 输出帧同步 — 解决浏览器缓冲导致 7s 延迟
         self._mjpeg_new_frame = threading.Event()
         self._mjpeg_frame_seq = 0
+
+        # ★ 每客户端独立帧队列：解决多设备延迟不一致问题
+        # 每个浏览器连接获得独立的 Queue(maxsize=2)，按自己的 TCP 节奏消费帧。
+        # 慢客户端队列满时自动丢弃旧帧，不影响快客户端。
+        self._client_queues: list[queue.Queue] = []
+        self._client_queues_lock = threading.Lock()
 
         # 统计
         self.total_frames = 0
@@ -296,12 +303,16 @@ class CameraServer:
         imdecode 是 CPU 密集操作（50-200ms），在 VPS 弱 CPU 上会阻塞接收线程，
         导致后续帧积压 → 延迟雪崩。改为仅存储原始字节，latest_frame 按需在
         try_decode_frame() 中解码（扫码等低频场景使用）。
+
+        ★ 多客户端修复: 同时广播到所有活跃客户端的独立队列，
+           慢客户端队列满时自动丢弃旧帧，不影响快客户端。
         """
         if not jpeg_data:
             return False
         self.latest_jpeg = jpeg_data
         self._mjpeg_frame_seq += 1
         self._mjpeg_new_frame.set()
+        self._broadcast_to_clients(jpeg_data)  # ★ 广播到所有客户端独立队列
         return True
 
     def push_jpeg(self, jpeg_data: bytes):
@@ -309,12 +320,15 @@ class CameraServer:
 
         关键优化：不做 cv2.imdecode（50-200ms CPU 密集），只保存原始 JPEG bytes。
         latest_frame 按需在 scan 端点解码，不在热路径执行。
+
+        ★ 多客户端修复: 同时广播到所有活跃客户端的独立队列。
         """
         # 直接保存 JPEG bytes — 加锁保护（与其他线程竞争）
         self.latest_jpeg = jpeg_data
         # 通知 MJPEG 输出端有新帧
         self._mjpeg_frame_seq += 1
         self._mjpeg_new_frame.set()
+        self._broadcast_to_clients(jpeg_data)  # ★ 广播到所有客户端独立队列
         self.total_frames += 1
         # 更新 FPS 统计
         t0 = time.time()
@@ -1046,55 +1060,86 @@ class CameraServer:
         dur = history[-1] - history[0]
         return (len(history) - 1) / dur if dur > 0 else 0.0
 
+    # ─── 每客户端独立帧队列 (解决多设备延迟不一致) ────────
+
+    def _register_client(self) -> queue.Queue:
+        """注册一个 MJPEG 客户端，返回其专属帧队列 (maxsize=2)。
+
+        队列满时自动丢弃最旧帧，确保慢客户端不阻塞快客户端。
+        """
+        q = queue.Queue(maxsize=2)
+        with self._client_queues_lock:
+            self._client_queues.append(q)
+        return q
+
+    def _unregister_client(self, q: queue.Queue):
+        """客户端断开时注销队列，停止向其推送帧"""
+        with self._client_queues_lock:
+            if q in self._client_queues:
+                self._client_queues.remove(q)
+
+    def _broadcast_to_clients(self, jpeg_data: bytes):
+        """将新帧推送到所有活跃客户端的独立队列 (非阻塞)。
+
+        若某客户端队列已满(maxsize=2)，丢弃最旧帧后推入新帧。
+        确保慢客户端(TCP背压)不影响快客户端 —— 各客户端独立消费。
+        """
+        with self._client_queues_lock:
+            if not self._client_queues:
+                return  # 无活跃客户端，跳过
+            for q in self._client_queues:
+                try:
+                    q.put_nowait(jpeg_data)
+                except queue.Full:
+                    # 队列满 → 丢弃最旧帧，推入最新帧
+                    try:
+                        q.get_nowait()
+                        q.put_nowait(jpeg_data)
+                    except queue.Empty:
+                        pass
+
     # ─── MJPEG 流生成器 ────────────────────────────────────
 
     def mjpeg_stream(self):
-        """
-        FastAPI StreamingResponse 用的生成器。
+        """FastAPI StreamingResponse 用的生成器。
+
         产出 multipart/x-mixed-replace 格式数据块。
 
-        关键优化: 使用 Event 驱动，只在有新帧到达时才发送，
-        避免重复帧堆积在浏览器缓冲区造成 7s+ 延迟。
-        若超过 5 秒无新帧则发送最后一帧保活连接（不再发送占位黑图）。
-
-        ★ 竞态修复: wait()→clear() 之间存在窗口，push_jpeg() 若在此窗口 set()，
-           Event 已为 True → set() 无效 → clear() 清掉 → 事件丢失。
-           修复: clear() 后二次读 seq，若已变则重新 set() 唤醒下一次 wait()。
+        ★ 每客户端独立队列架构 (v2.0):
+        - 每个浏览器连接注册专属 Queue(maxsize=2)，按自己的 TCP 节奏消费帧。
+        - 接收线程通过 _broadcast_to_clients() 非阻塞推送到所有活跃队列。
+        - 慢客户端队列满时自动丢弃旧帧（get_nowait + put_nowait），
+          不影响快客户端的帧率。
+        - 彻底消除共享 Event 竞态条件导致的"快等慢"延迟雪崩。
+        - 若超过 0.5s 无新帧则发送最后一帧保活连接。
         """
         boundary = "--frameboundary"
-        last_seq = -1
-        keepalive_interval = 0.5
         last_sent_jpeg = self.placeholder_jpeg  # 初始占位，收到首帧后永不黑屏
 
-        while self.running:
-            self._mjpeg_new_frame.wait(timeout=keepalive_interval)
-            current_seq = self._mjpeg_frame_seq
-            self._mjpeg_new_frame.clear()
-            if self._mjpeg_frame_seq != current_seq:
-                self._mjpeg_new_frame.set()
-                current_seq = self._mjpeg_frame_seq
-
-            if self.stream_enabled:
-                if current_seq != last_seq:
-                    jpeg_data = self.latest_jpeg
-                    if jpeg_data:
-                        last_sent_jpeg = jpeg_data  # ★ 缓存好帧，用于回退
-                        last_seq = current_seq
+        # ★ 注册专属帧队列
+        q = self._register_client()
+        try:
+            while self.running:
+                try:
+                    jpeg_data = q.get(timeout=0.5)  # 阻塞等待新帧，0.5s 超时保活
+                    last_sent_jpeg = jpeg_data
+                except queue.Empty:
+                    # 超时无新帧 → 保活或发送占位图
+                    if not self.stream_enabled:
+                        jpeg_data = self.placeholder_jpeg
                     else:
-                        jpeg_data = last_sent_jpeg   # ★ 绝不发黑图，复用上一好帧
-                else:
-                    jpeg_data = last_sent_jpeg
-            else:
-                jpeg_data = self.placeholder_jpeg
+                        jpeg_data = last_sent_jpeg
 
-            yield (
-                f"{boundary}\r\n"
-                f"Content-Type: image/jpeg\r\n"
-                f"Content-Length: {len(jpeg_data)}\r\n"
-                f"Cache-Control: no-store, no-cache, max-age=0\r\n"
-                f"Pragma: no-cache\r\n"
-                f"\r\n"
-            ).encode("ascii") + jpeg_data + b"\r\n"
+                yield (
+                    f"{boundary}\r\n"
+                    f"Content-Type: image/jpeg\r\n"
+                    f"Content-Length: {len(jpeg_data)}\r\n"
+                    f"Cache-Control: no-store, no-cache, max-age=0\r\n"
+                    f"Pragma: no-cache\r\n"
+                    f"\r\n"
+                ).encode("ascii") + jpeg_data + b"\r\n"
+        finally:
+            self._unregister_client(q)  # ★ 客户端断开时自动注销
 
 
 # ─── 模块级单例 ─────────────────────────────────────────────

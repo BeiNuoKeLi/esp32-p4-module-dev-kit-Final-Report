@@ -15,7 +15,7 @@
   - 传输方式: UDP (socket.SOCK_DGRAM)
   - 单包最大: < 512 字节
 
-JSON 报文格式 v2.0（分级报警）：
+JSON 报文格式 v3.0（分级报警 + raw统一）：
 {
   "type": "data",             // NEW: 消息类型 (data/checkin/alert_image)
   "level": 0,                 // NEW: 报警级别 (0=正常,1=预警,2=严重,3=紧急)
@@ -23,7 +23,8 @@ JSON 报文格式 v2.0（分级报警）：
   "dht11_t": 26.0,            // DHT11 温度 (°C)
   "dht11_h": 62.0,            // DHT11 湿度 (%RH)
   "ds18b20_t": 28.3125,       // DS18B20 温度 (°C, 4位小数)
-  "mq135_v": 1.25,            // MQ-135 AO 电压 (V)
+  "mq135_v": 1.25,            // MQ-135 AO 电压 (V), 向后兼容
+  "mq135_raw": 1551,          // MQ-135 ADC 原始值 (0~4095), 与光敏统一
   "light_raw": 1500,          // 光敏 ADC 原始值 (0~4095)
   "alert": 0,                 // 0=正常, 1=任一报警源触发
   "err": 0,                   // 错误位掩码
@@ -169,6 +170,7 @@ class UdpReceiver:
         dht11_h = obj.get("dht11_h", 0)
         ds18b20_t = obj.get("ds18b20_t", 0)
         mq135_v = obj.get("mq135_v", 0)
+        mq135_raw = obj.get("mq135_raw", 0)
         light_raw = obj.get("light_raw", 0)
         alert = obj.get("alert", 0)
         err = obj.get("err", 0)
@@ -196,7 +198,7 @@ class UdpReceiver:
         line = (f"[{ts}] "
                 f"DHT11: {dht11_t:>5.1f}°C | {dht11_h:>5.1f}% "
                 f"|| DS18B20: {ds18b20_t:>8.4f}°C "
-                f"|| MQ135: {mq135_v:>.2f}V | Light: {light_raw} ADC "
+                f"|| MQ135: {mq135_raw} raw ({mq135_v:.2f}V) | Light: {light_raw} raw "
                 f"|| {level_color}{alert_str:>14}\033[0m | Err: {err_field}")
 
         if level >= 3:
@@ -226,7 +228,7 @@ class UdpReceiver:
                         "type", "level",
                         "dht11_t", "dht11_h",
                         "ds18b20_t",
-                        "mq135_v", "light_raw",
+                        "mq135_v", "mq135_raw", "light_raw",
                         "alert", "err", "reason"
                     ])
                     self.csv_written_header = True
@@ -241,6 +243,7 @@ class UdpReceiver:
                     obj.get("dht11_h", ""),
                     obj.get("ds18b20_t", ""),
                     obj.get("mq135_v", ""),
+                    obj.get("mq135_raw", ""),
                     obj.get("light_raw", ""),
                     obj.get("alert", ""),
                     f"0x{obj.get('err', 0):02X}",

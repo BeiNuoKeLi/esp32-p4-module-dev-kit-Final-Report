@@ -99,8 +99,9 @@ static char *http_get_body(const char *url)
 /**
  * @brief 解析注入命令并写入 g_sensor_data
  *
- * JSON 格式: {"dht11_t":39,"dht11_h":60,"ds18b20_t":38.5,"mq135_v":2.8,
+ * JSON 格式: {"dht11_t":39,"dht11_h":60,"ds18b20_t":38.5,"mq135_raw":3500,
  *              "mq135_do":0,"photo_raw":2000,"photo_do":1}
+ * 兼容旧字段 mq135_v, 优先使用 mq135_raw (ADC 0~4095)
  *
  * 使用 sscanf 手动提取字段 (与 udp_sim_command_task 相同逻辑),
  * 避免引入 cJSON 增加 flash 负担。
@@ -110,6 +111,7 @@ static void apply_sim_command(const char *json)
     int sim_dht11_t = 25, sim_dht11_h = 60;
     float sim_ds18b20 = 25.0f;
     int sim_mq135_do = 1, sim_photo_do = 1, sim_photo_raw = 2000;
+    int   sim_mq135_raw = 1500;
     float sim_mq135_v = 1.2f;
     int parsed = 0;
 
@@ -117,7 +119,11 @@ static void apply_sim_command(const char *json)
     if ((p = strstr(json, "\"dht11_t\":")))  sscanf(p + 10, "%d", &sim_dht11_t),  parsed++;
     if ((p = strstr(json, "\"dht11_h\":")))  sscanf(p + 10, "%d", &sim_dht11_h),  parsed++;
     if ((p = strstr(json, "\"ds18b20_t\":"))) sscanf(p + 12, "%f", &sim_ds18b20), parsed++;
-    if ((p = strstr(json, "\"mq135_v\":")))  sscanf(p + 10, "%f", &sim_mq135_v),  parsed++;
+    /* mq135_raw (新) 优先, mq135_v (旧) 做 fallback */
+    if ((p = strstr(json, "\"mq135_raw\":")))
+        { sscanf(p + 12, "%d", &sim_mq135_raw); sim_mq135_v = sim_mq135_raw * 3.3f / 4095.0f; parsed++; }
+    else if ((p = strstr(json, "\"mq135_v\":")))
+        { sscanf(p + 10, "%f", &sim_mq135_v); parsed++; }
     if ((p = strstr(json, "\"mq135_do\":"))) sscanf(p + 10, "%d", &sim_mq135_do), parsed++;
     if ((p = strstr(json, "\"photo_raw\":"))) sscanf(p + 12, "%d", &sim_photo_raw), parsed++;
     if ((p = strstr(json, "\"photo_do\":"))) sscanf(p + 10, "%d", &sim_photo_do), parsed++;
@@ -139,9 +145,9 @@ static void apply_sim_command(const char *json)
         xSemaphoreGive(g_sensor_mutex);
     }
 
-    ESP_LOGI(TAG, "📥 仿真注入: Tdht=%d H=%d%% Tds=%.1f MQv=%.2f MQdo=%d PR=%d Pdo=%d",
+    ESP_LOGI(TAG, "📥 仿真注入: Tdht=%d H=%d%% Tds=%.1f MQraw=%d MQdo=%d PR=%d Pdo=%d",
              sim_dht11_t, sim_dht11_h, sim_ds18b20,
-             sim_mq135_v, sim_mq135_do, sim_photo_raw, sim_photo_do);
+             sim_mq135_raw, sim_mq135_do, sim_photo_raw, sim_photo_do);
 }
 
 
@@ -162,7 +168,7 @@ static void apply_reset_command(void)
  * @brief 解析报警配置命令并更新 g_sensor_data + 持久化到 NVS
  *
  * JSON 格式: {"cmd":"config","mq135_alarm_src":0,"photo_alarm_src":0,
- *              "mq135_ao_dir":0,"photo_ao_dir":1,"mq135_ao_threshold":2.5,
+ *              "mq135_ao_dir":0,"photo_ao_dir":1,"mq135_ao_threshold":3100,
  *              "photo_ao_threshold":1000,"dht11_temp_high":35,
  *              "dht11_humi_high":85,"ds18b20_temp_high":35.0,
  *              "temp_humi_alarm_enabled":1}
@@ -175,6 +181,7 @@ static void apply_alarm_config(const char *json)
     char *p;
     int   tmp_i = 0;
     float tmp_f = 0.0f;
+    int   tmp_raw = 0;
     int   updated = 0;
 
     if (xSemaphoreTake(g_sensor_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
@@ -187,7 +194,7 @@ static void apply_alarm_config(const char *json)
         if ((p = strstr(json, "\"photo_ao_dir\":")))
             { if (sscanf(p + 15, "%d", &tmp_i) == 1) { g_sensor_data.photo_ao_dir = (ao_trigger_dir_t)tmp_i; updated++; } }
         if ((p = strstr(json, "\"mq135_ao_threshold\":")))
-            { if (sscanf(p + 21, "%f", &tmp_f) == 1) { g_sensor_data.mq135_ao_threshold = tmp_f; updated++; } }
+            { if (sscanf(p + 21, "%d", &tmp_raw) == 1) { g_sensor_data.mq135_ao_threshold = tmp_raw; updated++; } }
         if ((p = strstr(json, "\"photo_ao_threshold\":")))
             { if (sscanf(p + 21, "%d", &tmp_i) == 1) { g_sensor_data.photo_ao_threshold = tmp_i; updated++; } }
         if ((p = strstr(json, "\"dht11_temp_high\":")))
@@ -209,7 +216,7 @@ static void apply_alarm_config(const char *json)
     /* 异步持久化到 NVS */
     save_alarm_config_to_nvs();
 
-    ESP_LOGI(TAG, "⚙️ 报警配置已更新: mq_src=%d mq_thr=%.2fV ph_src=%d ph_thr=%d dht_t=%d dht_h=%d ds_t=%.1f temp_en=%d",
+    ESP_LOGI(TAG, "⚙️ 报警配置已更新: mq_src=%d mq_thr=%draw ph_src=%d ph_thr=%d dht_t=%d dht_h=%d ds_t=%.1f temp_en=%d",
              g_sensor_data.mq135_alarm_src, g_sensor_data.mq135_ao_threshold,
              g_sensor_data.photo_alarm_src, g_sensor_data.photo_ao_threshold,
              g_sensor_data.dht11_temp_high, g_sensor_data.dht11_humi_high,

@@ -304,7 +304,7 @@ DHT11 和 DS18B20 使用不同的 GPIO，需分别实现驱动函数，不可混
 
 | 值 | 名称 | 适用传感器 | 含义 |
 |----|------|-----------|------|
-| 0 | `AO_TRIG_ABOVE` | MQ-135 | 电压 ≥ 阈值 → 报警（有毒气体浓度过高） |
+| 0 | `AO_TRIG_ABOVE` | MQ-135 | ADC raw 值 ≥ 阈值 → 报警（有毒气体浓度过高） |
 | 1 | `AO_TRIG_BELOW` | 光敏 | ADC ≤ 阈值 → 报警（光线过暗/遮挡） |
 
 **可配置参数列表**：
@@ -315,7 +315,7 @@ DHT11 和 DS18B20 使用不同的 GPIO，需分别实现驱动函数，不可混
 | `photo_alarm_src` | int | 0 (DO) | `ph_mode` | 光敏报警源 |
 | `mq135_ao_dir` | int | 0 (ABOVE) | `mq_ao_dir` | MQ-135 AO 触发方向 |
 | `photo_ao_dir` | int | 1 (BELOW) | `ph_ao_dir` | 光敏 AO 触发方向 |
-| `mq135_ao_threshold` | float (V) | 2.5 | `mq_ao_thr` | MQ-135 AO 电压阈值 |
+| `mq135_ao_threshold` | int (ADC raw) | 3100 | `mq_ao_raw` | MQ-135 AO ADC 阈值 (0~4095) |
 | `photo_ao_threshold` | int (ADC) | 1000 | `ph_ao_thr` | 光敏 AO ADC 阈值 |
 | `dht11_temp_high` | int (°C) | 35 | `dht_t_hi` | DHT11 高温阈值 |
 | `dht11_humi_high` | int (%RH) | 85 | `dht_h_hi` | DHT11 高湿阈值 |
@@ -380,7 +380,7 @@ MCU 监听 **UDP 8081** 接收仿真注入和报警配置命令。
   "photo_alarm_src": 1,
   "mq135_ao_dir": 0,
   "photo_ao_dir": 1,
-  "mq135_ao_threshold": 2.5,
+  "mq135_ao_threshold": 3100,
   "photo_ao_threshold": 1000,
   "dht11_temp_high": 35,
   "dht11_humi_high": 85,
@@ -395,41 +395,52 @@ MCU 监听 **UDP 8081** 接收仿真注入和报警配置命令。
 
 ```json
 {
+  "type": "data",
+  "level": 0,
   "ts": 120000,
   "dht11_t": 26.0,
   "dht11_h": 62.0,
   "ds18b20_t": 28.3125,
   "mq135_v": 1.25,
+  "mq135_raw": 1551,
   "light_raw": 1500,
   "mq135_do": 1,
   "photo_do": 1,
   "alert": 0,
-  "err": 0
+  "err": 0,
+  "reason": ""
 }
 ```
 
 | 字段 | 类型 | 精度 | 说明 |
 |------|------|------|------|
+| `type` | string | — | 消息类型，固定 `"data"` |
+| `level` | int | — | 报警级别 (0=正常, 1=预警, 2=严重, 3=紧急) |
 | `ts` | int | 毫秒 | FreeRTOS 启动后时间戳 |
 | `dht11_t` | float | 1 位小数 | DHT11 温度（°C），整数精度 |
 | `dht11_h` | float | 1 位小数 | DHT11 湿度（%RH），整数精度 |
 | `ds18b20_t` | float | **4 位小数** | DS18B20 高精度温度（0.0625°C 分辨率） |
-| `mq135_v` | float | 2 位小数 | MQ-135 AO 电压（V） |
+| `mq135_v` | float | 2 位小数 | MQ-135 AO 电压（V），向后兼容 |
+| `mq135_raw` | int | — | **MQ-135 ADC 原始值（0~4095）**，与光敏统一单位 |
 | `light_raw` | int | — | 光敏 ADC 原始值（0~4095） |
 | `mq135_do` | int | 0/1 | MQ-135 DO 数字量状态（0=报警，1=正常） |
 | `photo_do` | int | 0/1 | 光敏 DO 数字量状态（0=报警，1=正常） |
-| `alert` | int | 0/1 | 0=正常，1=报警中（任一 DO 为低） |
+| `alert` | int | 0/1 | 0=正常，1=报警中（任一报警源触发） |
 | `err` | int | 位掩码 | bit0=DHT11, bit1=DS18B20, bit2=MQ135, bit3=光敏 |
+| `reason` | string | — | 触发原因 (mq135/dht11_temp/ds18b20_temp/photo/dht11_humi) |
 
 ### 6.3 JSON 组包方式
 
 使用 `snprintf()` 直接拼接，不引入 cJSON 等第三方库：
 ```c
 snprintf(buf, sizeof(buf),
-    "{\"ts\":%lu,\"dht11_t\":%.1f,\"dht11_h\":%.1f,"
-    "\"ds18b20_t\":%.4f,\"mq135_v\":%.2f,\"light_raw\":%d,"
-    "\"alert\":%d,\"err\":%d}",
-    ts, dht11_t, dht11_h, ds18b20_t, mq135_v, light_raw, alert, err);
+    "{\"type\":\"data\",\"level\":%d,"
+    "\"ts\":%lu,\"dht11_t\":%.1f,\"dht11_h\":%.1f,"
+    "\"ds18b20_t\":%.4f,\"mq135_v\":%.2f,\"mq135_raw\":%d,\"light_raw\":%d,"
+    "\"mq135_do\":%d,\"photo_do\":%d,"
+    "\"alert\":%d,\"err\":%d,\"reason\":\"%s\"}",
+    level, ts, dht11_t, dht11_h, ds18b20_t, mq135_v, mq135_raw, light_raw,
+    mq135_do, photo_do, alert, err, reason);
 ```
 
 ---
@@ -454,9 +465,9 @@ snprintf(buf, sizeof(buf),
   智能环境监测系统 - 上位机接收端
   监听端口: 8080
 ============================================================
-[2026-05-21 14:30:02]  DHT11:  26.0°C |  62.0% || DS18B20: 28.3125°C || MQ135: 1.25V | Light: 0.85V || Alert: OK     | Err: 0x00
-[2026-05-21 14:30:04]  DHT11:  26.0°C |  61.0% || DS18B20: 28.3750°C || MQ135: 1.30V | Light: 0.82V || Alert: OK     | Err: 0x00
-[2026-05-21 14:30:06]  DHT11:  27.0°C |  60.0% || DS18B20: 28.4375°C || MQ135: 1.45V | Light: 0.79V || Alert: ALARM! | Err: 0x00
+[2026-05-21 14:30:02]  DHT11:  26.0°C |  62.0% || DS18B20: 28.3125°C || MQ135: 1551 raw (1.25V) | Light: 1500 raw || Alert: OK     | Err: 0x00
+[2026-05-21 14:30:04]  DHT11:  26.0°C |  61.0% || DS18B20: 28.3750°C || MQ135: 1613 raw (1.30V) | Light: 1450 raw || Alert: OK     | Err: 0x00
+[2026-05-21 14:30:06]  DHT11:  27.0°C |  60.0% || DS18B20: 28.4375°C || MQ135: 1800 raw (1.45V) | Light: 1380 raw || Alert: ALARM! | Err: 0x00
 ```
 
 ### 7.3 依赖

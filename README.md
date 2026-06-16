@@ -29,7 +29,7 @@ idf.py build flash monitor
 | 0 | 标题 | `Smart Monitor` |
 | 1 | DHT11 温湿度 | `T=26C H=62%` |
 | 2 | DS18B20 温度 | `28.3125 C` |
-| 3 | MQ-135 电压+状态 | `1.25V OK` |
+| 3 | MQ-135 ADC raw+状态 | `3100raw OK` |
 | 4 | 光敏 ADC 值+状态 | `2048raw OK` |
 | 5 | 报警汇总+错误码 | `Alrt:OFF Err:0x00` |
 | 6 | 蜂鸣器+WiFi状态 | `Buz:OFF  WiFi:OK` |
@@ -175,7 +175,7 @@ cd /opt/esp32-p4-module-dev-kit-Final-Report && git checkout main && git pull &&
 | 目标 IP | 10.16.234.215 | 38.55.199.220 |
 | 目标端口 | 8080 UDP | 8002 UDP |
 | 间隔 | 每 2 秒 | 每 2 秒 |
-| 格式 | JSON (12 字段) | JSON (12 字段) |
+| 格式 | JSON (14 字段) | JSON (14 字段) |
 
 ```bash
 # 启动上位机接收端

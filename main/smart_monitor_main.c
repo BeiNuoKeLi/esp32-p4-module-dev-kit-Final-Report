@@ -117,7 +117,7 @@ static void load_alarm_config_from_nvs(void)
     g_sensor_data.photo_alarm_src   = ALARM_SRC_DO;
     g_sensor_data.mq135_ao_dir      = AO_TRIG_ABOVE;
     g_sensor_data.photo_ao_dir      = AO_TRIG_BELOW;
-    g_sensor_data.mq135_ao_threshold = (float)ALARM_DEFAULT_MQ135_AO_THR_MV / 1000.0f;
+    g_sensor_data.mq135_ao_threshold = ALARM_DEFAULT_MQ135_AO_THR_RAW;
     g_sensor_data.photo_ao_threshold = ALARM_DEFAULT_PHOTO_AO_THR;
     g_sensor_data.dht11_temp_high    = ALARM_TEMP_HIGH_DHT11;
     g_sensor_data.dht11_humi_high    = ALARM_HUMI_HIGH;
@@ -138,8 +138,8 @@ static void load_alarm_config_from_nvs(void)
     /* ── 读取并做范围验证, 拒绝 flash 中的损坏值 ── */
     if (nvs_get_u8(h, "mq_mode", &u8_val) == ESP_OK && u8_val <= 1)
         g_sensor_data.mq135_alarm_src = (alarm_source_t)u8_val;
-    if (nvs_get_u32(h, "mq_ao_thr", &u32_val) == ESP_OK && u32_val >= 100 && u32_val <= 5000)
-        g_sensor_data.mq135_ao_threshold = (float)u32_val / 1000.0f;
+    if (nvs_get_u32(h, "mq_ao_raw", &u32_val) == ESP_OK && u32_val >= 0 && u32_val <= 4095)
+        g_sensor_data.mq135_ao_threshold = (int)u32_val;
     if (nvs_get_u8(h, "mq_ao_dir", &u8_val) == ESP_OK && u8_val <= 1)
         g_sensor_data.mq135_ao_dir = (ao_trigger_dir_t)u8_val;
 
@@ -160,7 +160,7 @@ static void load_alarm_config_from_nvs(void)
         g_sensor_data.temp_humi_alarm_enabled = (int)u8_val;
 
     nvs_close(h);
-    ESP_LOGI(TAG, "NVS: 报警配置已加载 | mq_src=%d mq_thr=%.2fV ph_src=%d ph_thr=%d dht_t=%d dht_h=%d ds_t=%.1f temp_en=%d",
+    ESP_LOGI(TAG, "NVS: 报警配置已加载 | mq_src=%d mq_thr=%draw ph_src=%d ph_thr=%d dht_t=%d dht_h=%d ds_t=%.1f temp_en=%d",
              g_sensor_data.mq135_alarm_src, g_sensor_data.mq135_ao_threshold,
              g_sensor_data.photo_alarm_src, g_sensor_data.photo_ao_threshold,
              g_sensor_data.dht11_temp_high, g_sensor_data.dht11_humi_high,
@@ -180,7 +180,7 @@ void save_alarm_config_to_nvs(void)
 
     if (xSemaphoreTake(g_sensor_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
         mq_mode   = (uint8_t)g_sensor_data.mq135_alarm_src;
-        mq_ao_thr = (uint32_t)(g_sensor_data.mq135_ao_threshold * 1000.0f);
+        mq_ao_thr = (uint32_t)g_sensor_data.mq135_ao_threshold;
         mq_ao_dir = (uint8_t)g_sensor_data.mq135_ao_dir;
         ph_mode   = (uint8_t)g_sensor_data.photo_alarm_src;
         ph_ao_thr = (uint32_t)g_sensor_data.photo_ao_threshold;
@@ -203,7 +203,7 @@ void save_alarm_config_to_nvs(void)
     }
 
     nvs_set_u8(h,  "mq_mode",   mq_mode);
-    nvs_set_u32(h, "mq_ao_thr", mq_ao_thr);
+    nvs_set_u32(h, "mq_ao_raw", mq_ao_thr);
     nvs_set_u8(h,  "mq_ao_dir", mq_ao_dir);
     nvs_set_u8(h,  "ph_mode",   ph_mode);
     nvs_set_u32(h, "ph_ao_thr", ph_ao_thr);
@@ -243,14 +243,15 @@ static void mq135_task(void *arg)
         /* ---- 仿真模式分支: 跳过硬件读取, 直接注入仿真值 ---- */
         if (g_sensor_data.sim_active) {
             if (xSemaphoreTake(g_sensor_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
-                g_sensor_data.mq135_ao_raw  = -1;
                 g_sensor_data.mq135_voltage = g_sensor_data.sim_mq135_v;
+                /* 从电压反算 raw 供 AO 阈值比较 (统一单位) */
+                g_sensor_data.mq135_ao_raw  = (int)(g_sensor_data.sim_mq135_v * 4095.0f / 3.3f);
                 g_sensor_data.mq135_do      = g_sensor_data.sim_mq135_do;
                 g_sensor_data.mq135_err     = 0;
                 xSemaphoreGive(g_sensor_mutex);
             }
-            ESP_LOGI(TAG, "MQ-135 [SIM]: V=%.2fV | DO=%d",
-                     g_sensor_data.sim_mq135_v, g_sensor_data.sim_mq135_do);
+            ESP_LOGI(TAG, "MQ-135 [SIM]: raw=%d | DO=%d",
+                     g_sensor_data.mq135_ao_raw, g_sensor_data.sim_mq135_do);
             vTaskDelay(pdMS_TO_TICKS(2000));
             continue;
         }
@@ -472,8 +473,8 @@ static void oled_display_task(void *arg)
         } else if (local.mq135_err) {
             oled_show_line(3, "MQ135: ERR         ");
         } else {
-            oled_show_line(3, "MQ135: %.2fV %s",
-                           local.mq135_voltage,
+            oled_show_line(3, "MQ135: %-4draw %s",
+                           local.mq135_ao_raw,
                            local.mq135_do ? "OK" : "ALM");
         }
 
@@ -556,11 +557,11 @@ static void buzzer_task(void *arg)
         int mq135_do = 1, photo_do = 1;
         int dht11_temp = 0, dht11_humi = 0;
         float ds18b20_temp = 0.0f;
-        float mq135_voltage = 0.0f;
+        int   mq135_ao_raw = 0;
         int   photo_raw = 0;
         alarm_source_t mq_src = ALARM_SRC_DO, ph_src = ALARM_SRC_DO;
         ao_trigger_dir_t mq_dir = AO_TRIG_ABOVE, ph_dir = AO_TRIG_BELOW;
-        float mq_ao_thr = 2.5f;
+        int   mq_ao_thr = 3100;
         int   ph_ao_thr = 1000;
         int   dht_t_hi = 35, dht_h_hi = 85;
         float ds_t_hi  = 35.0f;
@@ -568,7 +569,7 @@ static void buzzer_task(void *arg)
 
         if (xSemaphoreTake(g_sensor_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
             mq135_do       = mq135_is_warmed_up() ? g_sensor_data.mq135_do : 1;
-            mq135_voltage  = g_sensor_data.mq135_voltage;
+            mq135_ao_raw   = g_sensor_data.mq135_ao_raw;
             photo_do       = g_sensor_data.photo_do;
             photo_raw      = g_sensor_data.photo_raw;
             dht11_temp     = g_sensor_data.dht11_temp;
@@ -593,11 +594,11 @@ static void buzzer_task(void *arg)
         if (mq_src == ALARM_SRC_DO) {
             cat_a_mq135 = (!mq135_do) ? 1 : 0;                      /* DO 模式 */
         } else {
-            /* AO 模式: 根据电压阈值判定 */
+            /* AO 模式: 根据 ADC raw 阈值判定 (统一单位, 与光敏一致) */
             if (mq_dir == AO_TRIG_ABOVE) {
-                cat_a_mq135 = (mq135_voltage >= mq_ao_thr) ? 1 : 0;
+                cat_a_mq135 = (mq135_ao_raw >= mq_ao_thr) ? 1 : 0;
             } else {
-                cat_a_mq135 = (mq135_voltage <= mq_ao_thr) ? 1 : 0;
+                cat_a_mq135 = (mq135_ao_raw <= mq_ao_thr) ? 1 : 0;
             }
         }
 

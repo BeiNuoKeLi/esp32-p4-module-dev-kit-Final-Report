@@ -16,6 +16,7 @@ class SensorData(BaseModel):
     dht11_h: Optional[float] = None
     ds18b20_t: Optional[float] = None
     mq135_v: Optional[float] = None
+    mq135_raw: Optional[int] = None      # MQ-135 ADC 原始值 (0~4095)
     light_raw: Optional[float] = None     # 光敏 ADC 原始值 (0~4095)
     mq135_do: Optional[int] = None    # 0=超阈值, 1=正常
     photo_do: Optional[int] = None    # 0=超阈值, 1=正常
@@ -176,9 +177,10 @@ class SimInjectRequest(BaseModel):
     dht11_t: float = 25.0            # DHT11 温度 (°C) — 统一用 float 与其他模型一致
     dht11_h: float = 60.0            # DHT11 湿度 (%RH)
     ds18b20_t: float = 25.0        # DS18B20 温度 (°C)
-    mq135_v: float = 1.2           # MQ-135 电压 (V)
+    mq135_v: float = 1.2           # MQ-135 电压 (V), 向后兼容, 优先用 mq135_raw
+    mq135_raw: int = 1500          # MQ-135 AO ADC 原始值 (0~4095), 与光敏统一单位
     mq135_do: int = 1              # MQ-135 DO (0=超阈值, 1=正常)
-    photo_raw: int = 2000          # 光敏 AO 原始值 (0~4095)，MCU 内部转电压
+    photo_raw: int = 2000          # 光敏 AO 原始值 (0~4095)
     photo_do: int = 1              # 光敏 DO (0=超阈值, 1=正常)
     # 注意: level / reason 由 MCU 根据传感器值内部计算，不需要前端传入
 
@@ -198,7 +200,7 @@ class AlarmConfigRequest(BaseModel):
     photo_alarm_src: int = 0
     mq135_ao_dir: int = 0           # 0=高于阈值触发, 1=低于阈值触发
     photo_ao_dir: int = 1           # 默认 1=低于阈值（光线暗报警）
-    mq135_ao_threshold: float = 2.5
+    mq135_ao_threshold: int = 3100  # ADC raw (0~4095), 统一单位
     photo_ao_threshold: int = 1000
     dht11_temp_high: int = 35
     dht11_humi_high: int = 85
@@ -212,7 +214,7 @@ class AlarmConfigResponse(BaseModel):
     photo_alarm_src: int = 0
     mq135_ao_dir: int = 0
     photo_ao_dir: int = 1
-    mq135_ao_threshold: float = 2.5
+    mq135_ao_threshold: int = 3100
     photo_ao_threshold: int = 1000
     dht11_temp_high: int = 35
     dht11_humi_high: int = 85

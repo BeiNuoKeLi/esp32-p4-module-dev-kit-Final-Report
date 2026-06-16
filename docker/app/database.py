@@ -36,6 +36,7 @@ async def init_db():
                 dht11_h   REAL,
                 ds18b20_t REAL,
                 mq135_v   REAL,
+                mq135_raw  INTEGER,
                 light_raw  INTEGER,
                 mq135_do  INTEGER DEFAULT -1,
                 photo_do  INTEGER DEFAULT -1,
@@ -84,6 +85,7 @@ async def init_db():
                 dht11_h      REAL,
                 ds18b20_t    REAL,
                 mq135_v      REAL,
+                mq135_raw     INTEGER,
                 mq135_do     INTEGER DEFAULT -1,
                 light_raw      INTEGER,
                 photo_do     INTEGER DEFAULT -1,
@@ -101,6 +103,12 @@ async def init_db():
                 await db.execute(f"ALTER TABLE alarm_events ADD COLUMN {col} {col_def}")
             except Exception:
                 pass  # 列已存在
+        # ── 数据库迁移：sensor_data 和 alarm_events 补充 mq135_raw 列 ──
+        for tbl in ["sensor_data", "alarm_events"]:
+            try:
+                await db.execute(f"ALTER TABLE {tbl} ADD COLUMN mq135_raw INTEGER")
+            except Exception:
+                pass
         await db.commit()
         # ── 报警配置表（v3.5 新增）──
         await init_alarm_config_table()
@@ -113,12 +121,13 @@ async def insert_sensor_data(data: dict) -> int:
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         cursor = await db.execute("""
-            INSERT INTO sensor_data (ts, dht11_t, dht11_h, ds18b20_t, mq135_v, light_raw, mq135_do, photo_do, level, alert, reason, err)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO sensor_data (ts, dht11_t, dht11_h, ds18b20_t, mq135_v, mq135_raw, light_raw, mq135_do, photo_do, level, alert, reason, err)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             now,
             data.get("dht11_t"), data.get("dht11_h"),
             data.get("ds18b20_t"), data.get("mq135_v"),
+            data.get("mq135_raw"),
             data.get("light_raw"),
             data.get("mq135_do", -1), data.get("photo_do", -1),
             data.get("level", 0),
@@ -541,7 +550,7 @@ async def init_alarm_config_table():
                 photo_alarm_src     INTEGER DEFAULT 0,
                 mq135_ao_dir        INTEGER DEFAULT 0,
                 photo_ao_dir        INTEGER DEFAULT 1,
-                mq135_ao_threshold  REAL DEFAULT 2.5,
+                mq135_ao_threshold  INTEGER DEFAULT 3100,
                 photo_ao_threshold  INTEGER DEFAULT 1000,
                 dht11_temp_high     INTEGER DEFAULT 35,
                 dht11_humi_high     INTEGER DEFAULT 85,
@@ -573,7 +582,7 @@ async def get_alarm_config() -> dict:
             return {
                 "mq135_alarm_src": 0, "photo_alarm_src": 0,
                 "mq135_ao_dir": 0, "photo_ao_dir": 1,
-                "mq135_ao_threshold": 2.5, "photo_ao_threshold": 1000,
+                "mq135_ao_threshold": 3100, "photo_ao_threshold": 1000,
                 "dht11_temp_high": 35, "dht11_humi_high": 85,
                 "ds18b20_temp_high": 35.0, "temp_humi_alarm_enabled": 1,
                 "updated_at": "",
@@ -611,7 +620,7 @@ async def set_alarm_config(config: dict) -> dict:
             config.get("photo_alarm_src", 0),
             config.get("mq135_ao_dir", 0),
             config.get("photo_ao_dir", 1),
-            config.get("mq135_ao_threshold", 2.5),
+            config.get("mq135_ao_threshold", 3100),
             config.get("photo_ao_threshold", 1000),
             config.get("dht11_temp_high", 35),
             config.get("dht11_humi_high", 85),

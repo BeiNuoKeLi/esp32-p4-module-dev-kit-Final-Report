@@ -59,6 +59,7 @@ static char *http_get_body(const char *url)
     esp_err_t err = esp_http_client_open(client, 0);
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "HTTP open 失败: %d", err);
+        esp_http_client_close(client);
         esp_http_client_cleanup(client);
         return NULL;
     }
@@ -257,6 +258,7 @@ void sim_poll_task(void *arg)
     int last_cfg_seq = 0;
     int tick = 0;  /* 循环计数，用于低频轮询 */
 
+    int fail_count = 0;  /* 连续失败计数器，用于退避 */
     while (1) {
         /* ── 2a. 仿真注入轮询 (每次循环) ── */
         {
@@ -288,6 +290,9 @@ void sim_poll_task(void *arg)
                     if (seq > last_sim_seq) last_sim_seq = seq;
                 }
                 free(body);
+                fail_count = 0;  /* 成功则重置退避 */
+            } else {
+                fail_count++;
             }
         }
 
@@ -341,6 +346,16 @@ void sim_poll_task(void *arg)
         }
 
         tick++;
-        vTaskDelay(pdMS_TO_TICKS(SIM_POLL_MS));
+        /* 退避：连续失败时逐渐延长间隔，避免 VPS rate-limit 封 IP */
+        int delay = SIM_POLL_MS;
+        if (fail_count > 5)  delay = 5000;
+        else if (fail_count > 2) delay = 2000;
+        /* 超过 20 次连续失败 → 冷却 60s，等 VPS 解除 rate limit */
+        if (fail_count > 20) {
+            ESP_LOGW(TAG, "连续 %d 次 HTTP 失败, 暂停 60s 等待 VPS 恢复...", fail_count);
+            vTaskDelay(pdMS_TO_TICKS(60000));
+            fail_count = 0;  /* 冷却后重置 */
+        }
+        vTaskDelay(pdMS_TO_TICKS(delay));
     }
 }

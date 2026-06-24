@@ -138,7 +138,7 @@ static void load_alarm_config_from_nvs(void)
     /* ── 读取并做范围验证, 拒绝 flash 中的损坏值 ── */
     if (nvs_get_u8(h, "mq_mode", &u8_val) == ESP_OK && u8_val <= 1)
         g_sensor_data.mq135_alarm_src = (alarm_source_t)u8_val;
-    if (nvs_get_u32(h, "mq_ao_raw", &u32_val) == ESP_OK && u32_val >= 0 && u32_val <= 4095)
+    if (nvs_get_u32(h, "mq_ao_raw", &u32_val) == ESP_OK && u32_val <= 4095)
         g_sensor_data.mq135_ao_threshold = (int)u32_val;
     if (nvs_get_u8(h, "mq_ao_dir", &u8_val) == ESP_OK && u8_val <= 1)
         g_sensor_data.mq135_ao_dir = (ao_trigger_dir_t)u8_val;
@@ -943,6 +943,7 @@ void app_main(void)
     /* 从 NVS 加载报警配置（必须在 buzzer_task 创建前完成） */
     load_alarm_config_from_nvs();
 
+    /* ===== 第 1 批：纯硬件任务（无需网络/SDIO）===== */
     /* 创建 MQ-135 传感器读取任务 (优先级3, 栈4096) */
     xTaskCreate(mq135_task, "mq135_sensor", 4096, NULL, 3, NULL);
 
@@ -963,6 +964,27 @@ void app_main(void)
     /* 创建蜂鸣器报警任务 (优先级2, 栈5120 — 局部变量多+ESP_LOG格式化) */
     xTaskCreate(buzzer_task, "buzzer_alarm", 5120, NULL, 2, NULL);
 
+    /* ===== 等待 SDIO 传输层 + Wi-Fi 就绪 (最长 30s) ===== */
+    ESP_LOGI(TAG, "等待传输层 & Wi-Fi 就绪后创建网络任务...");
+    {
+        int wait_cycles = 300; /* 30s = 300 × 100ms */
+        while (wait_cycles-- > 0) {
+            int ready = 0;
+            if (g_sensor_mutex && xSemaphoreTake(g_sensor_mutex, pdMS_TO_TICKS(5)) == pdTRUE) {
+                ready = g_sensor_data.wifi_connected;
+                xSemaphoreGive(g_sensor_mutex);
+            }
+            if (ready) break;
+            vTaskDelay(pdMS_TO_TICKS(100));
+        }
+        if (wait_cycles <= 0) {
+            ESP_LOGW(TAG, "⚠ Wi-Fi 连接超时，强制创建网络任务");
+        } else {
+            ESP_LOGI(TAG, "✅ 传输层 & Wi-Fi 已就绪");
+        }
+    }
+
+    /* ===== 第 2 批：网络依赖任务（Wi-Fi/SDIO 就绪后创建）===== */
     /* 创建 UDP 传感器数据发送任务 (优先级2, 栈5120, 不绑核避免 SDIO 中断冲突) */
     xTaskCreate(udp_sender_task, "Task_UDP_Send", 5120, NULL, 2, NULL);
 
